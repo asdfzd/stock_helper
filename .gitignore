@@ -1,0 +1,8 @@
+__pycache__/
+.easyocr-models/
+.venv-paddle/
+.paddle-cache/
+ocr_crops/
+ocr_results/
+.env
+.venv/
