@@ -7,7 +7,9 @@ git pull
 작업 완료 후:
 
 git add .
+
 git commit -m "작업 내용"
+
 git push
 
 ## 환경변수 설정
