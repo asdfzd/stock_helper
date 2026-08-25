@@ -6,7 +6,7 @@ import re
 import threading
 import time
 import warnings
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
@@ -124,6 +124,15 @@ class StockInfo:
         return self.stock_name[:6] if self.stock_name else None
 
 
+@dataclass(frozen=True)
+class StockIdentity:
+    raw_identity_text: str
+    english_name: str | None
+    korean_name: str | None
+    ticker_hint: str | None
+    confidence: float
+
+
 @dataclass
 class OcrCapture:
     name: str
@@ -132,6 +141,7 @@ class OcrCapture:
     lines: list[VisualLine]
     chart_type: str
     stock: StockInfo
+    identity: StockIdentity | None = None
 
 
 @dataclass
@@ -140,6 +150,15 @@ class OcrAnalysis:
     stock: StockInfo
     current: PriceResult
     items: list[PriceResult]
+
+
+@dataclass(frozen=True)
+class TooltipValidation:
+    valid: bool
+    chart_type: str | None
+    minute_evidence: tuple[str, ...]
+    daily_evidence: tuple[str, ...]
+    reason: str | None = None
 
 
 def create_reader() -> Any:
@@ -258,6 +277,63 @@ def canonical_section(text: str) -> str | None:
     return "__other__"
 
 
+def normalize_tooltip_text(text: str) -> str:
+    """검증용으로 대소문자와 공백만 정규화한다; OCR 문자를 추정 보정하지 않는다."""
+    return re.sub(r"\s+", "", text).lower()
+
+
+def collect_minute_evidence(text: str) -> tuple[str, ...]:
+    normalized = normalize_tooltip_text(text)
+    evidence: list[str] = []
+    if "시체소굴" in normalized:
+        evidence.append("시체소굴")
+    if "절대값half" in normalized:
+        evidence.append("절대값half")
+    return tuple(evidence)
+
+
+def collect_daily_evidence(text: str) -> tuple[str, ...]:
+    normalized = normalize_tooltip_text(text)
+    evidence: list[str] = []
+    for keyword in ("가격이동평균", "매집봉"):
+        if keyword in normalized:
+            evidence.append("가격 이동평균" if keyword == "가격이동평균" else keyword)
+    for day in ("20", "33", "60", "112", "224", "335"):
+        if re.search(rf"day{day}(?!\d)", normalized):
+            evidence.append(f"day{day}")
+    return tuple(evidence)
+
+
+def validate_tooltip_content(text: str) -> TooltipValidation:
+    minute = collect_minute_evidence(text)
+    daily = collect_daily_evidence(text)
+    day_count = sum(item.startswith("day") for item in daily)
+    daily_valid = (
+        ("가격 이동평균" in daily and day_count >= 1)
+        or ("매집봉" in daily and day_count >= 1)
+        or day_count >= 2
+    )
+    if minute:
+        return TooltipValidation(True, "minute", minute, daily)
+    if daily_valid:
+        return TooltipValidation(True, "daily", minute, daily)
+    return TooltipValidation(
+        False,
+        None,
+        minute,
+        daily,
+        "insufficient_section_evidence",
+    )
+
+
+def classify_chart_type(text: str) -> str:
+    validation = validate_tooltip_content(text)
+    if validation.chart_type is not None:
+        return validation.chart_type
+    # 저장 이미지용 저수준 OCR 함수의 기존 기본값은 유지한다. 라이브 검증은 별도로 거부한다.
+    return "daily"
+
+
 def parse_decimal(raw: str) -> Decimal | None:
     matches = list(NUMBER_PATTERN.finditer(raw))
     if not matches:
@@ -303,7 +379,9 @@ def price_token_for_row(
         matches = list(NUMBER_PATTERN.finditer(searchable))
         if ":" in searchable:
             colon = searchable.rfind(":")
-            matches = [match for match in matches if match.start() > colon]
+            # inline 행은 ':' 뒤 첫 숫자만 가격이다. 뒤에 다른 숫자가 있어도
+            # percentage나 부가 값으로 보고 가격 후보로 승격하지 않는다.
+            matches = [match for match in matches if match.start() > colon][:1]
         elif len(matches) > 1:
             matches = [matches[-1]]
         for match in matches:
@@ -461,9 +539,35 @@ def daily_key(section: str, line: VisualLine, index: int) -> str:
     return f"{section}_wall_{index}"
 
 
+def merge_split_daily_value_rows(lines: list[VisualLine]) -> list[VisualLine]:
+    """잡음 token 때문에 period 라벨과 ':가격'이 둘로 갈린 같은 행만 재결합한다."""
+    merged: list[VisualLine] = []
+    index = 0
+    periods = {"20", "33", "60", "112", "224", "335"}
+    while index < len(lines):
+        line = lines[index]
+        label = re.sub(r"\s+", "", line.text)
+        if index + 1 < len(lines) and label in periods:
+            value_line = lines[index + 1]
+            value_text = value_line.text.lstrip()
+            if (
+                value_text.startswith(":")
+                and NUMBER_PATTERN.search(value_text)
+                and abs(bbox_center_y(line.bbox) - bbox_center_y(value_line.bbox))
+                <= ROW_CENTER_Y_TOLERANCE
+            ):
+                merged.append(VisualLine([*line.tokens, *value_line.tokens]))
+                index += 2
+                continue
+        merged.append(line)
+        index += 1
+    return merged
+
+
 def collect_daily_items(
     lines: list[VisualLine], current_price: Decimal | None, image_width: int
 ) -> list[PriceResult]:
+    lines = merge_split_daily_value_rows(lines)
     items: list[PriceResult] = []
     section: str | None = None
     section_index = 0
@@ -636,8 +740,57 @@ def merge_taecho_and_absolute_half(items: list[PriceResult]) -> list[PriceResult
         and abs(absolute_half.value - taecho.value) / taecho.value <= Decimal("0.01")
     ):
         print("[MERGED] absolute_half -> taecho (difference <= 1%)")
-        return [item for item in items if item is not absolute_half]
+        # 태초마을이 대표값이며 absolute_half만 별도 후보에서 제거한다.
+        return [item for item in items if item.key != "absolute_half"]
     return items
+
+
+def expand_endgame_wall_multipliers(
+    items: list[PriceResult], current_price: Decimal | None
+) -> list[PriceResult]:
+    """Expand a valid 끝판왕 OCR value into 1x through 5x wall candidates."""
+    endgame = next(
+        (
+            item
+            for item in items
+            if "\ub05d\ud310\uc655" in re.sub(r"\s+", "", item.item_text)
+            and item.status == "valid"
+            and item.value is not None
+        ),
+        None,
+    )
+    if endgame is None:
+        return items
+
+    next_index = max(
+        (
+            int(match.group(1))
+            for item in items
+            if (match := re.fullmatch(r"corpse_wall_(\d+)", item.key))
+        ),
+        default=0,
+    )
+    expanded = list(items)
+    for multiplier in range(2, 6):
+        derived_value = endgame.value * multiplier
+        derived = replace(
+            endgame,
+            key=f"corpse_wall_{next_index + multiplier - 1}",
+            item_text=f"\ub05d\ud310\uc655 {multiplier}\ubc30",
+            raw_text=str(derived_value),
+            value=derived_value,
+            source="derived_endgame_multiplier",
+            reasons=[],
+            raw_value=derived_value,
+        )
+        derived.reasons = validation_reasons(derived, current_price)
+        if derived.reasons:
+            derived.value = None
+            derived.status = (
+                "filtered" if has_range_error(derived.reasons) else "uncertain"
+            )
+        expanded.append(derived)
+    return expanded
 
 
 def deduplicate_prices(items: list[PriceResult]) -> list[PriceResult]:
@@ -653,39 +806,89 @@ def deduplicate_prices(items: list[PriceResult]) -> list[PriceResult]:
     return unique
 
 
-def extract_stock_info(tokens: list[OCRToken]) -> StockInfo:
-    # Tooltip이 crop 안에서 시작하는 Y 위치는 일봉/분봉마다 다르다. 괄호 티커가
-    # 있는 행을 전체 crop에서 먼저 찾고, 괄호가 없을 때만 상단 범위를 쓴다.
-    all_lines = group_visual_lines(tokens)
-    ticker_lines = [line for line in all_lines if re.search(r"\([A-Z]{1,8}\)", line.text)]
-    header_lines = ticker_lines or [
-        line for line in all_lines if line.bbox[1] <= STOCK_HEADER_Y_MAX
-    ]
-    header_text = "\n".join(line.text for line in header_lines)
-
-    parenthesized = re.findall(r"\(([A-Z]{1,8})\)", header_text)
-    # crop 아래쪽의 종목 목록에 (ADR) 같은 텍스트가 더 있을 수 있으므로
-    # Tooltip 본문에서 먼저 등장하는 괄호 티커를 우선한다.
-    stock_code = parenthesized[0] if parenthesized else None
-    if stock_code is None:
-        excluded = {"GROUP", "INC", "LC", "HC", "CCI", "RSI"}
-        ticker_candidates = [
-            match
-            for match in re.findall(r"(?<![A-Z])[A-Z]{1,8}(?![A-Z])", header_text)
-            if match not in excluded
-        ]
-        stock_code = ticker_candidates[0] if ticker_candidates else None
-
-    stock_name: str | None = None
-    for line in header_lines:
-        if stock_code and stock_code not in line.text:
+def extract_stock_identity_from_ocr(tokens: list[OCRToken]) -> StockIdentity:
+    """Tooltip OCR에서 회사명/종목명 행만 찾고 ticker는 괄호 hint로만 보존한다."""
+    excluded_terms = {
+        "가격 이동평균",
+        "시체소굴",
+        "절대값",
+        "시가",
+        "고가",
+        "저가",
+        "종가",
+        "거래량",
+        "매도",
+        "매집봉",
+    }
+    candidates: list[tuple[int, float, VisualLine, str | None, str | None, str | None]] = []
+    grouped_lines = group_visual_lines(tokens)
+    # 괄호 ticker가 한 token 안에 있으면 좌우 HTS 메뉴 token이 섞인 시각 행보다
+    # 해당 token 자체를 먼저 평가한다. ticker는 여전히 resolver 검증 전 hint일 뿐이다.
+    identity_lines = [
+        VisualLine([token])
+        for token in tokens
+        if re.search(r"\([A-Z][A-Z0-9.\-]{0,7}\)", token.text)
+    ] + grouped_lines
+    for line in identity_lines:
+        text = re.sub(r"\s+", " ", line.text).strip()
+        if not text or any(term in text for term in excluded_terms):
             continue
-        before_ticker = line.text.split(f"({stock_code})", 1)[0] if stock_code else line.text
-        korean_names = re.findall(r"[가-힣]+(?:\s+[가-힣]+)*", before_ticker)
-        if korean_names:
-            stock_name = korean_names[-1].strip()
-            break
-    return StockInfo(stock_code=stock_code, stock_name=stock_name)
+        if canonical_section(text) is not None or re.search(r"\bday\d+\b", text, re.I):
+            continue
+        ticker_match = re.search(r"\(([A-Z][A-Z0-9.\-]{0,7})\)", text)
+        ticker_hint = ticker_match.group(1) if ticker_match else None
+
+        before_korean = re.split(r"[가-힣]", text, maxsplit=1)[0]
+        before_korean = before_korean.split("(", 1)[0].strip(" []:-")
+        english_name = (
+            before_korean
+            if re.search(r"[A-Z]", before_korean)
+            and len(re.findall(r"[A-Z0-9]+", before_korean)) >= 2
+            else None
+        )
+        before_ticker = text.split("(", 1)[0]
+        korean_matches = re.findall(
+            r"[가-힣][가-힣0-9]*(?:\s+[가-힣0-9]+)*",
+            before_ticker,
+        )
+        korean_name = korean_matches[-1].strip() if korean_matches else None
+        if english_name is None and korean_name is None:
+            continue
+
+        confidence = sum(token.confidence for token in line.tokens) / len(line.tokens)
+        score = 0
+        score += 4 if english_name and korean_name else 0
+        score += 10 if ticker_hint else 0
+        score += 2 if english_name and re.search(
+            r"\b(?:INC|CORP|CORPORATION|LTD|LIMITED|GROUP|PLC)\.?$",
+            english_name,
+        ) else 0
+        score += 1 if line.bbox[1] <= STOCK_HEADER_Y_MAX else 0
+        candidates.append(
+            (score, confidence, line, english_name, korean_name, ticker_hint)
+        )
+
+    if not candidates:
+        return StockIdentity("", None, None, None, 0.0)
+    _, confidence, line, english_name, korean_name, ticker_hint = max(
+        candidates,
+        key=lambda candidate: (candidate[0], candidate[1], -candidate[2].bbox[1]),
+    )
+    return StockIdentity(
+        raw_identity_text=line.text,
+        english_name=english_name,
+        korean_name=korean_name,
+        ticker_hint=ticker_hint,
+        confidence=confidence,
+    )
+
+
+def extract_stock_info(tokens: list[OCRToken]) -> StockInfo:
+    identity = extract_stock_identity_from_ocr(tokens)
+    return StockInfo(
+        stock_code=identity.ticker_hint,
+        stock_name=identity.korean_name or identity.english_name,
+    )
 
 
 def external_current_price_result(current_price: Decimal | None) -> PriceResult:
@@ -845,6 +1048,7 @@ def retry_suspicious_items(
         item.source = "numeric_retry"
         item.reasons = reasons
         item.raw_text = raw_text
+        item.raw_value = parse_decimal(raw_text)
         print(
             f"[RETRY {status.upper()}] {item.key}: "
             f"{format_decimal(value)} ({confidence:.3f}) crop={crop_path.name}"
@@ -902,9 +1106,13 @@ def capture_image(reader: Any, name: str, image_path: Path) -> OcrCapture:
     print(f"structured_ocr: {save_primary_tokens(name, tokens)}")
     lines = group_visual_lines(tokens)
     all_text = "\n".join(line.text for line in lines)
-    chart_type = "minute" if any(keyword in all_text for keyword in MINUTE_KEYWORDS) else "daily"
-    stock = extract_stock_info(tokens)
-    return OcrCapture(name, image, tokens, lines, chart_type, stock)
+    chart_type = classify_chart_type(all_text)
+    identity = extract_stock_identity_from_ocr(tokens)
+    stock = StockInfo(
+        stock_code=identity.ticker_hint,
+        stock_name=identity.korean_name or identity.english_name,
+    )
+    return OcrCapture(name, image, tokens, lines, chart_type, stock, identity)
 
 
 def analyze_capture(
@@ -923,11 +1131,12 @@ def analyze_capture(
     else:
         items = collect_minute_items(capture.lines, current_price, image.shape[1])
     retry_suspicious_items(reader, image, name, items, current_price)
+    if chart_type == "minute":
+        items = expand_endgame_wall_multipliers(items, current_price)
+        items = merge_taecho_and_absolute_half(items)
     items = deduplicate_prices(items)
     debug_items = [current, *items]
     debug_path = save_bbox_debug_image(name, image, chart_type, debug_items)
-    if chart_type == "minute":
-        items = merge_taecho_and_absolute_half(items)
     print(f"\nstock_code: {stock.stock_code or 'null'}")
     print(f"stock_name: {stock.stock_name or 'null'}")
     print(f"display_name: {stock.display_name or 'null'}")

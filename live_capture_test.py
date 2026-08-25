@@ -6,12 +6,14 @@ from pathlib import Path
 
 from live_capture import (
     CaptureProcessor,
-    GlobalF8Hotkey,
+    GlobalCaptureHotkey,
+    TickerCalibrationResult,
     enable_dpi_awareness,
     get_mouse_position,
 )
 from paddle_ocr_validation import INPUTS, create_reader
 from stock_models import StockRegistry
+from tooltip_capture_config import TICKER_FIXED_ROI, USE_FIXED_TICKER_ROI
 
 
 def parse_args() -> argparse.Namespace:
@@ -34,7 +36,10 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def wait_for_ctrl_c(hotkey: GlobalF8Hotkey, show_registered: bool = False) -> None:
+def wait_for_ctrl_c(
+    hotkey: GlobalCaptureHotkey, show_registered: bool = False
+) -> bool:
+    interrupted = False
     try:
         hotkey.start()
         if show_registered:
@@ -46,9 +51,15 @@ def wait_for_ctrl_c(hotkey: GlobalF8Hotkey, show_registered: bool = False) -> No
         while not stop_event.wait(1.0):
             pass
     except KeyboardInterrupt:
+        interrupted = True
         print("\nStopping ...")
     finally:
-        hotkey.stop()
+        try:
+            hotkey.stop()
+        except KeyboardInterrupt:
+            interrupted = True
+            print("\nStopping ...")
+    return interrupted
 
 
 def main() -> int:
@@ -60,14 +71,37 @@ def main() -> int:
         def print_hotkey_event(key: str) -> None:
             print(f"[HOTKEY] key={key} mouse={get_mouse_position()}", flush=True)
 
-        wait_for_ctrl_c(GlobalF8Hotkey(print_hotkey_event), show_registered=True)
+        wait_for_ctrl_c(GlobalCaptureHotkey(print_hotkey_event), show_registered=True)
         print("Stopped.")
         return 0
 
     print("Stock Helper Live Capture")
     print("PaddleOCR will initialize in the OCR worker thread.")
     registry = StockRegistry()
-    processor = CaptureProcessor(create_reader, registry)
+    ticker_roi: list[tuple[int, int, int, int] | None] = [
+        TICKER_FIXED_ROI if USE_FIXED_TICKER_ROI else None
+    ]
+    calibration_in_progress = threading.Event()
+
+    def calibration_finished(result: TickerCalibrationResult) -> None:
+        calibration_in_progress.clear()
+        if result.success and result.ticker_roi is not None:
+            ticker_roi[0] = result.ticker_roi
+            print(
+                f"티커 위치 설정 완료 · 현재 인식: {result.ticker}\n`: capture stock",
+                flush=True,
+            )
+        else:
+            print(
+                "티커명을 찾지 못했습니다. 티커명 위치에서 ` 키를 다시 눌러주세요",
+                flush=True,
+            )
+
+    processor = CaptureProcessor(
+        create_reader,
+        registry,
+        on_calibration=calibration_finished,
+    )
     processor.start()
 
     if args.image is not None:
@@ -85,16 +119,32 @@ def main() -> int:
         return 0
 
     def capture_for_hotkey(_key: str) -> None:
-        processor.enqueue_live_capture()
+        if ticker_roi[0] is None:
+            if calibration_in_progress.is_set():
+                print("티커 위치 판독 중입니다", flush=True)
+                return
+            calibration_in_progress.set()
+            processor.enqueue_ticker_calibration()
+            return
+        processor.enqueue_live_capture(ticker_roi[0])
 
-    hotkey = GlobalF8Hotkey(capture_for_hotkey)
-    print("0 / - / = / `: capture tooltip")
+    hotkey = GlobalCaptureHotkey(capture_for_hotkey)
+    if USE_FIXED_TICKER_ROI:
+        print(f"[TICKER ROI] fixed={TICKER_FIXED_ROI}")
+        print("`: capture stock")
+    else:
+        print("티커명 위치에서 ` 키를 눌러주세요")
+        print("`: set ticker position")
     print("Ctrl+C: quit")
-    wait_for_ctrl_c(hotkey)
-    processor.stop(drain=True)
+    interrupted = wait_for_ctrl_c(hotkey)
+    processor.stop(drain=not interrupted)
     print("Stopped.")
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except KeyboardInterrupt:
+        print("\nStopped.")
+        raise SystemExit(0)

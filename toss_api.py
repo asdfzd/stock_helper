@@ -6,6 +6,7 @@ import time
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from threading import RLock
 from typing import Any
 
 import requests
@@ -15,6 +16,8 @@ from dotenv import load_dotenv
 BASE_URL = "https://openapi.tossinvest.com"
 TOKEN_PATH = "/oauth2/token"
 PRICES_PATH = "/api/v1/prices"
+STOCKS_PATH = "/api/v1/stocks"
+STOCKS_ALL_PATH = "/api/v1/stocks/all"
 REQUEST_TIMEOUT_SECONDS = 15
 TOKEN_EXPIRY_MARGIN_SECONDS = 30
 SYMBOL_PATTERN = re.compile(r"^[A-Za-z0-9.\-]+$")
@@ -27,6 +30,16 @@ class CurrentPrice:
     symbol: str
     last_price: Decimal
     timestamp: str | None
+
+
+@dataclass(frozen=True)
+class ListedStock:
+    symbol: str
+    name: str
+    market: str
+    security_type: str | None = None
+    status: str | None = None
+    currency: str | None = None
 
 
 class TossApiError(RuntimeError):
@@ -58,6 +71,7 @@ class TossApiClient:
         self._session = session or requests.Session()
         self._access_token: str | None = None
         self._token_expires_at = 0.0
+        self._request_lock = RLock()
 
     def _require_credentials(self) -> None:
         missing = []
@@ -124,13 +138,11 @@ class TossApiClient:
         """여러 symbol을 한 번의 /prices 요청으로 조회한다."""
         normalized_symbols = self._normalize_symbols(symbols)
 
-        response = self._get_prices(normalized_symbols)
-        if response.status_code == 401:
-            self.invalidate_access_token()
-            response = self._get_prices(normalized_symbols)
-        if not response.ok:
-            raise self._http_error(
-                response, f"현재가 조회 실패 ({','.join(normalized_symbols)})"
+        with self._request_lock:
+            response = self._authorized_get(
+                PRICES_PATH,
+                params={"symbols": ",".join(normalized_symbols)},
+                context=f"현재가 조회 실패 ({','.join(normalized_symbols)})",
             )
 
         payload = self._json_object(response, "현재가 응답")
@@ -162,6 +174,88 @@ class TossApiClient:
             )
         return prices
 
+    def get_stocks(self, symbols: list[str]) -> dict[str, ListedStock]:
+        """공식 종목 기본 정보로 입력 symbol의 존재와 미국 시장 여부를 검증한다."""
+        normalized_symbols = self._normalize_symbols(symbols)
+        with self._request_lock:
+            response = self._authorized_get(
+                STOCKS_PATH,
+                params={"symbols": ",".join(normalized_symbols)},
+                context=f"종목 정보 조회 실패 ({','.join(normalized_symbols)})",
+            )
+        return self._parse_listed_stocks(response, requested=set(normalized_symbols))
+
+    def list_stocks(self, market: str) -> list[ListedStock]:
+        """공식 /stocks/all에서 한 시장의 ACTIVE 종목 유니버스를 가져온다."""
+        normalized_market = market.strip().upper()
+        allowed_markets = {"KOSPI", "KOSDAQ", "NYSE", "NASDAQ", "AMEX", "KR_ETC", "US_ETC"}
+        if normalized_market not in allowed_markets:
+            raise TossApiError(f"지원하지 않는 market입니다: {market!r}")
+        with self._request_lock:
+            response = self._authorized_get(
+                STOCKS_ALL_PATH,
+                params={"market": normalized_market, "status": "ACTIVE"},
+                context=f"전체 종목 조회 실패 ({normalized_market})",
+            )
+        return list(
+            self._parse_listed_stocks(
+                response,
+                fallback_market=normalized_market,
+            ).values()
+        )
+
+    def _authorized_get(
+        self,
+        path: str,
+        *,
+        params: dict[str, str],
+        context: str,
+    ) -> requests.Response:
+        response = self._get(path, params)
+        if response.status_code == 401:
+            self.invalidate_access_token()
+            response = self._get(path, params)
+        if not response.ok:
+            raise self._http_error(response, context)
+        return response
+
+    def _parse_listed_stocks(
+        self,
+        response: requests.Response,
+        *,
+        requested: set[str] | None = None,
+        fallback_market: str = "",
+    ) -> dict[str, ListedStock]:
+        payload = self._json_object(response, "종목 정보 응답")
+        results = payload.get("result")
+        if not isinstance(results, list):
+            raise TossApiError("종목 정보 응답의 result가 배열이 아닙니다.")
+        stocks: dict[str, ListedStock] = {}
+        for record in results:
+            if not isinstance(record, dict):
+                continue
+            symbol = str(record.get("symbol", "")).strip().upper()
+            name = str(record.get("name", "")).strip()
+            if not symbol or not name or (requested is not None and symbol not in requested):
+                continue
+            stocks[symbol] = ListedStock(
+                symbol=symbol,
+                name=name,
+                market=str(record.get("market") or fallback_market).strip().upper(),
+                security_type=(
+                    str(record["securityType"])
+                    if record.get("securityType") is not None
+                    else None
+                ),
+                status=(str(record["status"]) if record.get("status") is not None else "ACTIVE"),
+                currency=(
+                    str(record["currency"])
+                    if record.get("currency") is not None
+                    else None
+                ),
+            )
+        return stocks
+
     @staticmethod
     def _normalize_symbols(symbols: list[str]) -> list[str]:
         normalized: list[str] = []
@@ -177,11 +271,11 @@ class TossApiClient:
             raise TossApiError("한 번에 조회할 수 있는 symbol은 최대 200개입니다.")
         return normalized
 
-    def _get_prices(self, symbols: list[str]) -> requests.Response:
+    def _get(self, path: str, params: dict[str, str]) -> requests.Response:
         try:
             return self._session.get(
-                f"{BASE_URL}{PRICES_PATH}",
-                params={"symbols": ",".join(symbols)},
+                f"{BASE_URL}{path}",
+                params=params,
                 headers={"Authorization": f"Bearer {self.get_access_token()}"},
                 timeout=REQUEST_TIMEOUT_SECONDS,
             )

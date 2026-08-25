@@ -7,7 +7,7 @@ NUMERIC_CROP_SCALE = 5
 
 # 좌표는 3배 확대된 Tooltip crop 이미지 내부 기준이다. 가격 후보의 숫자 bbox
 # 중심이 이 범위 밖이면 라벨과 가까워도 절대 선택하지 않는다.
-DAILY_VALUE_X_MIN = 260
+DAILY_VALUE_X_MIN = 170
 DAILY_VALUE_X_MAX = 720
 DAILY_VALUE_Y_MIN = 1400
 DAILY_VALUE_Y_MAX = 2450
