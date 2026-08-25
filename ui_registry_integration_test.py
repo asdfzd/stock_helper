@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 import os
+import time
 from decimal import Decimal
 from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import Qt  # noqa: E402
-from PySide6.QtWidgets import QApplication  # noqa: E402
+from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
 
-from main import PriceLevel, StockCard, StockCardsView, StockData  # noqa: E402
+from main import PriceArea, PriceLevel, StockCard, StockCardsView, StockData  # noqa: E402
 from stock_models import StockRegistry  # noqa: E402
 
 
@@ -131,6 +132,49 @@ def main() -> int:
     assert [level.price for level in selected_upper] == [105.0, 111.0]
     assert [level.price for level in selected_lower] == [93.0, 90.0]
 
+    assert PriceArea._level_color(
+        PriceLevel("매입가", 100.0, "buy_price")
+    ).getRgb()[:3] == (0, 0, 0)
+    assert PriceArea._level_color(
+        PriceLevel("태초마을", 100.0, "taecho")
+    ).getRgb()[:3] == (255, 0, 255)
+    assert PriceArea._level_color(
+        PriceLevel("절대값 half", 100.0, "absolute_half")
+    ).getRgb()[:3] == (0, 128, 0)
+    assert PriceArea._level_color(
+        PriceLevel("day20 바닥", 100.0, "day20_floor")
+    ).getRgb()[:3] == (77, 171, 247)
+
+    proximity_card = StockCard(
+        StockData(
+            "NEAR",
+            100.0,
+            [PriceLevel("매입가", 100.0, "buy_price")],
+        )
+    )
+    proximity_card._proximity_started[("buy_price", 100.0)] = time.monotonic() - 125
+    proximity_levels = proximity_card._levels_with_proximity(103.9)
+    assert proximity_levels[0].dwell_minutes == 2
+    proximity_card._levels_with_proximity(104.1)
+    assert not proximity_card._proximity_started
+    identity_layout = proximity_card.code_label.parentWidget().layout()
+    assert identity_layout.itemAt(0).widget() is proximity_card.code_label
+    assert identity_layout.itemAt(1).widget() is proximity_card.status_label
+    header_layout = proximity_card.findChild(QWidget, "cardHeader").layout()
+    right_controls_item = header_layout.itemAt(header_layout.count() - 1)
+    assert right_controls_item.alignment() & Qt.AlignmentFlag.AlignTop
+    assert right_controls_item.alignment() & Qt.AlignmentFlag.AlignRight
+    assert proximity_card.price_area.objectName() == "priceArea"
+    assert proximity_card.findChild(QWidget, "cardHeader").height() == 104
+
+    scaled_area = proximity_card.price_area
+    scaled_area.set_prices(
+        100.0,
+        [PriceLevel("매입가", 140.0, "buy_price")],
+        [PriceLevel("day20 바닥", 80.0, "day20_floor")],
+    )
+    assert scaled_area._price_span() == 40.0
+
     # 실시간 카드는 Registry 등록 순서의 처음 6개만, 위 3개/아래 3개로 배치한다.
     for ticker in ("CCCC", "DDDD", "EEEE", "FFFF", "GGGG"):
         merge_and_refresh(
@@ -162,10 +206,18 @@ def main() -> int:
     print("BBBB: daily_loaded=true minute_loaded=true")
     print("minute_replace_reflected: true")
     print("nearest_two_each_side: -10%,-7%,+5%,+11%")
+    print("price_colors: buy/rebound black, taecho magenta, absolute_half green")
+    print("generic_price_color: day20 floor blue")
+    print("proximity_dwell: ±4% continuous minutes and reset verified")
+    print("status_position: immediately right of ticker")
+    print("header_controls: X and ON/OFF fixed at top-right")
+    print("chart_layout: white, compact 104px header, expanded price area")
+    print("chart_scale: proportional to farthest visible price")
     print("card_grid: top=3 bottom=3 max=6 centered")
     print("card_grid_single_row: 1-3 use full height")
     print("tracking_remove: registry and card removed")
     selection_card.deleteLater()
+    proximity_card.deleteLater()
     view.deleteLater()
     app.processEvents()
     return 0

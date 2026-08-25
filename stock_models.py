@@ -64,6 +64,7 @@ def candidate_label(key: str) -> str:
         "buy_price": "매입가",
         "rebound_price": "반등가",
         "taecho": "태초마을",
+        "absolute_half": "절대값 half",
     }.get(key, key)
 
 
@@ -81,6 +82,7 @@ def build_price_candidates(stock: StockRecord) -> list[PriceCandidate]:
             if key.startswith("corpse_wall_")
         ),
         ("taecho", stock.taecho),
+        ("absolute_half", stock.absolute_half),
         ("buy_price", stock.buy_price),
         ("rebound_price", stock.rebound_price),
     ]

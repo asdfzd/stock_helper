@@ -178,6 +178,7 @@ class CaptureStatusCardsView(QScrollArea):
         self.setMinimumHeight(185)
 
         container = QWidget()
+        container.setObjectName("captureStatusContainer")
         self._layout = QHBoxLayout(container)
         self._layout.setContentsMargins(0, 4, 0, 4)
         self._layout.setSpacing(10)
@@ -570,7 +571,11 @@ QLabel#liveStatus {
     padding: 4px 8px;
 }
 QScrollArea {
-    background: transparent;
+    background: #111820;
+    border: none;
+}
+QWidget#stockCardsContainer, QWidget#captureStatusContainer {
+    background: #111820;
 }
 QFrame#sideMenu {
     background: #18222d;

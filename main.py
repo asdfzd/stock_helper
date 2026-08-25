@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import time
 from dataclasses import dataclass
 from typing import Callable
 
@@ -28,6 +29,8 @@ from stock_models import StockRecord, StockRegistry, build_price_candidates
 class PriceLevel:
     kind: str
     price: float
+    key: str = ""
+    dwell_minutes: int | None = None
 
 
 @dataclass
@@ -44,12 +47,17 @@ class StockData:
 class PriceArea(QWidget):
     """현재가와 가장 가까운 위/아래 가격을 방향별 최대 2개 그리는 영역."""
 
-    PRICE_SPAN = 0.30
+    MIN_PRICE_SPAN_RATIO = 0.10
     MIN_TEXT_GAP = 24
-    EDGE_MARGIN = 20
+    EDGE_MARGIN = 14
+    GENERIC_LEVEL_COLOR = QColor(77, 171, 247)
+    BUY_REBOUND_COLOR = QColor(0, 0, 0)
+    TAECHO_COLOR = QColor(255, 0, 255)
+    ABSOLUTE_HALF_COLOR = QColor(0, 128, 0)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self.setObjectName("priceArea")
         self.setMinimumHeight(280)
         self._current_price = 0.0
         self._upper: list[PriceLevel] = []
@@ -69,20 +77,31 @@ class PriceArea(QWidget):
         self._price_decimals = price_decimals
         self.update()
 
+    def _price_span(self) -> float:
+        if self._current_price is None:
+            return 0.0001
+        visible = [*self._upper, *self._lower]
+        largest_difference = max(
+            (abs(level.price - self._current_price) for level in visible),
+            default=0.0,
+        )
+        minimum_span = abs(self._current_price) * self.MIN_PRICE_SPAN_RATIO
+        return max(largest_difference, minimum_span, 0.0001)
+
     def _level_y(self, price: float, center_y: float, half_height: float) -> float:
         if self._current_price is None:
             return center_y
         difference = price - self._current_price
-        price_span = max(abs(self._current_price) * self.PRICE_SPAN, 0.0001)
+        price_span = self._price_span()
         distance = min(abs(difference) / price_span, 1.0) * half_height
         return center_y - distance if difference > 0 else center_y + distance
 
     def _format_price(self, price: float) -> str:
         return f"{price:.{self._price_decimals}f}"
 
-    def _label_text(
-        self, kind: str, price: float | None, emphasized: bool = False
-    ) -> str:
+    def _label_text(self, level: PriceLevel, emphasized: bool = False) -> str:
+        kind = level.kind
+        price = level.price
         if price is None:
             return f"{kind}  unavailable"
         if emphasized:
@@ -90,7 +109,20 @@ class PriceArea(QWidget):
         if self._current_price is None or self._current_price <= 0:
             return f"{kind}  {self._format_price(price)}"
         percentage = ((price - self._current_price) / self._current_price) * 100
-        return f"{kind}  {self._format_price(price)} ({percentage:+.2f}%)"
+        label = f"{kind}  {self._format_price(price)} ({percentage:+.2f}%)"
+        if level.dwell_minutes is not None:
+            label += f" · 근처 {level.dwell_minutes}분째"
+        return label
+
+    @classmethod
+    def _level_color(cls, level: PriceLevel) -> QColor:
+        if level.key in {"buy_price", "rebound_price"}:
+            return cls.BUY_REBOUND_COLOR
+        if level.key == "taecho":
+            return cls.TAECHO_COLOR
+        if level.key == "absolute_half":
+            return cls.ABSOLUTE_HALF_COLOR
+        return cls.GENERIC_LEVEL_COLOR
 
     def paintEvent(self, event) -> None:  # noqa: N802 - Qt 메서드명
         super().paintEvent(event)
@@ -106,8 +138,7 @@ class PriceArea(QWidget):
         self._draw_label(
             painter,
             center_y,
-            "현재가",
-            self._current_price,
+            PriceLevel("현재가", self._current_price),
             QColor("#69db7c"),
             True,
         )
@@ -121,9 +152,8 @@ class PriceArea(QWidget):
             self._draw_label(
                 painter,
                 upper_y,
-                upper.kind,
-                upper.price,
-                QColor("#ff6b6b"),
+                upper,
+                self._level_color(upper),
                 text_y=upper_text_y,
             )
             previous_text_y = upper_text_y
@@ -137,9 +167,8 @@ class PriceArea(QWidget):
             self._draw_label(
                 painter,
                 lower_y,
-                lower.kind,
-                lower.price,
-                QColor("#4dabf7"),
+                lower,
+                self._level_color(lower),
                 text_y=lower_text_y,
             )
             previous_text_y = lower_text_y
@@ -148,8 +177,7 @@ class PriceArea(QWidget):
         self,
         painter: QPainter,
         y: float,
-        kind: str,
-        price: float | None,
+        level: PriceLevel,
         color: QColor,
         emphasized: bool = False,
         text_y: float | None = None,
@@ -162,7 +190,7 @@ class PriceArea(QWidget):
         font = QFont("Malgun Gothic", 11)
         font.setBold(emphasized)
         painter.setFont(font)
-        label = self._label_text(kind, price, emphasized)
+        label = self._label_text(level, emphasized)
         label_y = y if text_y is None else text_y
         if emphasized:
             text_width = painter.fontMetrics().horizontalAdvance(label)
@@ -172,6 +200,10 @@ class PriceArea(QWidget):
 
 
 class StockCard(QFrame):
+    PROXIMITY_KEYS = {"buy_price", "rebound_price", "taecho", "absolute_half"}
+    PROXIMITY_RATIO = 0.04
+    HEADER_HEIGHT = 104
+
     def __init__(
         self,
         stock: StockData,
@@ -183,6 +215,7 @@ class StockCard(QFrame):
         self.stock = stock
         self._on_holding_changed = on_holding_changed
         self._on_delete_requested = on_delete_requested
+        self._proximity_started: dict[tuple[str, float], float] = {}
         self.setObjectName("stockCard")
         self.setMinimumSize(340, 300)
         self.setMaximumWidth(520)
@@ -194,19 +227,21 @@ class StockCard(QFrame):
 
         header = QWidget()
         header.setObjectName("cardHeader")
+        header.setFixedHeight(self.HEADER_HEIGHT)
         header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(24, 20, 24, 20)
+        header_layout.setContentsMargins(24, 12, 24, 12)
 
         code_container = QWidget()
-        code_layout = QVBoxLayout(code_container)
+        code_layout = QHBoxLayout(code_container)
         code_layout.setContentsMargins(0, 0, 0, 0)
-        code_layout.setSpacing(2)
+        code_layout.setSpacing(8)
         self.code_label = QLabel(stock.code)
         self.code_label.setObjectName("stockCode")
         self.status_label = QLabel()
         self.status_label.setObjectName("stockStatus")
         code_layout.addWidget(self.code_label)
         code_layout.addWidget(self.status_label)
+        code_layout.addStretch()
         self.price_label = QLabel()
         self.price_label.setObjectName("currentPrice")
         self.price_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -224,7 +259,9 @@ class StockCard(QFrame):
         right_layout = QVBoxLayout(right_controls)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(8)
-        right_layout.setAlignment(Qt.AlignmentFlag.AlignRight)
+        right_layout.setAlignment(
+            Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight
+        )
         right_layout.addWidget(self.delete_button, 0, Qt.AlignmentFlag.AlignRight)
         right_layout.addWidget(self.toggle_button, 0, Qt.AlignmentFlag.AlignRight)
 
@@ -232,11 +269,15 @@ class StockCard(QFrame):
         header_layout.addStretch()
         header_layout.addWidget(self.price_label)
         header_layout.addStretch()
-        header_layout.addWidget(right_controls)
+        header_layout.addWidget(
+            right_controls,
+            0,
+            Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight,
+        )
 
         self.price_area = PriceArea()
-        card_layout.addWidget(header, 1)
-        card_layout.addWidget(self.price_area, 2)
+        card_layout.addWidget(header, 0)
+        card_layout.addWidget(self.price_area, 1)
 
         self._refresh_state()
         self.update_stock(stock)
@@ -258,7 +299,8 @@ class StockCard(QFrame):
     def set_current_price(self, price: float | None) -> None:
         """새 현재가를 반영하고 표시할 위/아래 가격을 다시 선택한다."""
         self.stock.current_price = price
-        upper, lower = self._nearest_levels(price) if price is not None else ([], [])
+        levels = self._levels_with_proximity(price)
+        upper, lower = self._nearest_levels(price, levels) if price is not None else ([], [])
         self.price_label.setText(
             f"{price:.{self.stock.price_decimals}f}" if price is not None else "unavailable"
         )
@@ -267,13 +309,41 @@ class StockCard(QFrame):
         )
 
     def _nearest_levels(
-        self, current_price: float
+        self, current_price: float, levels: list[PriceLevel] | None = None
     ) -> tuple[list[PriceLevel], list[PriceLevel]]:
-        upper_candidates = [level for level in self.stock.levels if level.price > current_price]
-        lower_candidates = [level for level in self.stock.levels if level.price < current_price]
+        candidates = self.stock.levels if levels is None else levels
+        upper_candidates = [level for level in candidates if level.price >= current_price]
+        lower_candidates = [level for level in candidates if level.price < current_price]
         upper = sorted(upper_candidates, key=lambda level: level.price)[:2]
         lower = sorted(lower_candidates, key=lambda level: level.price, reverse=True)[:2]
         return upper, lower
+
+    def _levels_with_proximity(self, current_price: float | None) -> list[PriceLevel]:
+        now = time.monotonic()
+        active: set[tuple[str, float]] = set()
+        levels: list[PriceLevel] = []
+        for level in self.stock.levels:
+            identity = (level.key, level.price)
+            dwell_minutes: int | None = None
+            is_tracked = level.key in self.PROXIMITY_KEYS and level.price > 0
+            is_near = (
+                is_tracked
+                and current_price is not None
+                and current_price > 0
+                and abs(current_price - level.price) / level.price
+                <= self.PROXIMITY_RATIO
+            )
+            if is_near:
+                active.add(identity)
+                started = self._proximity_started.setdefault(identity, now)
+                dwell_minutes = int((now - started) // 60)
+            levels.append(
+                PriceLevel(level.kind, level.price, level.key, dwell_minutes)
+            )
+        for identity in tuple(self._proximity_started):
+            if identity not in active:
+                self._proximity_started.pop(identity, None)
+        return levels
 
     def _on_toggle(self, checked: bool) -> None:
         self.stock.owned = checked
@@ -312,7 +382,7 @@ def stock_data_from_record(stock: StockRecord) -> StockData:
         stock_name=stock.stock_name,
         current_price=current_price,
         levels=[
-            PriceLevel(candidate.label, float(candidate.value))
+            PriceLevel(candidate.label, float(candidate.value), candidate.key)
             for candidate in build_price_candidates(stock)
         ],
         owned=stock.holding,
@@ -341,6 +411,7 @@ class StockCardsView(QScrollArea):
         self.setFrameShape(QFrame.Shape.NoFrame)
 
         container = QWidget()
+        container.setObjectName("stockCardsContainer")
         self.card_layout = QVBoxLayout(container)
         self.card_layout.setContentsMargins(24, 24, 24, 24)
         self.card_layout.setSpacing(20)
@@ -522,6 +593,11 @@ QFrame#stockCard {
     background: #1b2530;
     border: 1px solid #344353;
     border-radius: 16px;
+}
+QWidget#priceArea {
+    background: #ffffff;
+    border-bottom-left-radius: 16px;
+    border-bottom-right-radius: 16px;
 }
 QWidget#cardHeader {
     background: #222f3d;
