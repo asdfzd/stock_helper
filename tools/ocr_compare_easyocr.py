@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import sys
 import warnings
 from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 import easyocr
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent
 INPUTS = {
     "daily": PROJECT_ROOT / "ocr_crops" / "1_daily_crop_preprocessed.png",
     "minute": PROJECT_ROOT / "ocr_crops" / "2_minute_crop_preprocessed.png",
