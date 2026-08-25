@@ -78,7 +78,7 @@ def main() -> int:
     for value in stock.minute_walls:
         print(f"- {value}")
 
-    # 같은 chart type 재입력은 해당 영역만 교체하고 minute 영역은 보존한다.
+    # 같은 일봉 재입력은 동일 이름·가격을 중복하지 않고 minute 영역을 보존한다.
     stock = registry.merge_analysis_result(daily)
     assert stock.daily_price_candidates == daily_before
     assert stock.minute_walls == minute_before

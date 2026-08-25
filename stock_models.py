@@ -20,6 +20,7 @@ class StockRecord:
     absolute_half: Decimal | None = None
     walls: list[Decimal] = field(default_factory=list)
     daily_values: dict[str, Decimal] = field(default_factory=dict)
+    daily_price_levels: list[tuple[str, Decimal]] = field(default_factory=list)
     minute_values: dict[str, Decimal] = field(default_factory=dict)
     daily_price_candidates: list[Decimal] = field(default_factory=list)
     minute_walls: list[Decimal] = field(default_factory=list)
@@ -74,8 +75,13 @@ def build_price_candidates(stock: StockRecord) -> list[PriceCandidate]:
     Registry에 저장된 valid 값만 입력되며, absolute_half는 태초마을 통합
     규칙에 따라 독립 UI 후보로 사용하지 않는다.
     """
+    daily_levels = (
+        stock.daily_price_levels
+        if stock.daily_price_levels
+        else list(stock.daily_values.items())
+    )
     ordered_values = [
-        *stock.daily_values.items(),
+        *daily_levels,
         *(
             (key, value)
             for key, value in stock.minute_values.items()
@@ -136,6 +142,7 @@ class StockRegistry:
             stock,
             walls=list(stock.walls),
             daily_values=dict(stock.daily_values),
+            daily_price_levels=list(stock.daily_price_levels),
             minute_values=dict(stock.minute_values),
             daily_price_candidates=list(stock.daily_price_candidates),
             minute_walls=list(stock.minute_walls),
@@ -268,7 +275,7 @@ class StockRegistry:
             return stock
 
     def merge_analysis_result(self, result: Any) -> StockRecord:
-        """stock_code 기준으로 해당 chart_type의 snapshot 전체를 교체한다.
+        """stock_code 기준으로 일봉은 누적하고 분봉은 최신 snapshot으로 교체한다.
 
         `OcrAnalysis`의 구체 타입을 import하지 않아 저장소가 PaddleOCR에
         의존하지 않는다. 향후 F8 캡처도 analyze 단계 결과를 그대로 전달한다.
@@ -303,9 +310,10 @@ class StockRegistry:
             chart_was_loaded = (
                 stock.daily_loaded if chart_type == "daily" else stock.minute_loaded
             )
+            previous_daily_levels_count = len(stock.daily_price_levels)
             previous_minute_walls_count = len(stock.minute_walls)
             if chart_type == "daily":
-                self._replace_daily_snapshot(stock, valid_items)
+                self._append_daily_snapshot(stock, valid_items)
             else:
                 self._replace_minute_snapshot(stock, valid_items)
 
@@ -315,20 +323,30 @@ class StockRegistry:
                     [*stock.daily_price_candidates, *stock.minute_walls]
                 )
             )
-            action = (
-                "created"
-                if record_created
-                else (
-                    f"{chart_type}_replaced"
-                    if chart_was_loaded
-                    else f"{chart_type}_added"
-                )
-            )
+            if record_created:
+                action = "created"
+            elif chart_type == "daily" and chart_was_loaded:
+                action = "daily_appended"
+            elif chart_was_loaded:
+                action = "minute_replaced"
+            else:
+                action = f"{chart_type}_added"
             print("[REGISTRY]", flush=True)
             print(f"ticker: {symbol}", flush=True)
             print(f"chart_type: {chart_type}", flush=True)
             print(f"action: {action}", flush=True)
-            if chart_type == "minute":
+            if chart_type == "daily":
+                print("[REGISTRY APPEND]", flush=True)
+                print(f"ticker: {symbol}", flush=True)
+                print(
+                    f"previous_daily_levels_count: {previous_daily_levels_count}",
+                    flush=True,
+                )
+                print(
+                    f"new_daily_levels_count: {len(stock.daily_price_levels)}",
+                    flush=True,
+                )
+            else:
                 print("[REGISTRY REPLACE]", flush=True)
                 print(f"ticker: {symbol}", flush=True)
                 print(
@@ -342,11 +360,23 @@ class StockRegistry:
             return stock
 
     @staticmethod
-    def _replace_daily_snapshot(
+    def _append_daily_snapshot(
         stock: StockRecord, valid_items: dict[str, Decimal]
     ) -> None:
-        stock.daily_values = dict(valid_items)
-        stock.daily_price_candidates = list(dict.fromkeys(valid_items.values()))
+        """새 일봉 벽을 누적하되 완전히 같은 이름·가격은 중복 저장하지 않는다."""
+        if not stock.daily_price_levels and stock.daily_values:
+            stock.daily_price_levels.extend(stock.daily_values.items())
+        existing = set(stock.daily_price_levels)
+        for key, value in valid_items.items():
+            level = (key, value)
+            if level not in existing:
+                stock.daily_price_levels.append(level)
+                existing.add(level)
+        # 같은 이름의 최신 값도 호환용 map에 남기고, UI는 누적 levels를 사용한다.
+        stock.daily_values.update(valid_items)
+        stock.daily_price_candidates = list(
+            dict.fromkeys(value for _key, value in stock.daily_price_levels)
+        )
         stock.daily_loaded = True
 
     @staticmethod

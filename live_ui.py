@@ -23,13 +23,18 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from halt_monitor import HaltRefreshEvent, HaltRefreshWorker
 from live_capture import (
     CaptureProcessor,
     GlobalCaptureHotkey,
     TickerCalibrationResult,
     enable_dpi_awareness,
 )
-from live_ui_config import ENABLE_REALTIME_PRICE_POLLING, PRICE_REFRESH_INTERVAL_SECONDS
+from live_ui_config import (
+    ENABLE_REALTIME_PRICE_POLLING,
+    HALT_REFRESH_INTERVAL_SECONDS,
+    PRICE_REFRESH_INTERVAL_SECONDS,
+)
 from main import STYLESHEET, StockCardsView
 from paddle_ocr_validation import create_reader
 from pending_captures import PendingCapture
@@ -317,6 +322,7 @@ class RegistryUiBridge(QObject):
     registry_updated = Signal(str)
     pending_updated = Signal(str)
     prices_refreshed = Signal(object)
+    halts_refreshed = Signal(object)
     capture_status_changed = Signal(str)
     calibration_finished = Signal(object)
 
@@ -329,6 +335,9 @@ class RegistryUiBridge(QObject):
 
     def notify_prices(self, event: PriceRefreshEvent) -> None:
         self.prices_refreshed.emit(event)
+
+    def notify_halts(self, event: HaltRefreshEvent) -> None:
+        self.halts_refreshed.emit(event)
 
     def notify_calibration(self, result: TickerCalibrationResult) -> None:
         self.calibration_finished.emit(result)
@@ -402,6 +411,15 @@ class LiveStockWindow(QMainWindow):
             PRICE_REFRESH_INTERVAL_SECONDS,
             on_complete=self.bridge.notify_prices,
         )
+        self.halt_worker = HaltRefreshWorker(
+            HALT_REFRESH_INTERVAL_SECONDS,
+            on_complete=self.bridge.notify_halts,
+        )
+        self.halt_countdown_timer = QTimer(self)
+        self.halt_countdown_timer.setInterval(1000)
+        self.halt_countdown_timer.timeout.connect(
+            self.cards_view.refresh_halt_countdowns
+        )
         self.hotkey = GlobalCaptureHotkey(self._capture_for_hotkey)
         self._services_started = False
         self._shutting_down = False
@@ -412,6 +430,7 @@ class LiveStockWindow(QMainWindow):
         self.bridge.registry_updated.connect(self._on_registry_updated)
         self.bridge.pending_updated.connect(self._on_pending_updated)
         self.bridge.prices_refreshed.connect(self._on_prices_refreshed)
+        self.bridge.halts_refreshed.connect(self._on_halts_refreshed)
         self.bridge.capture_status_changed.connect(self.status_label.setText)
         self.bridge.calibration_finished.connect(self._on_calibration_finished)
 
@@ -429,6 +448,8 @@ class LiveStockWindow(QMainWindow):
             self.processor.start()
             if ENABLE_REALTIME_PRICE_POLLING:
                 self.price_worker.start()
+            self.halt_worker.start()
+            self.halt_countdown_timer.start()
             self.hotkey.start()
         except Exception as exc:
             message = f"시작 실패: {type(exc).__name__}: {exc}"
@@ -437,6 +458,8 @@ class LiveStockWindow(QMainWindow):
             self.processor.stop(drain=False)
             if ENABLE_REALTIME_PRICE_POLLING:
                 self.price_worker.stop()
+            self.halt_worker.stop()
+            self.halt_countdown_timer.stop()
             return
         self._services_started = True
         if USE_FIXED_TICKER_ROI:
@@ -455,6 +478,17 @@ class LiveStockWindow(QMainWindow):
                 flush=True,
             )
         print("[LIVE UI] ready", flush=True)
+
+    @Slot(object)
+    def _on_halts_refreshed(self, event: HaltRefreshEvent) -> None:
+        if event.error:
+            print(f"[HALT REFRESH] error={event.error}", flush=True)
+            return
+        if event.halts is None:
+            return
+        self.cards_view.set_halts(event.halts)
+        active = sum(halt.status != "resumed" for halt in event.halts.values())
+        print(f"[HALT REFRESH] active={active}", flush=True)
 
     def _capture_for_hotkey(self, key: str) -> None:
         try:
@@ -556,6 +590,8 @@ class LiveStockWindow(QMainWindow):
         try:
             self.hotkey.stop()
         finally:
+            self.halt_countdown_timer.stop()
+            self.halt_worker.stop()
             if ENABLE_REALTIME_PRICE_POLLING:
                 self.price_worker.stop()
             self.processor.stop(drain=False)

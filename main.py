@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from halt_monitor import HaltInfo, halt_display_text
 from stock_models import StockRecord, StockRegistry, build_price_candidates
 
 
@@ -58,6 +59,7 @@ class PriceArea(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("priceArea")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setMinimumHeight(280)
         self._current_price = 0.0
         self._upper: list[PriceLevel] = []
@@ -208,13 +210,12 @@ class StockCard(QFrame):
         self,
         stock: StockData,
         parent: QWidget | None = None,
-        on_holding_changed: Callable[[str, bool], None] | None = None,
         on_delete_requested: Callable[[str], None] | None = None,
     ) -> None:
         super().__init__(parent)
         self.stock = stock
-        self._on_holding_changed = on_holding_changed
         self._on_delete_requested = on_delete_requested
+        self._halt_info: HaltInfo | None = None
         self._proximity_started: dict[tuple[str, float], float] = {}
         self.setObjectName("stockCard")
         self.setMinimumSize(340, 300)
@@ -228,8 +229,14 @@ class StockCard(QFrame):
         header = QWidget()
         header.setObjectName("cardHeader")
         header.setFixedHeight(self.HEADER_HEIGHT)
-        header_layout = QHBoxLayout(header)
+        header_layout = QVBoxLayout(header)
         header_layout.setContentsMargins(24, 12, 24, 12)
+        header_layout.setSpacing(2)
+
+        top_row = QWidget()
+        top_row.setObjectName("cardHeaderTopRow")
+        top_layout = QHBoxLayout(top_row)
+        top_layout.setContentsMargins(0, 0, 0, 0)
 
         code_container = QWidget()
         code_layout = QHBoxLayout(code_container)
@@ -245,41 +252,32 @@ class StockCard(QFrame):
         self.price_label = QLabel()
         self.price_label.setObjectName("currentPrice")
         self.price_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.toggle_button = QPushButton()
-        self.toggle_button.setCheckable(True)
-        self.toggle_button.setChecked(stock.owned)
-        self.toggle_button.clicked.connect(self._on_toggle)
         self.delete_button = QPushButton("×")
         self.delete_button.setObjectName("deleteStockButton")
         self.delete_button.setToolTip(f"{stock.code} 추적 종료")
         self.delete_button.setFixedSize(28, 28)
         self.delete_button.clicked.connect(self._request_delete)
 
-        right_controls = QWidget()
-        right_layout = QVBoxLayout(right_controls)
-        right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.setSpacing(8)
-        right_layout.setAlignment(
-            Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight
-        )
-        right_layout.addWidget(self.delete_button, 0, Qt.AlignmentFlag.AlignRight)
-        right_layout.addWidget(self.toggle_button, 0, Qt.AlignmentFlag.AlignRight)
-
-        header_layout.addWidget(code_container)
-        header_layout.addStretch()
-        header_layout.addWidget(self.price_label)
-        header_layout.addStretch()
-        header_layout.addWidget(
-            right_controls,
+        top_layout.addWidget(code_container)
+        top_layout.addStretch()
+        top_layout.addWidget(self.price_label)
+        top_layout.addStretch()
+        top_layout.addWidget(
+            self.delete_button,
             0,
             Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight,
         )
+        self.halt_label = QLabel()
+        self.halt_label.setObjectName("circuitBreakerStatus")
+        self.halt_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.halt_label.setVisible(False)
+        header_layout.addWidget(top_row, 1)
+        header_layout.addWidget(self.halt_label, 0)
 
         self.price_area = PriceArea()
         card_layout.addWidget(header, 0)
         card_layout.addWidget(self.price_area, 1)
 
-        self._refresh_state()
         self.update_stock(stock)
 
     def update_stock(self, stock: StockData) -> None:
@@ -290,10 +288,6 @@ class StockCard(QFrame):
         self.delete_button.setToolTip(f"{stock.code} 추적 종료")
         self.status_label.setText(stock.status)
         self.status_label.setVisible(bool(stock.status))
-        self.toggle_button.blockSignals(True)
-        self.toggle_button.setChecked(stock.owned)
-        self.toggle_button.blockSignals(False)
-        self._refresh_state()
         self.set_current_price(stock.current_price)
 
     def set_current_price(self, price: float | None) -> None:
@@ -345,22 +339,18 @@ class StockCard(QFrame):
                 self._proximity_started.pop(identity, None)
         return levels
 
-    def _on_toggle(self, checked: bool) -> None:
-        self.stock.owned = checked
-        self._refresh_state()
-        if self._on_holding_changed is not None:
-            self._on_holding_changed(self.stock.code, checked)
-
     def _request_delete(self) -> None:
         if self._on_delete_requested is not None:
             self._on_delete_requested(self.stock.code)
 
-    def _refresh_state(self) -> None:
-        is_on = self.stock.owned
-        self.toggle_button.setText("ON" if is_on else "OFF")
-        self.toggle_button.setProperty("owned", is_on)
-        self.toggle_button.style().unpolish(self.toggle_button)
-        self.toggle_button.style().polish(self.toggle_button)
+    def set_halt_info(self, halt: HaltInfo | None) -> None:
+        self._halt_info = halt
+        self.refresh_halt_countdown()
+
+    def refresh_halt_countdown(self) -> None:
+        text = halt_display_text(self._halt_info)
+        self.halt_label.setText(text)
+        self.halt_label.setVisible(bool(text))
 
 
 def stock_data_from_record(stock: StockRecord) -> StockData:
@@ -406,6 +396,7 @@ class StockCardsView(QScrollArea):
         super().__init__(parent)
         self.registry = registry
         self._on_stock_removed = on_stock_removed
+        self._halts: dict[str, HaltInfo] = {}
         self.cards: dict[str, StockCard] = {}
         self.setWidgetResizable(True)
         self.setFrameShape(QFrame.Shape.NoFrame)
@@ -472,13 +463,22 @@ class StockCardsView(QScrollArea):
             if card is None:
                 card = StockCard(
                     data,
-                    on_holding_changed=self._set_holding,
                     on_delete_requested=self._confirm_remove_stock,
                 )
                 self.cards[stock.stock_code] = card
             else:
                 card.update_stock(data)
+            card.set_halt_info(self._halts.get(stock.stock_code))
         self._rebuild_rows()
+
+    def set_halts(self, halts: dict[str, HaltInfo]) -> None:
+        self._halts = dict(halts)
+        for symbol, card in self.cards.items():
+            card.set_halt_info(self._halts.get(symbol))
+
+    def refresh_halt_countdowns(self) -> None:
+        for card in self.cards.values():
+            card.refresh_halt_countdown()
 
     def _rebuild_rows(self) -> None:
         for row_layout in self._row_layouts:
@@ -509,10 +509,6 @@ class StockCardsView(QScrollArea):
         print(f"[TRACKING STOPPED] ticker={symbol}", flush=True)
         if self._on_stock_removed is not None:
             self._on_stock_removed(symbol)
-
-    def _set_holding(self, symbol: str, holding: bool) -> None:
-        self.registry.set_holding(symbol, holding)
-
 
 class MainWindow(QMainWindow):
     # TEST ONLY: 실제 시세 연동 전 현재가 표시 로직을 검증하기 위한 범위
@@ -595,7 +591,7 @@ QFrame#stockCard {
     border-radius: 16px;
 }
 QWidget#priceArea {
-    background: #ffffff;
+    background: rgb(192, 192, 192);
     border-bottom-left-radius: 16px;
     border-bottom-right-radius: 16px;
 }
@@ -622,6 +618,12 @@ QLabel#currentPrice {
     font-family: "Segoe UI";
     font-size: 30px;
     font-weight: 700;
+}
+QLabel#circuitBreakerStatus {
+    color: #ff6b6b;
+    font-family: "Malgun Gothic";
+    font-size: 13px;
+    font-weight: 800;
 }
 QPushButton {
     min-width: 62px;

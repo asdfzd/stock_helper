@@ -14,7 +14,7 @@ if str(PROJECT_ROOT) not in sys.path:
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import Qt  # noqa: E402
-from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
+from PySide6.QtWidgets import QApplication, QPushButton, QWidget  # noqa: E402
 
 from main import PriceArea, PriceLevel, StockCard, StockCardsView, StockData  # noqa: E402
 from stock_models import StockRegistry  # noqa: E402
@@ -166,10 +166,16 @@ def main() -> int:
     identity_layout = proximity_card.code_label.parentWidget().layout()
     assert identity_layout.itemAt(0).widget() is proximity_card.code_label
     assert identity_layout.itemAt(1).widget() is proximity_card.status_label
-    header_layout = proximity_card.findChild(QWidget, "cardHeader").layout()
-    right_controls_item = header_layout.itemAt(header_layout.count() - 1)
-    assert right_controls_item.alignment() & Qt.AlignmentFlag.AlignTop
-    assert right_controls_item.alignment() & Qt.AlignmentFlag.AlignRight
+    top_layout = proximity_card.findChild(QWidget, "cardHeaderTopRow").layout()
+    delete_item = top_layout.itemAt(top_layout.count() - 1)
+    assert delete_item.widget() is proximity_card.delete_button
+    assert delete_item.alignment() & Qt.AlignmentFlag.AlignTop
+    assert delete_item.alignment() & Qt.AlignmentFlag.AlignRight
+    assert not any(
+        button.text() in {"ON", "OFF"}
+        for button in proximity_card.findChildren(QPushButton)
+    )
+    assert proximity_card.halt_label.objectName() == "circuitBreakerStatus"
     assert proximity_card.price_area.objectName() == "priceArea"
     assert proximity_card.findChild(QWidget, "cardHeader").height() == 104
 
@@ -216,8 +222,8 @@ def main() -> int:
     print("generic_price_color: day20 floor blue")
     print("proximity_dwell: ±4% continuous minutes and reset verified")
     print("status_position: immediately right of ticker")
-    print("header_controls: X and ON/OFF fixed at top-right")
-    print("chart_layout: white, compact 104px header, expanded price area")
+    print("header_controls: delete X only, fixed at top-right")
+    print("chart_layout: RGB(192,192,192), compact 104px header, expanded price area")
     print("chart_scale: proportional to farthest visible price")
     print("card_grid: top=3 bottom=3 max=6 centered")
     print("card_grid_single_row: 1-3 use full height")

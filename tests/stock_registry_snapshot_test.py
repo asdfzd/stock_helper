@@ -9,7 +9,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from stock_models import StockRegistry
+from stock_models import StockRegistry, build_price_candidates
 
 
 def item(key: str, value: str | None) -> SimpleNamespace:
@@ -66,6 +66,7 @@ def main() -> int:
     stock.current_price = Decimal("12.34")
     stock.price_status = "valid"
     daily_values = dict(stock.daily_values)
+    daily_levels = list(stock.daily_price_levels)
     daily_candidates = list(stock.daily_price_candidates)
 
     registry.merge_analysis_result(minute_a)
@@ -75,6 +76,7 @@ def main() -> int:
     assert stock.stock_code == "XPON"
     assert stock.daily_loaded and stock.minute_loaded
     assert stock.daily_values == daily_values
+    assert stock.daily_price_levels == daily_levels
     assert stock.daily_price_candidates == daily_candidates
     assert stock.buy_price == Decimal("11")
     assert stock.rebound_price is None
@@ -98,8 +100,42 @@ def main() -> int:
     minute_walls = list(stock.minute_walls)
     daily_b = analysis("daily", [("day60_wall", "60.0")])
     stock = registry.merge_analysis_result(daily_b)
-    assert stock.daily_values == {"day60_wall": Decimal("60.0")}
-    assert stock.daily_price_candidates == [Decimal("60.0")]
+    assert stock.daily_values == {
+        "day20_wall": Decimal("20.0"),
+        "day33_wall": Decimal("33.0"),
+        "day60_wall": Decimal("60.0"),
+    }
+    assert stock.daily_price_levels == [
+        ("day20_wall", Decimal("20.0")),
+        ("day33_wall", Decimal("33.0")),
+        ("day60_wall", Decimal("60.0")),
+    ]
+    assert stock.daily_price_candidates == [
+        Decimal("20.0"),
+        Decimal("33.0"),
+        Decimal("60.0"),
+    ]
+
+    # 이름이 같은 일봉 벽도 가격이 다르면 별도 후보로 누적한다.
+    daily_c = analysis(
+        "daily",
+        [("day20_wall", "21.0"), ("day60_wall", "60.0")],
+    )
+    stock = registry.merge_analysis_result(daily_c)
+    assert stock.daily_values["day20_wall"] == Decimal("21.0")
+    assert ("day20_wall", Decimal("20.0")) in stock.daily_price_levels
+    assert ("day20_wall", Decimal("21.0")) in stock.daily_price_levels
+    assert stock.daily_price_levels.count(("day60_wall", Decimal("60.0"))) == 1
+    assert Decimal("21.0") in stock.daily_price_candidates
+    day20_candidates = [
+        candidate
+        for candidate in build_price_candidates(stock)
+        if candidate.key == "day20_wall"
+    ]
+    assert [(candidate.label, candidate.value) for candidate in day20_candidates] == [
+        ("day20 벽", Decimal("20.0")),
+        ("day20 벽", Decimal("21.0")),
+    ]
     assert stock.minute_values == minute_values
     assert stock.minute_walls == minute_walls
     assert stock.buy_price == Decimal("11")

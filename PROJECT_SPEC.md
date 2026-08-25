@@ -182,7 +182,8 @@
 - UI용 통합 후보가 필요할 때만 daily 후보, minute 벽, 태초마을, 매입가 및 반등가를 조합한다.
 - 새 daily 분석은 `daily_values`, `daily_price_candidates`, `daily_loaded`로 구성된 기존 daily snapshot 전체를 교체하고 minute snapshot은 유지한다.
 - 새 minute 분석은 `minute_values`, `minute_walls`, `buy_price`, `rebound_price`, `taecho`, `absolute_half`, `minute_loaded`로 구성된 기존 minute snapshot 전체를 교체하고 daily snapshot은 유지한다.
-- snapshot 갱신은 누적·append·union이 아니다. 특히 `minute_walls`는 새 minute 결과만 남으며, 새 결과에 없는 단일 가격은 이전 값으로 보충하지 않고 `null`이 된다.
+- 일봉 재캡처는 같은 ticker의 기존 일봉 벽을 유지하고 새 벽을 누적한다. 이름이 같은 벽도 가격이 다르면 각각 보존하며, 이름과 가격이 모두 같은 항목만 중복 저장하지 않는다.
+- 분봉 snapshot은 누적·append·union이 아니다. `minute_walls`는 새 minute 결과만 남으며, 새 결과에 없는 단일 가격은 이전 값으로 보충하지 않고 `null`이 된다.
 - current price와 마지막 API 가격 상태는 indicator snapshot과 별개이므로 daily/minute 재캡처로 초기화하지 않는다.
 - 다른 chart type의 데이터와 API 현재가 상태는 유지한다.
 - 정상적인 새 종목명은 갱신할 수 있지만 빈 종목명으로 기존 이름을 덮어쓰지 않는다.
@@ -242,7 +243,7 @@
 - 각 행의 카드 묶음은 중앙 정렬하고 새 카드는 기존 카드의 오른쪽에 추가한다.
 - 카드 ON/OFF 위의 `X`를 누르면 `(티커) 추적 종료할까요?` Yes/No 확인창을 표시한다. Yes 선택 시 Registry에서 종목을 제거하여 UI 카드와 현재가 polling 대상에서 함께 제외한다.
 - daily만 또는 minute만 로드된 중간 상태에서도 사용 가능한 최신 후보로 카드를 표시한다.
-- UI 후보는 최신 `daily_values`, `minute_values`의 시체소굴 벽, `taecho`, `buy_price`, `rebound_price`에서 만든다.
+- UI 후보는 누적된 일봉 벽, 최신 `minute_values`의 시체소굴 벽, `taecho`, `buy_price`, `rebound_price`에서 만든다.
 - invalid, uncertain, filtered 및 null 값은 Registry의 valid snapshot에 들어오지 않으므로 UI 후보에서 제외된다.
 - 같은 가격이 여러 출처에 있으면 기존 후보 우선순서대로 한 번만 표시하고 최초 출처 라벨을 유지한다.
 - 현재가는 Toss API의 valid 또는 last-good stale 값만 사용한다. 성공 이력이 없는 unavailable이면 위/아래 비교를 중단하고 카드에 `unavailable`을 표시한다.
@@ -254,7 +255,7 @@
 - 정상적인 daily/minute 재캡처는 해당 snapshot을 완전 교체한 직후 동일 카드의 후보를 다시 계산한다.
 - 캡처 실패 시 완료 signal과 Registry merge가 발생하지 않으므로 기존 record, 카드 및 유효 snapshot을 보존한다.
 - daily/minute indicator snapshot은 capture 성공 시에만 갱신하고, current price는 capture와 무관하게 periodic price worker가 갱신한다.
-- current price가 바뀔 때마다 가장 가까운 위/아래 후보와 퍼센트를 같은 snapshot 후보에서 다시 계산하며 ON/OFF 상태는 유지한다.
+- current price가 바뀔 때마다 누적 일봉과 최신 분봉 후보 전체에서 가장 가까운 위/아래 후보와 퍼센트를 다시 계산한다.
 - 실시간 및 로그 상태 카드 바깥의 빈 영역은 흰색 대신 앱 기본 배경색과 동일하게 표시한다.
 - 매입가와 반등가는 검정, 태초마을은 RGB `(255, 0, 255)`, 통합되지 않은 절대값 half는 RGB `(0, 128, 0)`으로 선과 글자를 표시한다.
 - 이평선, 시체소굴 벽, day 벽·바닥 등 나머지 가격선과 글자는 기존 day20 바닥의 파란색을 공통으로 사용한다.
