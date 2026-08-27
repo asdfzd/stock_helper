@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 from decimal import Decimal
 from pathlib import Path
 
@@ -11,18 +12,25 @@ if str(PROJECT_ROOT) not in sys.path:
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import Qt  # noqa: E402
+from PySide6.QtCore import QEvent, Qt  # noqa: E402
+from PySide6.QtGui import QImage  # noqa: E402
 from PySide6.QtWidgets import QApplication, QPushButton  # noqa: E402
 
-from live_ui import CaptureStatusCardsView, LiveStockWindow, LogDashboard  # noqa: E402
+from capture_history import CaptureHistoryItem  # noqa: E402
+from live_ui import (  # noqa: E402
+    CaptureGallery,
+    CaptureStatusCardsView,
+    LiveStockWindow,
+    LogDashboard,
+)
 from stock_models import StockRecord, StockRegistry  # noqa: E402
 
 
 def main() -> int:
     app = QApplication.instance() or QApplication([])
     registry = StockRegistry()
-    dashboard = LogDashboard(registry)
-    status_cards: CaptureStatusCardsView = dashboard.status_cards
+    dashboard = LogDashboard()
+    status_cards = CaptureStatusCardsView(registry)
 
     status_cards.sync_from_registry()
     assert not status_cards.cards
@@ -69,16 +77,47 @@ def main() -> int:
     assert "[CAPTURE FAILED]" in activity_text
 
     window = LiveStockWindow()
-    assert window.page_stack.count() == 2
+    assert window.page_stack.count() == 3
     assert window.page_stack.currentIndex() == 0
     window._show_page(1)
     assert window.page_stack.currentIndex() == 1
     assert window.log_button.isChecked()
     assert not window.realtime_button.isChecked()
+    window._show_page(2)
+    assert window.page_stack.currentIndex() == 2
+    assert window.log_button.isChecked()
+    assert [action.text() for action in window.log_menu.actions()] == [
+        "진행사항 오류",
+        "캡처 사진",
+    ]
     assert all(
         button.text() != "티커명 직접 입력"
         for button in window.findChildren(QPushButton)
     )
+
+    deleted: list[str] = []
+    with tempfile.TemporaryDirectory(dir=PROJECT_ROOT) as temporary_directory:
+        raw_path = Path(temporary_directory) / "capture_raw.png"
+        image = QImage(120, 180, QImage.Format.Format_RGB32)
+        image.fill(Qt.GlobalColor.white)
+        assert image.save(str(raw_path))
+        gallery = CaptureGallery(deleted.append)
+        gallery.add_or_update(
+            CaptureHistoryItem("capture_1", raw_path, None, parsed_ticker="TS")
+        )
+        card = gallery.cards["capture_1"]
+        assert card.ticker_label.text() == "TS"
+        assert card.ticker_label.property("tickerWarning") is True
+        assert not card.delete_button.isVisible()
+        app.sendEvent(card, QEvent(QEvent.Type.Enter))
+        assert not card.delete_button.isHidden()
+        card.delete_button.click()
+        assert deleted == ["capture_1"]
+        gallery.add_or_update(
+            CaptureHistoryItem("capture_2", raw_path, None, parsed_ticker=None)
+        )
+        assert gallery.cards["capture_2"].ticker_label.text() == "오류"
+        gallery.deleteLater()
 
     print("[LIVE UI DASHBOARD TEST] passed")
     print("initial_cards: 0")
@@ -87,6 +126,7 @@ def main() -> int:
     print("realtime_price_status: verified")
     print("process_activity_logs: verified")
     print("left_menu_pages: verified")
+    print("capture_gallery: verified")
     print("manual_ticker_input_ui: removed")
     print("tracking_remove_status_card: verified")
     window.deleteLater()

@@ -94,6 +94,30 @@ def main() -> int:
         for value in map(Decimal, ("1.0", "2.0", "3.0", "4.0"))
     )
     assert stock.current_price == Decimal("12.34")
+
+    # 캡처 단위 삭제는 해당 기여분만 제거하고 이전 snapshot을 복원한다.
+    capture_registry = StockRegistry()
+    capture_registry.merge_analysis_result(
+        analysis("daily", [("day20_wall", "20")]), capture_id="daily_1"
+    )
+    capture_registry.merge_analysis_result(
+        analysis("daily", [("day33_wall", "33")]), capture_id="daily_2"
+    )
+    capture_registry.merge_analysis_result(minute_a, capture_id="minute_1")
+    capture_registry.merge_analysis_result(minute_b, capture_id="minute_2")
+    assert capture_registry.remove_capture("daily_2") == ("XPON",)
+    restored = capture_registry.get_snapshot("XPON")
+    assert restored is not None
+    assert restored.daily_price_levels == [("day20_wall", Decimal("20"))]
+    assert capture_registry.remove_capture("minute_2") == ("XPON",)
+    restored = capture_registry.get_snapshot("XPON")
+    assert restored is not None
+    assert restored.buy_price == Decimal("10")
+    assert restored.minute_walls == list(map(Decimal, ("1", "2", "3", "4")))
+    assert capture_registry.remove_capture("daily_1") == ("XPON",)
+    assert capture_registry.get_snapshot("XPON") is not None
+    assert capture_registry.remove_capture("minute_1") == ("XPON",)
+    assert capture_registry.get_snapshot("XPON") is None
     assert stock.price_status == "valid"
 
     minute_values = dict(stock.minute_values)
@@ -152,6 +176,7 @@ def main() -> int:
     print("rebound_price: null")
     print(f"taecho: {stock.taecho}")
     print(f"minute_walls: {stock.minute_walls}")
+    print("capture_rollback: verified")
     return 0
 
 

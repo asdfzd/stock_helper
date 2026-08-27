@@ -42,3 +42,7 @@ class PendingCaptureStore:
     def all(self) -> tuple[PendingCapture, ...]:
         with self._lock:
             return tuple(self._captures.values())
+
+    def remove(self, capture_id: str) -> PendingCapture | None:
+        with self._lock:
+            return self._captures.pop(capture_id, None)

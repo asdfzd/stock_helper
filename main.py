@@ -591,7 +591,7 @@ QFrame#stockCard {
     border-radius: 16px;
 }
 QWidget#priceArea {
-    background: rgb(192, 192, 192);
+    background: rgb(255, 255, 255);
     border-bottom-left-radius: 16px;
     border-bottom-right-radius: 16px;
 }

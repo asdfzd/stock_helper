@@ -11,6 +11,7 @@ from typing import Any
 
 import requests
 from dotenv import load_dotenv
+from runtime_paths import APP_ROOT
 
 
 BASE_URL = "https://openapi.tossinvest.com"
@@ -21,7 +22,7 @@ STOCKS_ALL_PATH = "/api/v1/stocks/all"
 REQUEST_TIMEOUT_SECONDS = 15
 TOKEN_EXPIRY_MARGIN_SECONDS = 30
 SYMBOL_PATTERN = re.compile(r"^[A-Za-z0-9.\-]+$")
-PROJECT_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = APP_ROOT
 ENV_PATH = PROJECT_ROOT / ".env"
 
 

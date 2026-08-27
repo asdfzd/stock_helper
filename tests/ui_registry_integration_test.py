@@ -223,7 +223,7 @@ def main() -> int:
     print("proximity_dwell: ±4% continuous minutes and reset verified")
     print("status_position: immediately right of ticker")
     print("header_controls: delete X only, fixed at top-right")
-    print("chart_layout: RGB(192,192,192), compact 104px header, expanded price area")
+    print("chart_layout: RGB(255,255,255), compact 104px header, expanded price area")
     print("chart_scale: proportional to farthest visible price")
     print("card_grid: top=3 bottom=3 max=6 centered")
     print("card_grid_single_row: 1-3 use full height")

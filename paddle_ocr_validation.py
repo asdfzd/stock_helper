@@ -33,9 +33,10 @@ from paddle_validation_config import (
     ROW_CENTER_Y_TOLERANCE,
     STOCK_HEADER_Y_MAX,
 )
+from runtime_paths import APP_ROOT
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = APP_ROOT
 PADDLE_CACHE = PROJECT_ROOT / ".paddle-cache"
 PADDLE_HOME = PADDLE_CACHE / "home"
 PADDLE_HOME.mkdir(parents=True, exist_ok=True)

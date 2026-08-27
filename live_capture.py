@@ -7,7 +7,8 @@ import queue
 import re
 import threading
 import time
-from dataclasses import dataclass
+import traceback
+from dataclasses import dataclass, replace
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
@@ -17,6 +18,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageGrab
 
+from capture_history import CaptureHistoryItem
 from paddle_ocr_validation import (
     OcrCapture,
     OCRToken,
@@ -28,6 +30,7 @@ from paddle_ocr_validation import (
     validate_tooltip_content,
 )
 from pending_captures import PendingCapture, PendingCaptureStore
+from runtime_paths import APP_ROOT
 from stock_models import StockRecord, StockRegistry
 from toss_api import TossApiError
 from tooltip_capture_config import (
@@ -55,7 +58,7 @@ from tooltip_capture_config import (
 )
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = APP_ROOT
 OUTPUT_DIRECTORY = PROJECT_ROOT / "ocr_results"
 QUEUE_DIRECTORY = OUTPUT_DIRECTORY / "live_queue"
 VK_OEM_3 = 0xC0
@@ -485,6 +488,7 @@ class CaptureProcessor:
         on_complete: Callable[[StockRecord], None] | None = None,
         on_pending: Callable[[PendingCapture], None] | None = None,
         on_calibration: Callable[[TickerCalibrationResult], None] | None = None,
+        on_history: Callable[[CaptureHistoryItem], None] | None = None,
         pending_store: PendingCaptureStore | None = None,
     ) -> None:
         self._reader_factory = reader_factory
@@ -493,7 +497,9 @@ class CaptureProcessor:
         self._on_complete = on_complete
         self._on_pending = on_pending
         self._on_calibration = on_calibration
+        self._on_history = on_history
         self.pending_store = pending_store or PendingCaptureStore()
+        self._history_drafts: dict[str, CaptureHistoryItem] = {}
         self._queue: queue.Queue[CaptureTask | TickerCalibrationTask | None] = queue.Queue()
         self._thread = threading.Thread(
             target=self._run, name="tooltip-ocr-worker", daemon=True
@@ -636,6 +642,56 @@ class CaptureProcessor:
             flush=True,
         )
 
+    @staticmethod
+    def _raw_image_path(task: CaptureTask) -> Path:
+        return task.image_path.with_name(
+            task.image_path.name.replace("_tooltip.png", "_raw.png")
+        )
+
+    def _begin_capture_history(self, task: CaptureTask) -> None:
+        raw_path = self._raw_image_path(task)
+        if not raw_path.is_file():
+            return
+        self._history_drafts[task.capture_id] = CaptureHistoryItem(
+            capture_id=task.capture_id,
+            raw_image_path=raw_path,
+            captured_at=task.captured_at,
+        )
+
+    def _update_capture_history(self, capture_id: str, **changes: Any) -> None:
+        item = self._history_drafts.get(capture_id)
+        if item is not None:
+            self._history_drafts[capture_id] = replace(item, **changes)
+
+    def _finish_capture_history(self, task: CaptureTask, **changes: Any) -> None:
+        item = self._history_drafts.pop(task.capture_id, None)
+        if item is None:
+            raw_path = self._raw_image_path(task)
+            if not raw_path.is_file():
+                return
+            item = CaptureHistoryItem(
+                task.capture_id, raw_path, task.captured_at
+            )
+        item = replace(item, **changes)
+        if self._on_history is not None and not self._shutdown.is_set():
+            self._on_history(item)
+
+    @staticmethod
+    def delete_capture_files(capture_id: str) -> tuple[Path, ...]:
+        """캡처 ID가 포함된 보존 파일만 명시된 결과 폴더 안에서 삭제한다."""
+        deleted: list[Path] = []
+        for root in (OUTPUT_DIRECTORY, QUEUE_DIRECTORY):
+            if not root.is_dir():
+                continue
+            resolved_root = root.resolve()
+            for path in root.rglob(f"*{capture_id}*"):
+                resolved = path.resolve()
+                if not resolved.is_file() or resolved_root not in resolved.parents:
+                    continue
+                resolved.unlink(missing_ok=True)
+                deleted.append(resolved)
+        return tuple(deleted)
+
     def enqueue_preprocessed_image(self, image_path: Path, name: str) -> CaptureTask:
         """저장 이미지로 worker/merge 흐름만 확인하기 위한 테스트 경계."""
         if self._shutdown.is_set():
@@ -753,6 +809,7 @@ class CaptureProcessor:
             )
         except Exception as exc:
             self._startup_error = exc
+            traceback.print_exc()
         finally:
             self._reader_ready.set()
         if self._startup_error is not None:
@@ -774,6 +831,10 @@ class CaptureProcessor:
                     flush=True,
                 )
                 print(f"reason: {type(exc).__name__}: {exc}", flush=True)
+                if isinstance(task, CaptureTask):
+                    self._finish_capture_history(
+                        task, error=f"{type(exc).__name__}: {exc}"
+                    )
                 if (
                     isinstance(task, TickerCalibrationTask)
                     and self._on_calibration is not None
@@ -864,6 +925,7 @@ class CaptureProcessor:
         if self._reader is None:
             raise RuntimeError("PaddleOCR reader가 worker에서 초기화되지 않았습니다.")
         self._materialize_live_capture(task)
+        self._begin_capture_history(task)
         if self._stop_requested(task, "after_capture_materialize"):
             return
         if task.ticker_image_path is None:
@@ -877,6 +939,11 @@ class CaptureProcessor:
         print(f"ticker: {ticker_result.ticker or 'null'}", flush=True)
         print(f"confidence: {ticker_result.confidence:.3f}", flush=True)
         print(f"elapsed: {ticker_result.elapsed_seconds:.2f}s", flush=True)
+        self._update_capture_history(
+            task.capture_id,
+            parsed_ticker=ticker_result.ticker,
+            raw_ticker_text=ticker_result.raw_text,
+        )
         if ticker_result.reason:
             print(f"reason: {ticker_result.reason}", flush=True)
         step_started = time.perf_counter()
@@ -969,6 +1036,11 @@ class CaptureProcessor:
                 else f"current_price_unavailable: {price_error or 'no_price'}"
             )
             self._store_pending(task, capture, analysis, reason)
+            self._finish_capture_history(
+                task,
+                chart_type=capture.chart_type,
+                error=reason,
+            )
             print(
                 f"[OCR] pending elapsed={time.perf_counter() - total_started:.2f}s",
                 flush=True,
@@ -991,7 +1063,9 @@ class CaptureProcessor:
                     flush=True,
                 )
                 return
-            stock = self._registry.merge_analysis_result(analysis)
+            stock = self._registry.merge_analysis_result(
+                analysis, capture_id=task.capture_id
+            )
             if price_error:
                 self._registry.mark_price_stale(symbol, price_error)
         print(
@@ -1003,6 +1077,12 @@ class CaptureProcessor:
             flush=True,
         )
         self._print_summary(task, analysis.chart_type, stock, price_error)
+        self._finish_capture_history(
+            task,
+            chart_type=analysis.chart_type,
+            registry_symbol=symbol,
+            error=price_error,
+        )
         if self._on_complete is not None and not self._shutdown.is_set():
             self._on_complete(stock)
 

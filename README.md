@@ -38,6 +38,23 @@ py -3.11 -m venv .venv-paddle
 ./.venv-paddle/Scripts/python.exe ./live_ui.py
 ```
 
+## 관리자 권한 Windows EXE 빌드
+
+빌드 도구를 설치하고 PowerShell에서 빌드합니다.
+
+```powershell
+& .\.venv-paddle\Scripts\python.exe -m pip install -r .\requirements-build.txt
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build_windows.ps1
+```
+
+결과물은 `dist\StockHelper\StockHelper.exe`입니다. EXE에는 관리자 권한 요청
+매니페스트가 포함되어 실행할 때 UAC 승인 창이 표시됩니다. `_internal`과
+`.paddle-cache`도 실행에 필요하므로 `dist\StockHelper` 폴더 전체를 함께
+이동해야 합니다.
+
+빌드할 때 프로젝트 루트의 `.env`가 있으면 EXE 옆으로 복사됩니다. 배포 폴더를
+다른 사람에게 전달할 때는 API 인증정보가 든 `.env`를 반드시 제거하십시오.
+
 콘솔 기반 live capture 진단:
 
 ```bash

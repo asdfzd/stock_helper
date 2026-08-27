@@ -110,11 +110,22 @@ class RefreshResult:
     error: str | None = None
 
 
+@dataclass(frozen=True)
+class CaptureContribution:
+    capture_id: str
+    stock_code: str
+    stock_name: str
+    chart_type: str
+    valid_items: tuple[tuple[str, Decimal], ...]
+
+
 class StockRegistry:
     """UI와 네트워크 계층 사이에서 여러 종목의 독립 상태를 관리한다."""
 
     def __init__(self, api_client: TossApiClient | None = None) -> None:
         self._stocks: dict[str, StockRecord] = {}
+        self._capture_contributions: dict[str, CaptureContribution] = {}
+        self._contribution_sequence = 0
         self._api_client = api_client or TossApiClient()
         self._lock = RLock()
         self._refresh_lock = RLock()
@@ -171,7 +182,42 @@ class StockRegistry:
         """종목을 Registry와 이후 현재가 polling 대상에서 제거한다."""
         normalized = symbol.strip().upper()
         with self._lock:
-            return self._stocks.pop(normalized, None)
+            removed = self._stocks.pop(normalized, None)
+            self._capture_contributions = {
+                capture_id: contribution
+                for capture_id, contribution in self._capture_contributions.items()
+                if contribution.stock_code != normalized
+            }
+            return removed
+
+    def remove_capture(self, capture_id: str) -> tuple[str, ...]:
+        """캡처 하나의 OCR 기여분을 제거하고 해당 종목을 다시 구성한다."""
+        with self._lock:
+            contribution = self._capture_contributions.pop(capture_id, None)
+            if contribution is None:
+                return ()
+            symbol = contribution.stock_code
+            previous = self._stocks.get(symbol)
+            remaining = [
+                item
+                for item in self._capture_contributions.values()
+                if item.stock_code == symbol
+            ]
+            if not remaining:
+                self._stocks.pop(symbol, None)
+                return (symbol,)
+
+            rebuilt = StockRecord(symbol, remaining[0].stock_name or symbol)
+            if previous is not None:
+                rebuilt.current_price = previous.current_price
+                rebuilt.holding = previous.holding
+                rebuilt.last_price_update = previous.last_price_update
+                rebuilt.price_status = previous.price_status
+                rebuilt.price_error = previous.price_error
+            for item in remaining:
+                self._apply_contribution(rebuilt, item)
+            self._stocks[symbol] = rebuilt
+            return (symbol,)
 
     def set_holding(self, symbol: str, holding: bool) -> None:
         with self._lock:
@@ -274,7 +320,9 @@ class StockRegistry:
                 stock.walls = list(dict.fromkeys(walls))
             return stock
 
-    def merge_analysis_result(self, result: Any) -> StockRecord:
+    def merge_analysis_result(
+        self, result: Any, capture_id: str | None = None
+    ) -> StockRecord:
         """stock_code 기준으로 일봉은 누적하고 분봉은 최신 snapshot으로 교체한다.
 
         `OcrAnalysis`의 구체 타입을 import하지 않아 저장소가 PaddleOCR에
@@ -294,6 +342,19 @@ class StockRegistry:
             if item.status == "valid" and item.value is not None
         }
         with self._lock:
+            if capture_id is None:
+                self._contribution_sequence += 1
+                contribution_id = f"__merge_{self._contribution_sequence}"
+            else:
+                contribution_id = capture_id
+            contribution = CaptureContribution(
+                contribution_id,
+                symbol,
+                (stock_info.stock_name or symbol).strip() or symbol,
+                chart_type,
+                tuple(valid_items.items()),
+            )
+            self._capture_contributions[contribution_id] = contribution
             stock = self._stocks.get(symbol)
             record_created = stock is None
             if stock is None:
@@ -358,6 +419,21 @@ class StockRegistry:
                     flush=True,
                 )
             return stock
+
+    @classmethod
+    def _apply_contribution(
+        cls, stock: StockRecord, contribution: CaptureContribution
+    ) -> None:
+        if contribution.stock_name:
+            stock.stock_name = contribution.stock_name
+        valid_items = dict(contribution.valid_items)
+        if contribution.chart_type == "daily":
+            cls._append_daily_snapshot(stock, valid_items)
+        else:
+            cls._replace_minute_snapshot(stock, valid_items)
+        stock.walls = list(
+            dict.fromkeys([*stock.daily_price_candidates, *stock.minute_walls])
+        )
 
     @staticmethod
     def _append_daily_snapshot(

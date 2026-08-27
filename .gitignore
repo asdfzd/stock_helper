@@ -6,3 +6,6 @@ ocr_crops/
 ocr_results/
 .env
 .venv/
+build/
+dist/
+.build-runtime-backup/
