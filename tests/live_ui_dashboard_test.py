@@ -4,6 +4,7 @@ import os
 import sys
 import tempfile
 from decimal import Decimal
+from io import StringIO
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -20,8 +21,10 @@ from capture_history import CaptureHistoryItem  # noqa: E402
 from live_ui import (  # noqa: E402
     CaptureGallery,
     CaptureStatusCardsView,
+    ConsoleLogBridge,
     LiveStockWindow,
     LogDashboard,
+    TeeTextStream,
 )
 from stock_models import StockRecord, StockRegistry  # noqa: E402
 
@@ -65,9 +68,13 @@ def main() -> int:
     assert tuple(status_cards.cards) == ("T1", "T2", "T3", "T4", "T5", "T6")
     assert "T0" not in status_cards.cards
 
-    dashboard.append_console_line("[OCR] complete status: success")
-    dashboard.append_console_line("ticker: unresolved")
-    dashboard.append_console_line("[CAPTURE FAILED] parser error")
+    dashboard.append_console_lines(
+        [
+            "[OCR] complete status: success",
+            "ticker: unresolved",
+            "[CAPTURE FAILED] parser error",
+        ]
+    )
     process_text = dashboard.process_log.toPlainText()
     activity_text = dashboard.activity_log.toPlainText()
     assert "[OCR] complete" in process_text
@@ -75,6 +82,23 @@ def main() -> int:
     assert "[CAPTURE FAILED]" in process_text
     assert "ticker: unresolved" in activity_text
     assert "[CAPTURE FAILED]" in activity_text
+
+    bridge = ConsoleLogBridge()
+    assert 100 <= bridge.BATCH_INTERVAL_MS <= 150
+    received_batches: list[list[str]] = []
+    bridge.lines_received.connect(received_batches.append)
+    stream = TeeTextStream(StringIO(), bridge)
+    stream.write("first\nsecond\n")
+    assert received_batches == []
+    bridge.flush_pending()
+    assert received_batches == [["first", "second"]]
+    stream.write("final without newline")
+    stream.flush_pending()
+    bridge.stop()
+    assert received_batches == [
+        ["first", "second"],
+        ["final without newline"],
+    ]
 
     window = LiveStockWindow()
     assert window.page_stack.count() == 3
@@ -125,6 +149,7 @@ def main() -> int:
     print("daily_minute_status: verified")
     print("realtime_price_status: verified")
     print("process_activity_logs: verified")
+    print("batched_console_logs_and_shutdown_flush: verified")
     print("left_menu_pages: verified")
     print("capture_gallery: verified")
     print("manual_ticker_input_ui: removed")

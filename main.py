@@ -32,6 +32,7 @@ class PriceLevel:
     price: float
     key: str = ""
     dwell_minutes: int | None = None
+    touched: bool = False
 
 
 @dataclass
@@ -112,7 +113,9 @@ class PriceArea(QWidget):
             return f"{kind}  {self._format_price(price)}"
         percentage = ((price - self._current_price) / self._current_price) * 100
         label = f"{kind}  {self._format_price(price)} ({percentage:+.2f}%)"
-        if level.dwell_minutes is not None:
+        if level.touched:
+            label += " · 터치"
+        elif level.dwell_minutes is not None:
             label += f" · 근처 {level.dwell_minutes}분째"
         return label
 
@@ -204,6 +207,7 @@ class PriceArea(QWidget):
 class StockCard(QFrame):
     PROXIMITY_KEYS = {"buy_price", "rebound_price", "taecho", "absolute_half"}
     PROXIMITY_RATIO = 0.04
+    WALL_TOUCH_RATIO = 0.03
     HEADER_HEIGHT = 104
 
     def __init__(
@@ -217,6 +221,9 @@ class StockCard(QFrame):
         self._on_delete_requested = on_delete_requested
         self._halt_info: HaltInfo | None = None
         self._proximity_started: dict[tuple[str, float], float] = {}
+        self._armed_wall_touches: set[tuple[str, float]] = set()
+        self._touched_walls: set[tuple[str, float]] = set()
+        self._last_current_price: float | None = None
         self.setObjectName("stockCard")
         self.setMinimumSize(340, 300)
         self.setMaximumWidth(520)
@@ -315,6 +322,7 @@ class StockCard(QFrame):
     def _levels_with_proximity(self, current_price: float | None) -> list[PriceLevel]:
         now = time.monotonic()
         active: set[tuple[str, float]] = set()
+        current_walls: set[tuple[str, float]] = set()
         levels: list[PriceLevel] = []
         for level in self.stock.levels:
             identity = (level.key, level.price)
@@ -331,13 +339,69 @@ class StockCard(QFrame):
                 active.add(identity)
                 started = self._proximity_started.setdefault(identity, now)
                 dwell_minutes = int((now - started) // 60)
+            is_wall = self._is_wall_level(level)
+            if is_wall:
+                current_walls.add(identity)
+                self._update_wall_touch(identity, level.price, current_price)
             levels.append(
-                PriceLevel(level.kind, level.price, level.key, dwell_minutes)
+                PriceLevel(
+                    level.kind,
+                    level.price,
+                    level.key,
+                    dwell_minutes,
+                    identity in self._touched_walls,
+                )
             )
         for identity in tuple(self._proximity_started):
             if identity not in active:
                 self._proximity_started.pop(identity, None)
+        self._armed_wall_touches.intersection_update(current_walls)
+        self._touched_walls.intersection_update(current_walls)
+        self._last_current_price = (
+            current_price
+            if current_price is not None and current_price > 0
+            else None
+        )
         return levels
+
+    @staticmethod
+    def _is_wall_level(level: PriceLevel) -> bool:
+        return (
+            level.key.startswith("corpse_wall_")
+            or (
+                level.key.startswith(("moving_average_", "day"))
+                and "_wall" in level.key
+            )
+        )
+
+    def _update_wall_touch(
+        self,
+        identity: tuple[str, float],
+        wall_price: float,
+        current_price: float | None,
+    ) -> None:
+        if current_price is None or current_price <= 0 or wall_price <= 0:
+            return
+        previous_price = self._last_current_price
+        is_near = abs(current_price - wall_price) / wall_price <= self.WALL_TOUCH_RATIO
+        crossed_up = (
+            previous_price is not None
+            and previous_price < wall_price <= current_price
+        )
+        crossed_down = (
+            previous_price is not None
+            and previous_price >= wall_price > current_price
+        )
+        came_down_below_wall = (
+            previous_price is not None
+            and current_price < previous_price
+            and current_price < wall_price
+        )
+        was_armed = identity in self._armed_wall_touches
+        if crossed_down or (was_armed and came_down_below_wall):
+            self._touched_walls.add(identity)
+        if is_near or crossed_up:
+            self._armed_wall_touches.add(identity)
 
     def _request_delete(self) -> None:
         if self._on_delete_requested is not None:

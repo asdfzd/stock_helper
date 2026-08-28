@@ -8,7 +8,7 @@ import re
 import threading
 import time
 import traceback
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
@@ -21,6 +21,7 @@ from PIL import Image, ImageGrab
 from capture_history import CaptureHistoryItem
 from paddle_ocr_validation import (
     OcrCapture,
+    OcrPerformanceMetrics,
     OCRToken,
     StockIdentity,
     StockInfo,
@@ -109,6 +110,11 @@ class CaptureTask:
     raw_image: Image.Image | None = None
     ticker_image: Image.Image | None = None
     capture_elapsed_seconds: float = 0.0
+    performance: OcrPerformanceMetrics = field(
+        default_factory=OcrPerformanceMetrics,
+        compare=False,
+        repr=False,
+    )
 
 
 @dataclass(frozen=True)
@@ -421,10 +427,24 @@ def preprocess_ticker_image(image_path: Path) -> Path:
     return output_path
 
 
-def read_ticker_crop(reader: Any, image_path: Path) -> TickerOcrResult:
+def read_ticker_crop(
+    reader: Any,
+    image_path: Path,
+    performance: OcrPerformanceMetrics | None = None,
+) -> TickerOcrResult:
     started = time.perf_counter()
-    preprocessed_path = preprocess_ticker_image(image_path)
-    tokens = primary_ocr(reader, preprocessed_path)
+    ticker_pre_started = time.perf_counter()
+    try:
+        preprocessed_path = preprocess_ticker_image(image_path)
+    finally:
+        if performance is not None:
+            performance.ticker_pre_seconds += time.perf_counter() - ticker_pre_started
+    ticker_ocr_started = time.perf_counter()
+    try:
+        tokens = primary_ocr(reader, preprocessed_path)
+    finally:
+        if performance is not None:
+            performance.ticker_ocr_seconds += time.perf_counter() - ticker_ocr_started
     valid = [
         (validate_ticker_text(token.text), token)
         for token in tokens
@@ -817,6 +837,7 @@ class CaptureProcessor:
 
         while True:
             task = self._queue.get()
+            processing_started = time.perf_counter()
             try:
                 if task is None:
                     return
@@ -852,6 +873,8 @@ class CaptureProcessor:
                     )
             finally:
                 if task is not None:
+                    if isinstance(task, CaptureTask):
+                        self._print_performance(task, processing_started)
                     self._cleanup_task_files(task)
                 self._queue.task_done()
 
@@ -933,7 +956,11 @@ class CaptureProcessor:
                 None, "", 0.0, "ticker_image_not_available", 0.0
             )
         else:
-            ticker_result = read_ticker_crop(self._reader, task.ticker_image_path)
+            ticker_result = read_ticker_crop(
+                self._reader,
+                task.ticker_image_path,
+                task.performance,
+            )
         print("[TICKER OCR]", flush=True)
         print(f"raw_text: {ticker_result.raw_text or 'null'}", flush=True)
         print(f"ticker: {ticker_result.ticker or 'null'}", flush=True)
@@ -952,11 +979,17 @@ class CaptureProcessor:
             f"already_preprocessed={task.already_preprocessed}",
             flush=True,
         )
-        preprocessed_path = (
-            task.image_path
-            if task.already_preprocessed
-            else preprocess_live_capture(task.image_path)
-        )
+        tooltip_pre_started = time.perf_counter()
+        try:
+            preprocessed_path = (
+                task.image_path
+                if task.already_preprocessed
+                else preprocess_live_capture(task.image_path)
+            )
+        finally:
+            task.performance.tooltip_pre_seconds += (
+                time.perf_counter() - tooltip_pre_started
+            )
         print(
             "[OCR STEP] after preprocessing "
             f"elapsed={time.perf_counter() - step_started:.2f}s "
@@ -976,7 +1009,10 @@ class CaptureProcessor:
         step_started = time.perf_counter()
         print("[OCR STEP] before capture_image()", flush=True)
         capture = capture_image(
-            self._reader, f"live_{task.capture_id}", preprocessed_path
+            self._reader,
+            f"live_{task.capture_id}",
+            preprocessed_path,
+            task.performance,
         )
         print(
             f"[OCR STEP] after capture_image() elapsed={time.perf_counter() - step_started:.2f}s",
@@ -1021,7 +1057,12 @@ class CaptureProcessor:
 
         step_started = time.perf_counter()
         print("[ANALYZE STEP] before analyze_capture", flush=True)
-        analysis = analyze_capture(self._reader, capture, current_price)
+        analysis = analyze_capture(
+            self._reader,
+            capture,
+            current_price,
+            task.performance,
+        )
         print(
             "[ANALYZE STEP] after analyze_capture "
             f"elapsed={time.perf_counter() - step_started:.2f}s",
@@ -1085,6 +1126,25 @@ class CaptureProcessor:
         )
         if self._on_complete is not None and not self._shutdown.is_set():
             self._on_complete(stock)
+
+    @staticmethod
+    def _print_performance(task: CaptureTask, processing_started: float) -> None:
+        metrics = task.performance
+        total_seconds = task.capture_elapsed_seconds + (
+            time.perf_counter() - processing_started
+        )
+        print(
+            "[PERF] "
+            f"capture={task.capture_elapsed_seconds:.3f}s "
+            f"ticker_pre={metrics.ticker_pre_seconds:.3f}s "
+            f"ticker_ocr={metrics.ticker_ocr_seconds:.3f}s "
+            f"tooltip_pre={metrics.tooltip_pre_seconds:.3f}s "
+            f"primary_ocr={metrics.primary_ocr_seconds:.3f}s "
+            f"numeric_retry={metrics.numeric_retry_ocr_seconds:.3f}s "
+            f"retry_count={metrics.numeric_retry_count} "
+            f"total={total_seconds:.3f}s",
+            flush=True,
+        )
 
     def _store_pending(
         self,

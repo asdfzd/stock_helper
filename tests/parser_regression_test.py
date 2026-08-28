@@ -12,6 +12,7 @@ from paddle_ocr_validation import (
     OCRToken,
     PriceResult,
     VisualLine,
+    canonical_section,
     collect_daily_items,
     collect_minute_items,
     expand_endgame_wall_multipliers,
@@ -98,6 +99,31 @@ def main() -> int:
     assert "moving_average_2_wall" not in gipr_values
     assert gipr_values["day20_floor"] == Decimal("2.7275")
 
+    # 실제 WHLR 실패 형태: 여는 대괄호가 빠진 섹션명은 복구하되 기간 숫자는
+    # 허용된 값 및 다음 벽/바닥 라벨과 정확히 일치할 때만 사용한다.
+    fuzzy_section_lines = [
+        visual_line("가격 이동평균]", 1400),
+        visual_line("33 :3.1784 (16.43%)", 1450),
+        visual_line("30 :3.2000", 1500),
+        visual_line("20", 1550),
+        visual_line("20벽 :3.4000", 1600),
+        visual_line("33", 1650),
+        visual_line("30벽 :3.5000", 1700),
+    ]
+    fuzzy_items = collect_daily_items(
+        fuzzy_section_lines, Decimal("2.7900"), image_width=800
+    )
+    fuzzy_values = {
+        item.key: item.value for item in fuzzy_items if item.status == "valid"
+    }
+    assert fuzzy_values["moving_average_33_wall"] == Decimal("3.1784")
+    assert fuzzy_values["day20_wall"] == Decimal("3.4000")
+    assert "moving_average_30_wall" not in fuzzy_values
+    assert "day33_wall" not in fuzzy_values
+    assert canonical_section("가격 이동평]") == "가격 이동평균"
+    assert canonical_section("dy20]") == "day20"
+    assert canonical_section("[day30]") == "__other__"
+
     minute_items = collect_minute_items(
         [
             visual_line("[절대값]", 1800),
@@ -138,6 +164,8 @@ def main() -> int:
     print("taecho: 6.6526")
     print("absolute_half: null")
     print("GIPR split-row parsing: 0.6010, 2.0666, 2.7275")
+    print("fuzzy section recovery: WHLR 3.1784")
+    print("exact period matching: verified")
     return 0
 
 

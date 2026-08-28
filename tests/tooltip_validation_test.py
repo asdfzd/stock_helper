@@ -44,6 +44,9 @@ day335
     partial_brackets = "가격 이동평균]\nday20]\n[day33\nday60"
     assert_validation(partial_brackets, True, "daily")
 
+    fuzzy_missing_character = "가격 이동평]\ndy20]\nday33"
+    assert_validation(fuzzy_missing_character, True, "daily")
+
     ordinary_hts = """
 차트
 투자정보
@@ -68,11 +71,14 @@ day335
     assert_validation(minute, True, "minute")
 
     assert_validation("day20", False, None)
+    assert_validation("day30\n가격 이동평균", False, None)
     assert_validation("매집봉", False, None)
 
     print("[TOOLTIP VALIDATION TEST] passed")
     print("DAIC daily without brackets: valid/daily")
     print("partial brackets: valid/daily")
+    print("one-character section omission: valid/daily")
+    print("unknown day30: invalid")
     print("ordinary HTS text: invalid")
     print("XPON-like minute: valid/minute")
     print("single daily keyword: invalid")

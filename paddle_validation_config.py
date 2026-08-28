@@ -5,6 +5,10 @@ PRICE_MAX_MULTIPLIER = 10
 NUMERIC_CROP_PADDING = 12
 NUMERIC_CROP_SCALE = 5
 
+# Paddle inference가 UI와 CPU를 과도하게 경쟁하지 않도록 제한한다.
+# 장비별 비교 테스트 시 2, 4, 6 등으로 이 값만 변경한다.
+PADDLE_CPU_THREADS = 4
+
 # 좌표는 3배 확대된 Tooltip crop 이미지 내부 기준이다. 가격 후보의 숫자 bbox
 # 중심이 이 범위 밖이면 라벨과 가까워도 절대 선택하지 않는다.
 DAILY_VALUE_X_MIN = 170

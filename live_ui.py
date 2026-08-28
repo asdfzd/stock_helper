@@ -5,6 +5,7 @@ import os
 import signal
 import sys
 import threading
+import time
 import traceback
 from datetime import datetime
 from enum import Enum
@@ -76,9 +77,39 @@ def initial_ticker_state(
 
 
 class ConsoleLogBridge(QObject):
-    """worker thread의 콘솔 한 줄을 GUI thread로 안전하게 전달한다."""
+    """worker 로그를 잠시 모아 GUI thread에 batch로 전달한다."""
 
-    line_received = Signal(str)
+    BATCH_INTERVAL_MS = 125
+    lines_received = Signal(object)
+
+    def __init__(self, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self._pending_lines: list[str] = []
+        self._lock = threading.Lock()
+        self._timer = QTimer(self)
+        self._timer.setInterval(self.BATCH_INTERVAL_MS)
+        self._timer.timeout.connect(self.flush_pending)
+        self._timer.start()
+
+    def enqueue_lines(self, lines: list[str]) -> None:
+        if not lines:
+            return
+        with self._lock:
+            self._pending_lines.extend(lines)
+
+    @Slot()
+    def flush_pending(self) -> None:
+        with self._lock:
+            if not self._pending_lines:
+                return
+            lines = self._pending_lines
+            self._pending_lines = []
+        self.lines_received.emit(lines)
+
+    @Slot()
+    def stop(self) -> None:
+        self._timer.stop()
+        self.flush_pending()
 
 
 class TeeTextStream:
@@ -99,12 +130,18 @@ class TeeTextStream:
             buffered = self._buffers.get(thread_id, "") + text.replace("\r\n", "\n")
             lines = buffered.split("\n")
             self._buffers[thread_id] = lines.pop()
-        for line in lines:
-            if line.strip():
-                self._bridge.line_received.emit(line)
+        self._bridge.enqueue_lines([line for line in lines if line.strip()])
         return written
 
     def flush(self) -> None:
+        self._original.flush()
+
+    def flush_pending(self) -> None:
+        """종료 시 개행 없이 남은 thread별 출력까지 로그 batch에 넣는다."""
+        with self._lock:
+            lines = [line for line in self._buffers.values() if line.strip()]
+            self._buffers.clear()
+        self._bridge.enqueue_lines(lines)
         self._original.flush()
 
     def __getattr__(self, name: str):
@@ -320,26 +357,81 @@ class LogDashboard(QWidget):
         )
 
     @staticmethod
-    def _append_colored(view: QTextEdit, line: str, color: QColor, bold: bool) -> None:
+    def _append_colored_lines(
+        view: QTextEdit,
+        entries: list[tuple[str, QColor, bool, str]],
+    ) -> None:
+        if not entries:
+            return
         cursor = view.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
-        if not view.document().isEmpty():
-            cursor.insertBlock()
-        text_format = QTextCharFormat()
-        text_format.setForeground(color)
-        text_format.setFontWeight(700 if bold else 400)
-        cursor.setCharFormat(text_format)
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        cursor.insertText(f"[{timestamp}] {line}")
+        cursor.beginEditBlock()
+        for line, color, bold, timestamp in entries:
+            if not view.document().isEmpty():
+                cursor.insertBlock()
+            text_format = QTextCharFormat()
+            text_format.setForeground(color)
+            text_format.setFontWeight(700 if bold else 400)
+            cursor.setCharFormat(text_format)
+            cursor.insertText(f"[{timestamp}] {line}")
+        cursor.endEditBlock()
         view.setTextCursor(cursor)
         view.ensureCursorVisible()
 
     @Slot(str)
     def append_console_line(self, line: str) -> None:
-        color, bold, important = self._line_style(line)
-        self._append_colored(self.process_log, line, color, bold)
-        if self._is_activity_line(line, important):
-            self._append_colored(self.activity_log, line, color, bold)
+        self.append_console_lines([line])
+
+    @Slot(object)
+    def append_console_lines(self, lines: list[str]) -> None:
+        process_entries: list[tuple[str, QColor, bool, str]] = []
+        activity_entries: list[tuple[str, QColor, bool, str]] = []
+        for line in lines:
+            color, bold, important = self._line_style(line)
+            entry = (line, color, bold, datetime.now().strftime("%H:%M:%S"))
+            process_entries.append(entry)
+            if self._is_activity_line(line, important):
+                activity_entries.append(entry)
+        self._append_colored_lines(self.process_log, process_entries)
+        self._append_colored_lines(self.activity_log, activity_entries)
+
+
+class UiResponsivenessMonitor(QObject):
+    """낮은 빈도의 timer로 큰 GUI event-loop 지연만 기록한다."""
+
+    INTERVAL_MS = 250
+    DELAY_THRESHOLD_MS = 200
+    REPORT_COOLDOWN_SECONDS = 2.0
+
+    def __init__(self, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self._timer = QTimer(self)
+        self._timer.setInterval(self.INTERVAL_MS)
+        self._timer.timeout.connect(self._check_delay)
+        self._last_tick = 0.0
+        self._last_report = 0.0
+        self._max_delay_ms = 0.0
+
+    def start(self) -> None:
+        self._last_tick = time.perf_counter()
+        self._timer.start()
+
+    def stop(self) -> None:
+        self._timer.stop()
+
+    @Slot()
+    def _check_delay(self) -> None:
+        now = time.perf_counter()
+        delay_ms = max(0.0, (now - self._last_tick) * 1000.0 - self.INTERVAL_MS)
+        self._last_tick = now
+        self._max_delay_ms = max(self._max_delay_ms, delay_ms)
+        if (
+            self._max_delay_ms >= self.DELAY_THRESHOLD_MS
+            and now - self._last_report >= self.REPORT_COOLDOWN_SECONDS
+        ):
+            print(f"[UI PERF] max_delay={self._max_delay_ms:.0f}ms", flush=True)
+            self._last_report = now
+            self._max_delay_ms = 0.0
 
 
 class HoverMenuButton(QPushButton):
@@ -581,6 +673,8 @@ class LiveStockWindow(QMainWindow):
         self.halt_countdown_timer.timeout.connect(
             self.cards_view.refresh_halt_countdowns
         )
+        self.ui_perf_monitor = UiResponsivenessMonitor(self)
+        self.ui_perf_monitor.start()
         self.hotkey = GlobalCaptureHotkey(self._capture_for_hotkey)
         self._services_started = False
         self._shutting_down = False
@@ -768,6 +862,7 @@ class LiveStockWindow(QMainWindow):
         if self._shutting_down:
             return
         self._shutting_down = True
+        self.ui_perf_monitor.stop()
         print("[LIVE UI] stopping ...", flush=True)
         try:
             self.hotkey.stop()
@@ -960,7 +1055,7 @@ def main() -> int:
     app.setStyleSheet(LIVE_STYLESHEET)
     window = LiveStockWindow()
     console_bridge = ConsoleLogBridge()
-    console_bridge.line_received.connect(window.log_dashboard.append_console_line)
+    console_bridge.lines_received.connect(window.log_dashboard.append_console_lines)
     original_stdout = sys.stdout
     original_stderr = sys.stderr
     null_stream: TextIO | None = None
@@ -970,6 +1065,14 @@ def main() -> int:
     sys.stderr = TeeTextStream(original_stderr or null_stream, console_bridge)
     redirected_handlers = redirect_unavailable_logging_streams(sys.stderr)
     app.aboutToQuit.connect(window.shutdown)
+
+    def flush_console_logs() -> None:
+        for stream in (sys.stdout, sys.stderr):
+            if isinstance(stream, TeeTextStream):
+                stream.flush_pending()
+        console_bridge.stop()
+
+    app.aboutToQuit.connect(flush_console_logs)
 
     # Qt event loop 중에도 콘솔 Ctrl+C가 처리되도록 Python에 주기적으로 제어를 준다.
     signal.signal(signal.SIGINT, lambda *_args: app.quit())
@@ -982,6 +1085,7 @@ def main() -> int:
     try:
         return app.exec()
     finally:
+        flush_console_logs()
         restore_logging_streams(redirected_handlers, original_stderr)
         sys.stdout = original_stdout
         sys.stderr = original_stderr

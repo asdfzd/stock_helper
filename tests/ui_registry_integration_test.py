@@ -163,6 +163,50 @@ def main() -> int:
     assert proximity_levels[0].dwell_minutes == 2
     proximity_card._levels_with_proximity(104.1)
     assert not proximity_card._proximity_started
+
+    touch_card = StockCard(
+        StockData(
+            "TOUCH",
+            98.0,
+            [
+                PriceLevel("이평33", 100.0, "moving_average_33_wall"),
+                PriceLevel("day20 바닥", 90.0, "day20_floor"),
+            ],
+        )
+    )
+    initial_touch_levels = touch_card._levels_with_proximity(98.0)
+    assert not initial_touch_levels[0].touched
+    approached_levels = touch_card._levels_with_proximity(99.0)
+    assert not approached_levels[0].touched
+    retreated_levels = touch_card._levels_with_proximity(97.5)
+    assert retreated_levels[0].touched
+    assert not retreated_levels[1].touched
+    persisted_levels = touch_card._levels_with_proximity(94.0)
+    assert persisted_levels[0].touched
+    touch_card.price_area._current_price = 94.0
+    touch_label = touch_card.price_area._label_text(persisted_levels[0])
+    assert touch_label.endswith("· 터치")
+    assert "근처" not in touch_label
+
+    untouched_card = StockCard(
+        StockData(
+            "MISS",
+            96.0,
+            [PriceLevel("이평33", 100.0, "moving_average_33_wall")],
+        )
+    )
+    untouched_card._levels_with_proximity(96.0)
+    assert not untouched_card._levels_with_proximity(95.0)[0].touched
+
+    crossed_card = StockCard(
+        StockData(
+            "CROSS",
+            101.0,
+            [PriceLevel("시체소굴", 100.0, "corpse_wall_1")],
+        )
+    )
+    crossed_card._levels_with_proximity(101.0)
+    assert crossed_card._levels_with_proximity(99.0)[0].touched
     identity_layout = proximity_card.code_label.parentWidget().layout()
     assert identity_layout.itemAt(0).widget() is proximity_card.code_label
     assert identity_layout.itemAt(1).widget() is proximity_card.status_label
@@ -221,6 +265,7 @@ def main() -> int:
     print("price_colors: buy/rebound black, taecho magenta, absolute_half green")
     print("generic_price_color: day20 floor blue")
     print("proximity_dwell: ±4% continuous minutes and reset verified")
+    print("wall_touch: ±3% approach then retreat/cross-down verified")
     print("status_position: immediately right of ticker")
     print("header_controls: delete X only, fixed at top-right")
     print("chart_layout: RGB(255,255,255), compact 104px header, expanded price area")
@@ -230,6 +275,9 @@ def main() -> int:
     print("tracking_remove: registry and card removed")
     selection_card.deleteLater()
     proximity_card.deleteLater()
+    touch_card.deleteLater()
+    untouched_card.deleteLater()
+    crossed_card.deleteLater()
     view.deleteLater()
     app.processEvents()
     return 0

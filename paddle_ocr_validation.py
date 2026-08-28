@@ -8,6 +8,7 @@ import time
 import warnings
 from dataclasses import dataclass, field, replace
 from decimal import Decimal, InvalidOperation
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +26,7 @@ from paddle_validation_config import (
     NUMERIC_CROP_PADDING_Y,
     NUMERIC_CROP_SCALE,
     OCR_CONFIDENCE_THRESHOLD,
+    PADDLE_CPU_THREADS,
     PRICE_MAX_MULTIPLIER,
     MINUTE_VALUE_X_MAX,
     MINUTE_VALUE_X_MIN,
@@ -63,6 +65,15 @@ DAILY_SECTIONS = {
     "day224",
     "day335",
 }
+DAILY_PERIODS = ("20", "33", "60", "112", "224", "335")
+NAMED_SECTIONS = {
+    "가격이동평균": "가격 이동평균",
+    "시체소굴": "시체소굴",
+    "절대값": "절대값",
+    "절대값half": "절대값half",
+}
+SECTION_FUZZY_MATCH_THRESHOLD = 0.80
+SECTION_FUZZY_UNIQUE_MARGIN = 0.10
 SECTION_PATTERN = re.compile(r"\[\s*([^\]]+?)\s*\]")
 NUMBER_PATTERN = re.compile(
     r"(?<![\w.])[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?![\w.])"
@@ -162,6 +173,16 @@ class TooltipValidation:
     reason: str | None = None
 
 
+@dataclass
+class OcrPerformanceMetrics:
+    ticker_pre_seconds: float = 0.0
+    ticker_ocr_seconds: float = 0.0
+    tooltip_pre_seconds: float = 0.0
+    primary_ocr_seconds: float = 0.0
+    numeric_retry_ocr_seconds: float = 0.0
+    numeric_retry_count: int = 0
+
+
 def create_reader() -> Any:
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", UserWarning)
@@ -171,6 +192,7 @@ def create_reader() -> Any:
             text_recognition_model_name="korean_PP-OCRv5_mobile_rec",
             ocr_version="PP-OCRv5",
             enable_mkldnn=False,
+            cpu_threads=PADDLE_CPU_THREADS,
             use_doc_orientation_classify=False,
             use_doc_unwarping=False,
             use_textline_orientation=False,
@@ -260,22 +282,83 @@ def group_visual_lines(tokens: list[OCRToken]) -> list[VisualLine]:
     return sorted(lines, key=lambda line: (line.bbox[1], line.bbox[0]))
 
 
+def normalize_section_candidate(text: str) -> str:
+    return re.sub(r"\s+", "", text).strip("[](){}<>:：").lower()
+
+
+def match_known_section(candidate: str) -> str | None:
+    """섹션 화이트리스트 안에서만 문자 누락을 보정하며 숫자는 보정하지 않는다."""
+    normalized = normalize_section_candidate(candidate)
+    if not normalized:
+        return None
+
+    day_match = re.fullmatch(r"([a-z]+)(\d+)", normalized)
+    if day_match is not None:
+        prefix, period = day_match.groups()
+        if period not in DAILY_PERIODS:
+            return None
+        if SequenceMatcher(None, prefix, "day").ratio() >= SECTION_FUZZY_MATCH_THRESHOLD:
+            return f"day{period}"
+        return None
+
+    exact = NAMED_SECTIONS.get(normalized)
+    if exact is not None:
+        return exact
+    scores = sorted(
+        (
+            (SequenceMatcher(None, normalized, known).ratio(), canonical)
+            for known, canonical in NAMED_SECTIONS.items()
+        ),
+        reverse=True,
+    )
+    best_score, best_section = scores[0]
+    second_score = scores[1][0]
+    if (
+        best_score >= SECTION_FUZZY_MATCH_THRESHOLD
+        and best_score - second_score >= SECTION_FUZZY_UNIQUE_MARGIN
+    ):
+        return best_section
+    return None
+
+
 def canonical_section(text: str) -> str | None:
     matches = list(SECTION_PATTERN.finditer(text))
-    if not matches:
+    if matches:
+        for match in matches:
+            if section := match_known_section(match.group(1)):
+                return section
+        return "__other__"
+
+    stripped = text.strip()
+    if not stripped or ":" in stripped or "：" in stripped:
         return None
-    for match in matches:
-        section = re.sub(r"\s+", " ", match.group(1).strip())
-        lowered = section.lower()
-        if lowered in {"절대값half", "절대값 half"}:
-            return "절대값half"
-        if lowered.startswith("day"):
-            normalized = lowered.replace(" ", "")
-            if normalized in DAILY_SECTIONS:
-                return normalized
-        if section in {"가격 이동평균", "시체소굴", "절대값"}:
-            return section
-    return "__other__"
+    candidate = stripped.lstrip("[")
+    if "]" in candidate:
+        candidate = candidate.split("]", 1)[0]
+    return match_known_section(candidate)
+
+
+def period_label_matches(section: str, text: str) -> bool:
+    """day 섹션/행과 이동평균 행의 기간 숫자를 정확히 비교한다."""
+    label_text = text.split(":", 1)[0].split("：", 1)[0]
+    label_periods = re.findall(r"\d+", label_text)
+    if section == "가격 이동평균":
+        return bool(label_periods) and label_periods[-1] in DAILY_PERIODS
+    if not section.startswith("day"):
+        return True
+    expected = section.removeprefix("day")
+    return bool(label_periods) and all(period == expected for period in label_periods)
+
+
+def infer_bare_day_section(lines: list[str], index: int) -> str | None:
+    """day 글자가 사라진 숫자는 다음 동일 기간 벽/바닥 행이 있을 때만 복원한다."""
+    normalized = normalize_section_candidate(lines[index])
+    if normalized not in DAILY_PERIODS or index + 1 >= len(lines):
+        return None
+    next_label = re.sub(r"\s+", "", lines[index + 1].split(":", 1)[0])
+    if re.fullmatch(rf"(?:{normalized}(?:벽|바닥)|(?:벽|바닥){normalized})", next_label):
+        return f"day{normalized}"
+    return None
 
 
 def normalize_tooltip_text(text: str) -> str:
@@ -290,6 +373,10 @@ def collect_minute_evidence(text: str) -> tuple[str, ...]:
         evidence.append("시체소굴")
     if "절대값half" in normalized:
         evidence.append("절대값half")
+    for line in text.splitlines():
+        section = canonical_section(line)
+        if section in {"시체소굴", "절대값half"} and section not in evidence:
+            evidence.append(section)
     return tuple(evidence)
 
 
@@ -299,9 +386,19 @@ def collect_daily_evidence(text: str) -> tuple[str, ...]:
     for keyword in ("가격이동평균", "매집봉"):
         if keyword in normalized:
             evidence.append("가격 이동평균" if keyword == "가격이동평균" else keyword)
-    for day in ("20", "33", "60", "112", "224", "335"):
+    for day in DAILY_PERIODS:
         if re.search(rf"day{day}(?!\d)", normalized):
             evidence.append(f"day{day}")
+    lines = [line for line in text.splitlines() if line.strip()]
+    for index, line in enumerate(lines):
+        section = canonical_section(line) or infer_bare_day_section(lines, index)
+        if (
+            section == "가격 이동평균"
+            and "가격 이동평균" not in evidence
+        ):
+            evidence.append(section)
+        elif section in DAILY_SECTIONS and section not in evidence:
+            evidence.append(section)
     return tuple(evidence)
 
 
@@ -569,16 +666,24 @@ def collect_daily_items(
     lines: list[VisualLine], current_price: Decimal | None, image_width: int
 ) -> list[PriceResult]:
     lines = merge_split_daily_value_rows(lines)
+    line_texts = [line.text for line in lines]
     items: list[PriceResult] = []
     section: str | None = None
     section_index = 0
-    for line in lines:
+    for line_index, line in enumerate(lines):
         detected_section = canonical_section(line.text)
+        if detected_section is None:
+            detected_section = infer_bare_day_section(line_texts, line_index)
         if detected_section is not None:
             section = detected_section
             section_index = 0
             remainder = line.text.split("]", 1)[1] if "]" in line.text else ""
-            if section in DAILY_SECTIONS and ":" in remainder and NUMBER_PATTERN.search(remainder):
+            if (
+                section in DAILY_SECTIONS
+                and ":" in remainder
+                and NUMBER_PATTERN.search(remainder)
+                and period_label_matches(section, line.text)
+            ):
                 section_index += 1
                 items.append(
                     make_price_result(
@@ -592,6 +697,8 @@ def collect_daily_items(
                 )
             continue
         if section not in DAILY_SECTIONS:
+            continue
+        if not period_label_matches(section, line.text):
             continue
         number_count = len(NUMBER_PATTERN.findall(line.text))
         moving_average_pair = (
@@ -1012,6 +1119,7 @@ def retry_suspicious_items(
     image_name: str,
     items: list[PriceResult],
     current_price: Decimal | None,
+    performance: OcrPerformanceMetrics | None = None,
 ) -> None:
     for item in items:
         if item.status == "valid":
@@ -1040,9 +1148,18 @@ def retry_suspicious_items(
             continue
         print(f"[NUMERIC RETRY] {item.key}: {', '.join(item.reasons)}")
         crop_path = create_numeric_retry_crop(image, item, image_name)
-        value, confidence, status, reasons, raw_text = numeric_retry(
-            reader, crop_path, current_price, item.key
-        )
+        retry_started = time.perf_counter()
+        if performance is not None:
+            performance.numeric_retry_count += 1
+        try:
+            value, confidence, status, reasons, raw_text = numeric_retry(
+                reader, crop_path, current_price, item.key
+            )
+        finally:
+            if performance is not None:
+                performance.numeric_retry_ocr_seconds += (
+                    time.perf_counter() - retry_started
+                )
         item.value = value
         item.confidence = confidence
         item.status = status
@@ -1095,13 +1212,23 @@ def save_primary_tokens(image_name: str, tokens: list[OCRToken]) -> Path:
     return output_path
 
 
-def capture_image(reader: Any, name: str, image_path: Path) -> OcrCapture:
+def capture_image(
+    reader: Any,
+    name: str,
+    image_path: Path,
+    performance: OcrPerformanceMetrics | None = None,
+) -> OcrCapture:
     image = cv2.imread(str(image_path), cv2.IMREAD_GRAYSCALE)
     if image is None:
         raise FileNotFoundError(f"전처리 이미지를 읽을 수 없습니다: {image_path}")
 
     print(f"\n{'=' * 16} {name} {'=' * 16}")
-    tokens = primary_ocr(reader, image_path)
+    primary_started = time.perf_counter()
+    try:
+        tokens = primary_ocr(reader, image_path)
+    finally:
+        if performance is not None:
+            performance.primary_ocr_seconds += time.perf_counter() - primary_started
     print(f"primary_ocr_count: 1")
     print(f"recognized_tokens: {len(tokens)}")
     print(f"structured_ocr: {save_primary_tokens(name, tokens)}")
@@ -1120,6 +1247,7 @@ def analyze_capture(
     reader: Any,
     capture: OcrCapture,
     current_price: Decimal | None,
+    performance: OcrPerformanceMetrics | None = None,
 ) -> OcrAnalysis:
     name = capture.name
     image = capture.image
@@ -1131,7 +1259,14 @@ def analyze_capture(
         items = collect_daily_items(capture.lines, current_price, image.shape[1])
     else:
         items = collect_minute_items(capture.lines, current_price, image.shape[1])
-    retry_suspicious_items(reader, image, name, items, current_price)
+    retry_suspicious_items(
+        reader,
+        image,
+        name,
+        items,
+        current_price,
+        performance,
+    )
     if chart_type == "minute":
         items = expand_endgame_wall_multipliers(items, current_price)
         items = merge_taecho_and_absolute_half(items)
