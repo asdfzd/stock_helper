@@ -138,6 +138,32 @@ def main() -> int:
     assert [level.price for level in selected_upper] == [105.0, 111.0]
     assert [level.price for level in selected_lower] == [93.0, 90.0]
 
+    upper_wall_card = StockCard(
+        StockData(
+            "UPPER-WALL",
+            100.0,
+            [
+                PriceLevel("buy", 105.0, "buy_price"),
+                PriceLevel("rebound", 110.0, "rebound_price"),
+                PriceLevel("wall", 145.0, "corpse_wall_1"),
+            ],
+        )
+    )
+    wall_upper, wall_lower = upper_wall_card._nearest_levels(100.0)
+    assert wall_lower == []
+    assert [level.price for level in wall_upper] == [105.0, 145.0]
+    assert not wall_upper[0].pinned_to_upper_edge
+    assert wall_upper[1].pinned_to_upper_edge
+    upper_wall_card.price_area.set_prices(100.0, wall_upper, wall_lower)
+    assert upper_wall_card.price_area._price_span() == 10.0
+    assert upper_wall_card.price_area._level_y(
+        145.0,
+        150.0,
+        136.0,
+        pinned_to_upper_edge=wall_upper[1].pinned_to_upper_edge,
+    ) == 14.0
+    assert "+45.00%" in upper_wall_card.price_area._label_text(wall_upper[1])
+
     assert PriceArea._level_color(
         PriceLevel("매입가", 100.0, "buy_price")
     ).getRgb()[:3] == (0, 0, 0)
@@ -207,6 +233,43 @@ def main() -> int:
     )
     crossed_card._levels_with_proximity(101.0)
     assert crossed_card._levels_with_proximity(99.0)[0].touched
+
+    daily_range_card = StockCard(
+        StockData(
+            "DAY-RANGE",
+            90.0,
+            [
+                PriceLevel("wall", 100.0, "corpse_wall_1"),
+                PriceLevel("floor", 95.0, "day20_floor"),
+            ],
+            day_low=80.0,
+            day_high=98.0,
+        )
+    )
+    daily_range_levels = daily_range_card._levels_with_proximity(90.0)
+    assert daily_range_levels[0].touched
+    assert not daily_range_levels[1].touched
+    daily_range_card.update_stock(
+        StockData(
+            "DAY-RANGE",
+            90.0,
+            [PriceLevel("wall", 100.0, "corpse_wall_1")],
+            day_low=80.0,
+            day_high=90.0,
+        )
+    )
+    assert daily_range_card._levels_with_proximity(90.0)[0].touched
+
+    missed_range_card = StockCard(
+        StockData(
+            "DAY-RANGE-MISS",
+            90.0,
+            [PriceLevel("wall", 100.0, "corpse_wall_1")],
+            day_low=80.0,
+            day_high=96.0,
+        )
+    )
+    assert not missed_range_card._levels_with_proximity(90.0)[0].touched
     identity_layout = proximity_card.code_label.parentWidget().layout()
     assert identity_layout.itemAt(0).widget() is proximity_card.code_label
     assert identity_layout.itemAt(1).widget() is proximity_card.status_label
@@ -278,6 +341,8 @@ def main() -> int:
     touch_card.deleteLater()
     untouched_card.deleteLater()
     crossed_card.deleteLater()
+    daily_range_card.deleteLater()
+    missed_range_card.deleteLater()
     view.deleteLater()
     app.processEvents()
     return 0

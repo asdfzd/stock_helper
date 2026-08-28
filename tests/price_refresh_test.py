@@ -17,12 +17,13 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 from main import StockCardsView  # noqa: E402
 from price_refresh import PriceRefreshEvent, PriceRefreshWorker  # noqa: E402
 from stock_models import StockRecord, StockRegistry  # noqa: E402
-from toss_api import CurrentPrice, TossApiError  # noqa: E402
+from toss_api import CurrentPrice, DailyPriceRange, TossApiError  # noqa: E402
 
 
 class SequencePriceClient:
     def __init__(self) -> None:
         self.calls: list[tuple[str, ...]] = []
+        self.range_calls: list[str] = []
         self.responses = [
             {"XPON": "8.10", "LUCY": "1.00"},
             {"XPON": "8.20", "LUCY": "1.05"},
@@ -37,6 +38,15 @@ class SequencePriceClient:
                 for symbol, value in values.items()
             }
         raise TossApiError("temporary failure", status_code=500)
+
+    def get_daily_price_range(self, symbol: str) -> DailyPriceRange:
+        self.range_calls.append(symbol)
+        return DailyPriceRange(
+            symbol,
+            Decimal("7.90"),
+            Decimal("8.25"),
+            f"day{len(self.range_calls)}",
+        )
 
 
 def main() -> int:
@@ -93,6 +103,9 @@ def main() -> int:
     lucy = registry.get_snapshot("LUCY")
     assert xpon is not None and lucy is not None
     assert xpon.current_price == Decimal("8.20")
+    assert xpon.day_low == Decimal("7.90")
+    assert xpon.day_high == Decimal("8.25")
+    assert client.range_calls == ["XPON", "XPON"]
     assert lucy.current_price == Decimal("1.05")
     assert xpon.price_status == "stale" and xpon.price_error == "temporary failure"
     assert xpon.holding is True
@@ -104,6 +117,12 @@ def main() -> int:
     assert upper and upper[0].price == 8.30
     assert lower and lower[0].price == 8.10
     assert card.price_label.text() == "8.2000"
+    touched_levels = card._levels_with_proximity(8.20)
+    assert all(
+        level.touched
+        for level in touched_levels
+        if level.key in {"day20_wall", "day33_wall"}
+    )
 
     print("[PRICE REFRESH TEST] passed")
     print(f"batch_calls: {len(client.calls)}")
@@ -111,6 +130,7 @@ def main() -> int:
     print("XPON: 8.10 -> 8.20 -> stale(last good 8.20)")
     print("LUCY: 1.00 -> 1.05 -> stale(last good 1.05)")
     print("candidate_recalculated: true")
+    print("daily_high_low_wall_touch: true")
     print("holding_preserved: true")
     print("ocr_and_polling_independent: true")
     view.deleteLater()

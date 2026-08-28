@@ -17,10 +17,12 @@ from runtime_paths import APP_ROOT
 BASE_URL = "https://openapi.tossinvest.com"
 TOKEN_PATH = "/oauth2/token"
 PRICES_PATH = "/api/v1/prices"
+CANDLES_PATH = "/api/v1/candles"
 STOCKS_PATH = "/api/v1/stocks"
 STOCKS_ALL_PATH = "/api/v1/stocks/all"
 REQUEST_TIMEOUT_SECONDS = 15
 TOKEN_EXPIRY_MARGIN_SECONDS = 30
+DAILY_RANGE_CACHE_SECONDS = 10.0
 SYMBOL_PATTERN = re.compile(r"^[A-Za-z0-9.\-]+$")
 PROJECT_ROOT = APP_ROOT
 ENV_PATH = PROJECT_ROOT / ".env"
@@ -30,6 +32,14 @@ ENV_PATH = PROJECT_ROOT / ".env"
 class CurrentPrice:
     symbol: str
     last_price: Decimal
+    timestamp: str | None
+
+
+@dataclass(frozen=True)
+class DailyPriceRange:
+    symbol: str
+    low_price: Decimal
+    high_price: Decimal
     timestamp: str | None
 
 
@@ -73,6 +83,7 @@ class TossApiClient:
         self._access_token: str | None = None
         self._token_expires_at = 0.0
         self._request_lock = RLock()
+        self._daily_range_cache: dict[str, tuple[float, DailyPriceRange]] = {}
 
     def _require_credentials(self) -> None:
         missing = []
@@ -174,6 +185,60 @@ class TossApiClient:
                 ),
             )
         return prices
+
+    def get_daily_price_range(self, symbol: str) -> DailyPriceRange:
+        """최신 일봉의 당일 저가·고가를 조회하며 짧게 캐시한다."""
+        normalized_symbol = self._normalize_symbols([symbol])[0]
+        now = time.monotonic()
+        with self._request_lock:
+            cached = self._daily_range_cache.get(normalized_symbol)
+            if cached is not None and now - cached[0] < DAILY_RANGE_CACHE_SECONDS:
+                return cached[1]
+            response = self._authorized_get(
+                CANDLES_PATH,
+                params={
+                    "symbol": normalized_symbol,
+                    "interval": "1d",
+                    "count": "1",
+                    "adjusted": "true",
+                },
+                context=f"당일 고가/저가 조회 실패 ({normalized_symbol})",
+            )
+
+        payload = self._json_object(response, "일봉 캔들 응답")
+        result = payload.get("result")
+        candles = result.get("candles") if isinstance(result, dict) else None
+        if not isinstance(candles, list) or not candles:
+            raise TossApiError(
+                f"일봉 캔들 응답에 {normalized_symbol} 결과가 없습니다."
+            )
+        candle = candles[0]
+        if not isinstance(candle, dict):
+            raise TossApiError(f"{normalized_symbol} 일봉 캔들 형식이 올바르지 않습니다.")
+        try:
+            low_price = Decimal(str(candle["lowPrice"]))
+            high_price = Decimal(str(candle["highPrice"]))
+        except (KeyError, InvalidOperation, TypeError, ValueError) as exc:
+            raise TossApiError(
+                f"{normalized_symbol} 일봉 캔들의 고가/저가가 올바르지 않습니다."
+            ) from exc
+        if low_price <= 0 or high_price < low_price:
+            raise TossApiError(
+                f"{normalized_symbol} 일봉 캔들의 고가/저가 범위가 올바르지 않습니다."
+            )
+        daily_range = DailyPriceRange(
+            symbol=normalized_symbol,
+            low_price=low_price,
+            high_price=high_price,
+            timestamp=(
+                str(candle["timestamp"])
+                if candle.get("timestamp") is not None
+                else None
+            ),
+        )
+        with self._request_lock:
+            self._daily_range_cache[normalized_symbol] = (now, daily_range)
+        return daily_range
 
     def get_stocks(self, symbols: list[str]) -> dict[str, ListedStock]:
         """공식 종목 기본 정보로 입력 symbol의 존재와 미국 시장 여부를 검증한다."""

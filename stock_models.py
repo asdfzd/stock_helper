@@ -6,7 +6,7 @@ from decimal import Decimal
 from threading import RLock
 from typing import Any, Iterable
 
-from toss_api import CurrentPrice, TossApiClient, TossApiError
+from toss_api import CurrentPrice, DailyPriceRange, TossApiClient, TossApiError
 
 
 @dataclass
@@ -14,6 +14,9 @@ class StockRecord:
     stock_code: str
     stock_name: str
     current_price: Decimal | None = None
+    day_low: Decimal | None = None
+    day_high: Decimal | None = None
+    day_range_timestamp: str | None = None
     buy_price: Decimal | None = None
     rebound_price: Decimal | None = None
     taecho: Decimal | None = None
@@ -108,6 +111,7 @@ class RefreshResult:
     updated_symbols: tuple[str, ...]
     unavailable_symbols: tuple[str, ...]
     error: str | None = None
+    day_range_error: str | None = None
 
 
 @dataclass(frozen=True)
@@ -210,6 +214,9 @@ class StockRegistry:
             rebuilt = StockRecord(symbol, remaining[0].stock_name or symbol)
             if previous is not None:
                 rebuilt.current_price = previous.current_price
+                rebuilt.day_low = previous.day_low
+                rebuilt.day_high = previous.day_high
+                rebuilt.day_range_timestamp = previous.day_range_timestamp
                 rebuilt.holding = previous.holding
                 rebuilt.last_price_update = previous.last_price_update
                 rebuilt.price_status = previous.price_status
@@ -260,6 +267,23 @@ class StockRegistry:
                     tuple(symbols), (), tuple(symbols), error=str(exc)
                 )
 
+            daily_ranges: dict[str, DailyPriceRange] = {}
+            daily_range_errors: list[str] = []
+            with self._lock:
+                range_symbols = [
+                    symbol
+                    for symbol in symbols
+                    if (
+                        (stock := self._stocks.get(symbol)) is not None
+                        and self._has_wall_candidates(stock)
+                    )
+                ]
+            for symbol in range_symbols:
+                try:
+                    daily_ranges[symbol] = self._api_client.get_daily_price_range(symbol)
+                except TossApiError as exc:
+                    daily_range_errors.append(f"{symbol}: {exc}")
+
             updated: list[str] = []
             unavailable: list[str] = []
             with self._lock:
@@ -276,16 +300,42 @@ class StockRegistry:
                         stock.price_error = "API 응답에 해당 symbol 결과가 없습니다."
                         unavailable.append(symbol)
                         continue
-                    self._apply_quote(stock, quote)
+                    self._apply_quote(stock, quote, daily_ranges.get(symbol))
                     updated.append(symbol)
             return RefreshResult(
-                tuple(symbols), tuple(updated), tuple(unavailable)
+                tuple(symbols),
+                tuple(updated),
+                tuple(unavailable),
+                day_range_error="; ".join(daily_range_errors) or None,
             )
 
     @staticmethod
-    def _apply_quote(stock: StockRecord, quote: CurrentPrice) -> None:
+    def _has_wall_candidates(stock: StockRecord) -> bool:
+        daily_keys = (
+            key
+            for key, _value in (
+                stock.daily_price_levels
+                if stock.daily_price_levels
+                else stock.daily_values.items()
+            )
+        )
+        return any(
+            key.startswith(("moving_average_", "day")) and "_wall" in key
+            for key in daily_keys
+        ) or any(key.startswith("corpse_wall_") for key in stock.minute_values)
+
+    @staticmethod
+    def _apply_quote(
+        stock: StockRecord,
+        quote: CurrentPrice,
+        daily_range: DailyPriceRange | None = None,
+    ) -> None:
         stock.current_price = quote.last_price
         stock.last_price_update = quote.timestamp or datetime.now(timezone.utc).isoformat()
+        if daily_range is not None:
+            stock.day_low = daily_range.low_price
+            stock.day_high = daily_range.high_price
+            stock.day_range_timestamp = daily_range.timestamp
         stock.price_status = "valid"
         stock.price_error = None
 

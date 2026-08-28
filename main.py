@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable
 
 from PySide6.QtCore import Qt
@@ -33,6 +33,7 @@ class PriceLevel:
     key: str = ""
     dwell_minutes: int | None = None
     touched: bool = False
+    pinned_to_upper_edge: bool = False
 
 
 @dataclass
@@ -40,6 +41,8 @@ class StockData:
     code: str
     current_price: float | None
     levels: list[PriceLevel]
+    day_low: float | None = None
+    day_high: float | None = None
     owned: bool = False
     stock_name: str = ""
     status: str = ""
@@ -83,7 +86,11 @@ class PriceArea(QWidget):
     def _price_span(self) -> float:
         if self._current_price is None:
             return 0.0001
-        visible = [*self._upper, *self._lower]
+        visible = [
+            level
+            for level in [*self._upper, *self._lower]
+            if not level.pinned_to_upper_edge
+        ]
         largest_difference = max(
             (abs(level.price - self._current_price) for level in visible),
             default=0.0,
@@ -91,9 +98,18 @@ class PriceArea(QWidget):
         minimum_span = abs(self._current_price) * self.MIN_PRICE_SPAN_RATIO
         return max(largest_difference, minimum_span, 0.0001)
 
-    def _level_y(self, price: float, center_y: float, half_height: float) -> float:
+    def _level_y(
+        self,
+        price: float,
+        center_y: float,
+        half_height: float,
+        *,
+        pinned_to_upper_edge: bool = False,
+    ) -> float:
         if self._current_price is None:
             return center_y
+        if pinned_to_upper_edge:
+            return center_y - half_height
         difference = price - self._current_price
         price_span = self._price_span()
         distance = min(abs(difference) / price_span, 1.0) * half_height
@@ -150,7 +166,12 @@ class PriceArea(QWidget):
 
         previous_text_y: float | None = None
         for upper in self._upper:
-            upper_y = self._level_y(upper.price, center_y, half_height)
+            upper_y = self._level_y(
+                upper.price,
+                center_y,
+                half_height,
+                pinned_to_upper_edge=upper.pinned_to_upper_edge,
+            )
             upper_text_y = min(upper_y, center_y - (self.MIN_TEXT_GAP / 2))
             if previous_text_y is not None:
                 upper_text_y = min(upper_text_y, previous_text_y - self.MIN_TEXT_GAP)
@@ -315,7 +336,22 @@ class StockCard(QFrame):
         candidates = self.stock.levels if levels is None else levels
         upper_candidates = [level for level in candidates if level.price >= current_price]
         lower_candidates = [level for level in candidates if level.price < current_price]
-        upper = sorted(upper_candidates, key=lambda level: level.price)[:2]
+        sorted_upper = sorted(upper_candidates, key=lambda level: level.price)
+        upper = sorted_upper[:2]
+        if not any(self._is_wall_level(level) for level in upper):
+            nearest_upper_wall = next(
+                (level for level in sorted_upper if self._is_wall_level(level)),
+                None,
+            )
+            if nearest_upper_wall is not None:
+                pinned_wall = replace(
+                    nearest_upper_wall,
+                    pinned_to_upper_edge=True,
+                )
+                if len(upper) < 2:
+                    upper.append(pinned_wall)
+                else:
+                    upper[-1] = pinned_wall
         lower = sorted(lower_candidates, key=lambda level: level.price, reverse=True)[:2]
         return upper, lower
 
@@ -342,6 +378,8 @@ class StockCard(QFrame):
             is_wall = self._is_wall_level(level)
             if is_wall:
                 current_walls.add(identity)
+                if self._daily_range_touches_wall(level.price):
+                    self._touched_walls.add(identity)
                 self._update_wall_touch(identity, level.price, current_price)
             levels.append(
                 PriceLevel(
@@ -403,6 +441,21 @@ class StockCard(QFrame):
         if is_near or crossed_up:
             self._armed_wall_touches.add(identity)
 
+    def _daily_range_touches_wall(self, wall_price: float) -> bool:
+        day_low = self.stock.day_low
+        day_high = self.stock.day_high
+        if (
+            wall_price <= 0
+            or day_low is None
+            or day_high is None
+            or day_low <= 0
+            or day_high < day_low
+        ):
+            return False
+        touch_low = wall_price * (1.0 - self.WALL_TOUCH_RATIO)
+        touch_high = wall_price * (1.0 + self.WALL_TOUCH_RATIO)
+        return day_high >= touch_low and day_low <= touch_high
+
     def _request_delete(self) -> None:
         if self._on_delete_requested is not None:
             self._on_delete_requested(self.stock.code)
@@ -435,6 +488,8 @@ def stock_data_from_record(stock: StockRecord) -> StockData:
         code=stock.stock_code,
         stock_name=stock.stock_name,
         current_price=current_price,
+        day_low=float(stock.day_low) if stock.day_low is not None else None,
+        day_high=float(stock.day_high) if stock.day_high is not None else None,
         levels=[
             PriceLevel(candidate.label, float(candidate.value), candidate.key)
             for candidate in build_price_candidates(stock)

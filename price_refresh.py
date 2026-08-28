@@ -63,6 +63,8 @@ class PriceRefreshWorker:
                 print(f"elapsed: {elapsed:.2f}s", flush=True)
                 if result.error:
                     print(f"error: {result.error}", flush=True)
+                if result.day_range_error:
+                    print(f"day_range_error: {result.day_range_error}", flush=True)
                 if self._on_complete is not None:
                     self._on_complete(PriceRefreshEvent(result, elapsed))
             self._stop_event.wait(self._interval_seconds)
