@@ -16,6 +16,12 @@ $modelNames = @(
     "korean_PP-OCRv5_mobile_rec"
 )
 
+$runningInstances = @(Get-Process -Name "StockHelper" -ErrorAction SilentlyContinue)
+if ($runningInstances.Count -gt 0) {
+    $runningIds = ($runningInstances | ForEach-Object { $_.Id }) -join ", "
+    throw "StockHelper is running (PID: $runningIds). Close it before building."
+}
+
 if (-not (Test-Path -LiteralPath $python -PathType Leaf)) {
     throw "Paddle virtual environment not found: $python"
 }
@@ -81,6 +87,13 @@ finally {
         if (-not (Test-Path -LiteralPath $runtimeResults)) {
             Move-Item -LiteralPath $runtimeBackup -Destination $runtimeResults
         }
+    }
+    if (
+        (Test-Path -LiteralPath (Join-Path $projectRoot ".env") -PathType Leaf) -and
+        (Test-Path -LiteralPath $distribution -PathType Container) -and
+        -not (Test-Path -LiteralPath (Join-Path $distribution ".env") -PathType Leaf)
+    ) {
+        Copy-Item -LiteralPath (Join-Path $projectRoot ".env") -Destination $distribution -Force
     }
     Pop-Location
 }
