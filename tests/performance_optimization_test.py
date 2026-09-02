@@ -36,14 +36,22 @@ class NumericReader:
 
 def main() -> int:
     sentinel_reader = object()
-    with patch.object(
-        paddle_ocr_validation,
-        "PaddleOCR",
-        return_value=sentinel_reader,
-    ) as paddle_constructor:
+    with (
+        patch.object(
+            paddle_ocr_validation,
+            "_select_paddle_device",
+            return_value="gpu:0",
+        ),
+        patch.object(
+            paddle_ocr_validation,
+            "PaddleOCR",
+            return_value=sentinel_reader,
+        ) as paddle_constructor,
+    ):
         assert create_reader() is sentinel_reader
     kwargs = paddle_constructor.call_args.kwargs
     assert kwargs["cpu_threads"] == PADDLE_CPU_THREADS
+    assert kwargs["device"] == "gpu:0"
     assert PADDLE_CPU_THREADS >= 1
     assert kwargs["enable_mkldnn"] is False
     assert kwargs["text_detection_model_name"] == "PP-OCRv5_mobile_det"

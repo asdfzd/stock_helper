@@ -9,7 +9,12 @@ import time
 import traceback
 from datetime import datetime
 from enum import Enum
-from typing import TextIO
+from typing import Callable, TextIO
+
+try:
+    import winsound
+except ImportError:  # pragma: no cover - Windows 실행본에서는 항상 제공된다.
+    winsound = None
 
 from PySide6.QtCore import QObject, QPoint, QSize, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QColor, QPixmap, QTextCharFormat, QTextCursor
@@ -47,13 +52,54 @@ from paddle_ocr_validation import create_reader
 from pending_captures import PendingCapture
 from price_refresh import PriceRefreshEvent, PriceRefreshWorker
 from runtime_paths import APP_ROOT
-from stock_models import StockRecord, StockRegistry
+from stock_models import (
+    StockRecord,
+    StockRegistry,
+    TaechoRebreakAlert,
+    TaechoRebreakWatchSnapshot,
+)
+from taecho_rebreak_config import (
+    TAECHO_REBREAK_ALERT_DISPLAY_MS,
+    TAECHO_REBREAK_APPROACH_THRESHOLD,
+    TAECHO_REBREAK_SOUND_ENABLED,
+    TAECHO_REBREAK_SOUND_TONES,
+)
 from tooltip_capture_config import TICKER_FIXED_ROI, USE_FIXED_TICKER_ROI
 
 
 class CaptureMode(str, Enum):
     TICKER_CALIBRATION = "ticker_calibration"
     CAPTURE_READY = "capture_ready"
+
+
+def start_taecho_rebreak_sound(
+    beep: Callable[[int, int], None] | None = None,
+) -> threading.Thread | None:
+    """짧은 2음 Beep를 UI thread 밖에서 재생한다."""
+    if not TAECHO_REBREAK_SOUND_ENABLED:
+        return None
+    beep_function = beep or (winsound.Beep if winsound is not None else None)
+    if beep_function is None:
+        print("[TAECHO SOUND] unavailable", flush=True)
+        return None
+
+    def play() -> None:
+        try:
+            for frequency, duration_ms in TAECHO_REBREAK_SOUND_TONES:
+                beep_function(frequency, duration_ms)
+        except Exception as exc:
+            print(
+                f"[TAECHO SOUND] failed: {type(exc).__name__}: {exc}",
+                flush=True,
+            )
+
+    thread = threading.Thread(
+        target=play,
+        name="taecho-rebreak-sound",
+        daemon=True,
+    )
+    thread.start()
+    return thread
 
 
 def initial_ticker_state(
@@ -334,6 +380,8 @@ class LogDashboard(QWidget):
             return QColor("#ff6b6b"), True, True
         if ticker_warning:
             return QColor("#ffd43b"), True, True
+        if "[taecho rebreak]" in lowered:
+            return QColor("#ffa94d"), True, True
         return QColor("#74c0fc"), False, False
 
     @staticmethod
@@ -347,6 +395,7 @@ class LogDashboard(QWidget):
                 "[analyze step]",
                 "[registry",
                 "[price",
+                "[taecho",
                 "[pending",
                 "[hotkey",
                 "[live",
@@ -554,6 +603,131 @@ class CaptureGallery(QScrollArea):
             self.grid.addWidget(card, index // self.COLUMNS, index % self.COLUMNS)
 
 
+def taecho_tracking_bubble_text(
+    snapshot: TaechoRebreakWatchSnapshot,
+) -> tuple[str, bool]:
+    current = snapshot.current_price
+    approach_floor = snapshot.wall_price * (
+        1 - TAECHO_REBREAK_APPROACH_THRESHOLD
+    )
+    approaching = (
+        snapshot.state == "ARMED"
+        and current is not None
+        and approach_floor <= current < snapshot.wall_price
+    )
+    return ("접근중..1", True) if approaching else ("...", False)
+
+
+class TaechoTrackingCard(QFrame):
+    def __init__(
+        self,
+        snapshot: TaechoRebreakWatchSnapshot,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setObjectName("taechoTrackingCard")
+        self.setMinimumSize(300, 220)
+        self.setMaximumWidth(420)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(22, 20, 22, 20)
+        layout.setSpacing(10)
+        self.ticker_label = QLabel()
+        self.ticker_label.setObjectName("trackingTicker")
+        self.wall_label = QLabel()
+        self.wall_label.setObjectName("trackingDetail")
+        self.price_label = QLabel()
+        self.price_label.setObjectName("trackingDetail")
+        self.bubble_label = QLabel()
+        self.bubble_label.setObjectName("trackingBubble")
+        self.bubble_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.bubble_label.setMinimumHeight(70)
+        self.bubble_tail = QLabel("▼")
+        self.bubble_tail.setObjectName("trackingBubbleTail")
+        self.bubble_tail.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.bubble_tail.setFixedHeight(13)
+        layout.addWidget(self.ticker_label)
+        layout.addWidget(self.wall_label)
+        layout.addWidget(self.price_label)
+        layout.addStretch()
+        layout.addWidget(self.bubble_label)
+        layout.addWidget(self.bubble_tail)
+        self.update_snapshot(snapshot)
+
+    def update_snapshot(self, snapshot: TaechoRebreakWatchSnapshot) -> None:
+        name = snapshot.stock_name.strip()
+        self.ticker_label.setText(
+            f"{snapshot.symbol} · {name}" if name and name != snapshot.symbol else snapshot.symbol
+        )
+        self.wall_label.setText(f"병합 태초마을 벽  {snapshot.wall_price}")
+        current_text = (
+            str(snapshot.current_price)
+            if snapshot.current_price is not None
+            else "unavailable"
+        )
+        self.price_label.setText(f"현재가  {current_text}")
+        bubble_text, approaching = taecho_tracking_bubble_text(snapshot)
+        self.bubble_label.setText(bubble_text)
+        self.bubble_label.setProperty("approaching", approaching)
+        self.bubble_label.style().unpolish(self.bubble_label)
+        self.bubble_label.style().polish(self.bubble_label)
+
+
+class TaechoTrackingView(QScrollArea):
+    COLUMNS = 3
+
+    def __init__(
+        self,
+        registry: StockRegistry,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.registry = registry
+        self.cards: dict[str, TaechoTrackingCard] = {}
+        self.setWidgetResizable(True)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        container = QWidget()
+        container.setObjectName("taechoTrackingContainer")
+        self.grid = QGridLayout(container)
+        self.grid.setContentsMargins(20, 20, 20, 20)
+        self.grid.setHorizontalSpacing(18)
+        self.grid.setVerticalSpacing(18)
+        self.grid.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
+        self.empty_label = QLabel("병합 태초마을 재돌파 추적 종목이 없습니다.")
+        self.empty_label.setObjectName("trackingEmpty")
+        self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setWidget(container)
+        self.sync_from_registry()
+
+    def sync_from_registry(self) -> None:
+        snapshots = self.registry.taecho_rebreak_watch_snapshots()
+        desired = {snapshot.symbol for snapshot in snapshots}
+        for symbol in tuple(self.cards):
+            if symbol not in desired:
+                card = self.cards.pop(symbol)
+                card.setParent(None)
+                card.deleteLater()
+        for snapshot in snapshots:
+            card = self.cards.get(snapshot.symbol)
+            if card is None:
+                card = TaechoTrackingCard(snapshot)
+                self.cards[snapshot.symbol] = card
+            else:
+                card.update_snapshot(snapshot)
+
+        while self.grid.count():
+            self.grid.takeAt(0)
+        self.empty_label.setVisible(not snapshots)
+        if not snapshots:
+            self.grid.addWidget(self.empty_label, 0, 0)
+            return
+        for index, snapshot in enumerate(snapshots):
+            self.grid.addWidget(
+                self.cards[snapshot.symbol],
+                index // self.COLUMNS,
+                index % self.COLUMNS,
+            )
+
+
 class RegistryUiBridge(QObject):
     """일반 Python worker callback을 Qt queued signal로 바꾸는 경계."""
 
@@ -602,6 +776,8 @@ class LiveStockWindow(QMainWindow):
         )
         self.status_label = QLabel(initial_status)
         self.status_label.setObjectName("liveStatus")
+        self.status_label.setProperty("taechoRebreakAlert", False)
+        self._taecho_alert_generation = 0
 
         realtime_page = QWidget()
         realtime_layout = QVBoxLayout(realtime_page)
@@ -609,10 +785,20 @@ class LiveStockWindow(QMainWindow):
         realtime_layout.addWidget(self.status_label)
         realtime_layout.addWidget(self.cards_view, 1)
 
+        self.tracking_view = TaechoTrackingView(self.registry)
+        tracking_page = QWidget()
+        tracking_layout = QVBoxLayout(tracking_page)
+        tracking_layout.setContentsMargins(24, 16, 24, 16)
+        tracking_title = QLabel("병합 태초마을 재돌파 추적중")
+        tracking_title.setObjectName("trackingPageTitle")
+        tracking_layout.addWidget(tracking_title)
+        tracking_layout.addWidget(self.tracking_view, 1)
+
         self.log_dashboard = LogDashboard()
         self.capture_gallery = CaptureGallery(self._delete_capture)
         self.page_stack = QStackedWidget()
         self.page_stack.addWidget(realtime_page)
+        self.page_stack.addWidget(tracking_page)
         self.page_stack.addWidget(self.log_dashboard)
         self.page_stack.addWidget(self.capture_gallery)
 
@@ -625,19 +811,25 @@ class LiveStockWindow(QMainWindow):
         menu_title = QLabel("STOCK\nHELPER")
         menu_title.setObjectName("sideMenuTitle")
         self.realtime_button = QPushButton("실시간")
+        self.tracking_button = QPushButton("추적중")
         self.log_button = HoverMenuButton("로그 확인")
-        for button in (self.realtime_button, self.log_button):
+        for button in (
+            self.realtime_button,
+            self.tracking_button,
+            self.log_button,
+        ):
             button.setObjectName("sideMenuButton")
             button.setCheckable(True)
             menu_layout.addWidget(button)
         self.realtime_button.clicked.connect(lambda: self._show_page(0))
-        self.log_button.clicked.connect(lambda: self._show_page(1))
+        self.tracking_button.clicked.connect(lambda: self._show_page(1))
+        self.log_button.clicked.connect(lambda: self._show_page(2))
         self.log_menu = QMenu(self)
         self.log_menu.setObjectName("logSubmenu")
         progress_action = self.log_menu.addAction("진행사항 오류")
         captures_action = self.log_menu.addAction("캡처 사진")
-        progress_action.triggered.connect(lambda: self._show_page(1))
-        captures_action.triggered.connect(lambda: self._show_page(2))
+        progress_action.triggered.connect(lambda: self._show_page(2))
+        captures_action.triggered.connect(lambda: self._show_page(3))
         self.log_button.hovered.connect(self._show_log_menu)
         self.realtime_button.setChecked(True)
         menu_layout.insertWidget(0, menu_title)
@@ -694,7 +886,8 @@ class LiveStockWindow(QMainWindow):
     def _show_page(self, index: int) -> None:
         self.page_stack.setCurrentIndex(index)
         self.realtime_button.setChecked(index == 0)
-        self.log_button.setChecked(index in {1, 2})
+        self.tracking_button.setChecked(index == 1)
+        self.log_button.setChecked(index in {2, 3})
 
     @Slot()
     def _show_log_menu(self) -> None:
@@ -791,6 +984,7 @@ class LiveStockWindow(QMainWindow):
     def _on_registry_updated(self, symbol: str) -> None:
         # Signal 수신 객체는 GUI thread에 있으므로 여기서만 Widget을 갱신한다.
         self.cards_view.refresh_from_registry(symbol)
+        self.tracking_view.sync_from_registry()
         stock = self.registry.get_snapshot(symbol)
         if stock is None:
             return
@@ -803,7 +997,37 @@ class LiveStockWindow(QMainWindow):
         self.status_label.setText(f"{symbol} {state} · 대기")
 
     def _on_stock_removed(self, symbol: str) -> None:
+        self.tracking_view.sync_from_registry()
         self.status_label.setText(f"{symbol} 추적 종료 · 대기")
+
+    def _show_taecho_rebreak_alert(self, alert: TaechoRebreakAlert) -> None:
+        name = alert.stock_name.strip()
+        identity = (
+            f"{alert.symbol} {name}"
+            if name and name != alert.symbol
+            else alert.symbol
+        )
+        self.status_label.setText(
+            f"{identity} 태초마을 재돌파 "
+            f"벽 {alert.wall_price} · 현재가 {alert.current_price}"
+        )
+        self.status_label.setProperty("taechoRebreakAlert", True)
+        self.status_label.style().unpolish(self.status_label)
+        self.status_label.style().polish(self.status_label)
+        self._taecho_alert_generation += 1
+        generation = self._taecho_alert_generation
+        QTimer.singleShot(
+            TAECHO_REBREAK_ALERT_DISPLAY_MS,
+            lambda: self._clear_taecho_rebreak_alert(generation),
+        )
+        start_taecho_rebreak_sound()
+
+    def _clear_taecho_rebreak_alert(self, generation: int) -> None:
+        if generation != self._taecho_alert_generation:
+            return
+        self.status_label.setProperty("taechoRebreakAlert", False)
+        self.status_label.style().unpolish(self.status_label)
+        self.status_label.style().polish(self.status_label)
 
     @Slot(object)
     def _on_history_updated(self, item: CaptureHistoryItem) -> None:
@@ -815,6 +1039,7 @@ class LiveStockWindow(QMainWindow):
         deleted_files = self.processor.delete_capture_files(capture_id)
         self.capture_gallery.remove_capture(capture_id)
         self.cards_view.sync_from_registry()
+        self.tracking_view.sync_from_registry()
         symbols_text = ", ".join(affected_symbols) or "미확정"
         self.status_label.setText(f"캡처 삭제 완료 · {symbols_text}")
         print(
@@ -835,7 +1060,10 @@ class LiveStockWindow(QMainWindow):
     def _on_prices_refreshed(self, event: PriceRefreshEvent) -> None:
         # Widget 갱신과 현재가 기준 위/아래 재계산은 GUI thread에서 수행한다.
         self.cards_view.sync_from_registry()
+        self.tracking_view.sync_from_registry()
         result = event.result
+        for alert in result.taecho_rebreak_alerts:
+            self._show_taecho_rebreak_alert(alert)
         for symbol in result.updated_symbols:
             stock = self.registry.get_snapshot(symbol)
             if stock is None:
@@ -882,6 +1110,66 @@ QLabel#liveStatus {
     font-size: 13px;
     font-weight: 600;
     padding: 4px 8px;
+}
+QLabel#liveStatus[taechoRebreakAlert="true"] {
+    color: #fff8dc;
+    background: #7a2f00;
+    border: 1px solid #ffb347;
+    border-radius: 5px;
+    font-weight: 800;
+}
+QLabel#trackingPageTitle {
+    color: #e9ecef;
+    font-family: "Malgun Gothic";
+    font-size: 17px;
+    font-weight: 800;
+    padding: 4px 8px 10px 8px;
+}
+QWidget#taechoTrackingContainer {
+    background: #111820;
+}
+QFrame#taechoTrackingCard {
+    background: #223142;
+    border: 1px solid #3a4d61;
+    border-radius: 12px;
+}
+QLabel#trackingTicker {
+    color: #f8f9fa;
+    font-family: "Malgun Gothic";
+    font-size: 18px;
+    font-weight: 800;
+}
+QLabel#trackingDetail {
+    color: #cbd5e1;
+    font-family: "Malgun Gothic";
+    font-size: 14px;
+    font-weight: 600;
+}
+QLabel#trackingBubble {
+    color: #111111;
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 18px;
+    font-family: "Malgun Gothic";
+    font-size: 17px;
+    font-weight: 800;
+    padding: 10px 16px;
+}
+QLabel#trackingBubble[approaching="true"] {
+    color: #ff2aa1;
+}
+QLabel#trackingBubbleTail {
+    color: #ffffff;
+    background: transparent;
+    border: none;
+    font-size: 14px;
+    margin-top: -5px;
+}
+QLabel#trackingEmpty {
+    color: #94a3b8;
+    font-family: "Malgun Gothic";
+    font-size: 15px;
+    padding: 40px;
 }
 QScrollArea {
     background: #111820;

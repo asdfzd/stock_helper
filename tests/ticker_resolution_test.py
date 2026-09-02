@@ -17,8 +17,30 @@ from paddle_ocr_validation import (
     external_current_price_result,
     extract_stock_identity_from_ocr,
 )
+from live_capture import (
+    generate_ticker_confusion_candidates,
+    resolve_ticker_symbol,
+)
 from pending_captures import PendingCapture, PendingCaptureStore
 from stock_models import StockRegistry
+from toss_api import ListedStock, TossApiError
+
+
+class ListedStockClient:
+    def __init__(self, symbols: tuple[str, ...], *, fail: bool = False) -> None:
+        self.symbols = set(symbols)
+        self.fail = fail
+        self.calls: list[tuple[str, ...]] = []
+
+    def get_stocks(self, symbols: list[str]) -> dict[str, ListedStock]:
+        self.calls.append(tuple(symbols))
+        if self.fail:
+            raise TossApiError("temporary validation failure")
+        return {
+            symbol: ListedStock(symbol, symbol, "NASDAQ", status="ACTIVE")
+            for symbol in symbols
+            if symbol in self.symbols
+        }
 
 
 def parsed_analysis(chart_type: str, key: str, value: str) -> OcrAnalysis:
@@ -44,6 +66,37 @@ def parsed_analysis(chart_type: str, key: str, value: str) -> OcrAnalysis:
 
 
 def main() -> int:
+    candidates = generate_ticker_confusion_candidates("VYOS")
+    assert candidates[0] == "VYOS"
+    assert "VVOS" in candidates
+    correction_client = ListedStockClient(("VVOS",))
+    corrected = resolve_ticker_symbol(correction_client, "VYOS")
+    assert corrected.ticker == "VVOS"
+    assert corrected.reason == "confusion_candidate_official_match"
+
+    exact_client = ListedStockClient(("VYOS", "VVOS"))
+    exact = resolve_ticker_symbol(exact_client, "VYOS")
+    assert exact.ticker == "VYOS"
+    assert exact.reason == "exact_official_match"
+
+    ambiguous_candidates = generate_ticker_confusion_candidates("VYOS")
+    ambiguous_symbols = tuple(
+        symbol for symbol in ambiguous_candidates if symbol in {"VVOS", "VYQS"}
+    )
+    ambiguous = resolve_ticker_symbol(
+        ListedStockClient(ambiguous_symbols),
+        "VYOS",
+    )
+    assert ambiguous.ticker is None
+    assert ambiguous.reason == "ambiguous_official_ticker_candidates"
+
+    unavailable = resolve_ticker_symbol(
+        ListedStockClient((), fail=True),
+        "VYOS",
+    )
+    assert unavailable.ticker == "VYOS"
+    assert unavailable.reason == "official_validation_unavailable"
+
     tokens = [
         OCRToken(
             "INNOVATIVE EYEWEAR INC 이노베이티브 아이웨어",
@@ -88,6 +141,10 @@ def main() -> int:
     assert not registry.all()
 
     print("[TICKER UNRESOLVED TEST] passed")
+    print("ticker_confusion_resolution: VYOS -> VVOS")
+    print("official_exact_match: preferred")
+    print("ambiguous_candidates: unresolved")
+    print("validation_failure: original OCR preserved")
     print("identity_without_ticker_hint: preserved")
     print("unresolved_snapshot: debug store only")
     print("manual_ticker_input_ui: removed")

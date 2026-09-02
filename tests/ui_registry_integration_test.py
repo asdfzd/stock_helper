@@ -159,10 +159,20 @@ def main() -> int:
     assert upper_wall_card.price_area._level_y(
         145.0,
         150.0,
-        136.0,
+        120.0,
         pinned_to_upper_edge=wall_upper[1].pinned_to_upper_edge,
-    ) == 14.0
+    ) == 30.0
     assert "+45.00%" in upper_wall_card.price_area._label_text(wall_upper[1])
+    upper_text_positions = PriceArea._upper_text_positions([35.0, 30.0], 150.0)
+    assert upper_text_positions[1] >= PriceArea.TEXT_TOP_MARGIN
+    assert upper_text_positions[0] - upper_text_positions[1] >= PriceArea.MIN_TEXT_GAP
+    lower_text_positions = PriceArea._lower_text_positions(
+        [265.0, 270.0],
+        150.0,
+        300.0,
+    )
+    assert lower_text_positions[1] <= 300.0 - PriceArea.TEXT_BOTTOM_MARGIN
+    assert lower_text_positions[1] - lower_text_positions[0] >= PriceArea.MIN_TEXT_GAP
 
     assert PriceArea._level_color(
         PriceLevel("매입가", 100.0, "buy_price")
@@ -294,8 +304,31 @@ def main() -> int:
     )
     assert scaled_area._price_span() == 40.0
 
-    # 실시간 카드는 Registry 등록 순서의 처음 6개만, 위 3개/아래 3개로 배치한다.
-    for ticker in ("CCCC", "DDDD", "EEEE", "FFFF", "GGGG"):
+    # 1~3개는 중앙 한 줄, 4개 이상은 큰 폭을 유지한 가로 스크롤 한 줄이다.
+    merge_and_refresh(
+        registry,
+        view,
+        analysis("CCCC", "daily", [("moving_average_20_wall", "12.0000")]),
+    )
+    assert view.card_count == 3
+    assert view._row_layouts[0].count() == 3
+    assert view._row_widgets[1].isHidden()
+    assert all(card.header.height() == 104 for card in view.cards.values())
+
+    merge_and_refresh(
+        registry,
+        view,
+        analysis("DDDD", "daily", [("moving_average_20_wall", "12.0000")]),
+    )
+    assert view.card_count == 4
+    assert view._row_layouts[0].count() == 4
+    assert view._row_layouts[1].count() == 0
+    assert view._row_widgets[1].isHidden()
+    assert view._row_layouts[0].alignment() & Qt.AlignmentFlag.AlignLeft
+    assert all(card.header.height() == 104 for card in view.cards.values())
+    assert all(card.minimumWidth() == 440 for card in view.cards.values())
+
+    for ticker in ("EEEE", "FFFF", "GGGG"):
         merge_and_refresh(
             registry,
             view,
@@ -304,11 +337,10 @@ def main() -> int:
     assert len(registry.all()) == 7
     assert view.card_count == 6
     assert view.tickers == ("AAAA", "BBBB", "CCCC", "DDDD", "EEEE", "FFFF")
-    assert view._row_layouts[0].count() == 3
-    assert view._row_layouts[1].count() == 3
-    assert not view._row_widgets[1].isHidden()
-    assert not view._row_layouts[0].alignment() & Qt.AlignmentFlag.AlignLeft
-    assert view._row_layouts[0].alignment() & Qt.AlignmentFlag.AlignHCenter
+    assert view._row_layouts[0].count() == 6
+    assert view._row_layouts[1].count() == 0
+    assert view._row_widgets[1].isHidden()
+    assert view._row_layouts[0].alignment() & Qt.AlignmentFlag.AlignLeft
 
     removed = registry.remove("AAAA")
     assert removed is not None
@@ -331,9 +363,9 @@ def main() -> int:
     print("wall_touch: ±3% approach then retreat/cross-down verified")
     print("status_position: immediately right of ticker")
     print("header_controls: delete X only, fixed at top-right")
-    print("chart_layout: RGB(255,255,255), compact 104px header, expanded price area")
+    print("chart_layout: RGB(255,255,255), 104px header")
     print("chart_scale: proportional to farthest visible price")
-    print("card_grid: top=3 bottom=3 max=6 centered")
+    print("card_layout: 4-6 left-to-right horizontal scroll, 440px minimum")
     print("card_grid_single_row: 1-3 use full height")
     print("tracking_remove: registry and card removed")
     selection_card.deleteLater()

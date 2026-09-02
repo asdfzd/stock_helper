@@ -17,14 +17,26 @@ hiddenimports = []
 
 # PaddleOCR and PaddleX discover pipeline components dynamically, so static import
 # analysis alone does not find everything required by the OCR worker.
-for package_name in ("paddle", "paddleocr", "paddlex"):
+for package_name in (
+    "paddle",
+    "paddleocr",
+    "paddlex",
+    "nvidia.cublas",
+    "nvidia.cuda_runtime",
+    "nvidia.cudnn",
+    "nvidia.cufft",
+    "nvidia.curand",
+    "nvidia.cusolver",
+    "nvidia.cusparse",
+    "nvidia.nvjitlink",
+):
     package_datas, package_binaries, package_hiddenimports = collect_all(package_name)
     datas += package_datas
     binaries += package_binaries
     hiddenimports += package_hiddenimports
 
 for distribution_name in (
-    "paddlepaddle",
+    "paddlepaddle-gpu",
     "paddleocr",
     "paddlex",
     # PaddleX checks OCR extras with importlib.metadata at runtime. The modules

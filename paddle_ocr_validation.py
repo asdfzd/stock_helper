@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import cv2
+import paddle
 
 from paddle_validation_config import (
     DAILY_VALUE_X_MAX,
@@ -27,6 +28,7 @@ from paddle_validation_config import (
     NUMERIC_CROP_SCALE,
     OCR_CONFIDENCE_THRESHOLD,
     PADDLE_CPU_THREADS,
+    PADDLE_DEVICE,
     PRICE_MAX_MULTIPLIER,
     MINUTE_VALUE_X_MAX,
     MINUTE_VALUE_X_MIN,
@@ -36,6 +38,10 @@ from paddle_validation_config import (
     STOCK_HEADER_Y_MAX,
 )
 from runtime_paths import APP_ROOT
+from taecho_rebreak_config import (
+    TAECHO_MERGED_METADATA_KEY,
+    TAECHO_MERGE_THRESHOLD,
+)
 
 
 PROJECT_ROOT = APP_ROOT
@@ -116,6 +122,7 @@ class PriceResult:
     source: str = "primary_ocr"
     reasons: list[str] = field(default_factory=list)
     raw_value: Decimal | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
     def label_text(self) -> str:
@@ -183,7 +190,49 @@ class OcrPerformanceMetrics:
     numeric_retry_count: int = 0
 
 
+def _select_paddle_device(requested_device: str = PADDLE_DEVICE) -> str:
+    """Select the requested GPU, falling back only when CUDA is unavailable."""
+    cuda_compiled = bool(paddle.is_compiled_with_cuda())
+    try:
+        gpu_count = int(paddle.device.cuda.device_count()) if cuda_compiled else 0
+    except (RuntimeError, OSError) as exc:
+        print(
+            "[PADDLE DEVICE] GPU unavailable fallback=cpu "
+            f"reason={type(exc).__name__}: {exc}",
+            flush=True,
+        )
+        active_device = "cpu"
+        cuda_compiled = False
+        gpu_count = 0
+    else:
+        if requested_device.startswith("gpu:") and cuda_compiled and gpu_count > 0:
+            active_device = requested_device
+        elif requested_device.startswith("gpu:"):
+            reason = "Paddle is not compiled with CUDA" if not cuda_compiled else "no CUDA device detected"
+            print(
+                f"[PADDLE DEVICE] GPU unavailable fallback=cpu reason={reason}",
+                flush=True,
+            )
+            active_device = "cpu"
+        else:
+            active_device = requested_device
+
+    paddle.set_device(active_device)
+    print("[PADDLE DEVICE]", flush=True)
+    print(f"requested={requested_device}", flush=True)
+    print(f"active={active_device}", flush=True)
+    print(f"cuda_compiled={cuda_compiled}", flush=True)
+    print(f"gpu_count={gpu_count}", flush=True)
+    if active_device.startswith("gpu:"):
+        try:
+            print(f"gpu_name={paddle.device.cuda.get_device_name()}", flush=True)
+        except (AttributeError, RuntimeError, OSError):
+            pass
+    return active_device
+
+
 def create_reader() -> Any:
+    active_device = _select_paddle_device()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", UserWarning)
         return PaddleOCR(
@@ -193,6 +242,7 @@ def create_reader() -> Any:
             ocr_version="PP-OCRv5",
             enable_mkldnn=False,
             cpu_threads=PADDLE_CPU_THREADS,
+            device=active_device,
             use_doc_orientation_classify=False,
             use_doc_unwarping=False,
             use_textline_orientation=False,
@@ -845,9 +895,15 @@ def merge_taecho_and_absolute_half(items: list[PriceResult]) -> list[PriceResult
         and taecho.value is not None
         and absolute_half.value is not None
         and taecho.value != 0
-        and abs(absolute_half.value - taecho.value) / taecho.value <= Decimal("0.01")
+        and abs(absolute_half.value - taecho.value) / taecho.value
+        <= TAECHO_MERGE_THRESHOLD
     ):
-        print("[MERGED] absolute_half -> taecho (difference <= 1%)")
+        taecho.metadata[TAECHO_MERGED_METADATA_KEY] = True
+        taecho.metadata["absolute_half_value"] = absolute_half.value
+        print(
+            "[MERGED] absolute_half -> taecho "
+            f"(difference <= {TAECHO_MERGE_THRESHOLD * 100}%)"
+        )
         # 태초마을이 대표값이며 absolute_half만 별도 후보에서 제거한다.
         return [item for item in items if item.key != "absolute_half"]
     return items

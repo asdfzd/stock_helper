@@ -6,6 +6,10 @@ from decimal import Decimal
 from threading import RLock
 from typing import Any, Iterable
 
+from taecho_rebreak_config import (
+    TAECHO_MERGED_METADATA_KEY,
+    TAECHO_REBREAK_DROP_THRESHOLD,
+)
 from toss_api import CurrentPrice, DailyPriceRange, TossApiClient, TossApiError
 
 
@@ -21,6 +25,7 @@ class StockRecord:
     rebound_price: Decimal | None = None
     taecho: Decimal | None = None
     absolute_half: Decimal | None = None
+    taecho_merged_with_absolute_half: bool = False
     walls: list[Decimal] = field(default_factory=list)
     daily_values: dict[str, Decimal] = field(default_factory=dict)
     daily_price_levels: list[tuple[str, Decimal]] = field(default_factory=list)
@@ -110,8 +115,33 @@ class RefreshResult:
     requested_symbols: tuple[str, ...]
     updated_symbols: tuple[str, ...]
     unavailable_symbols: tuple[str, ...]
+    taecho_rebreak_alerts: tuple["TaechoRebreakAlert", ...] = ()
     error: str | None = None
     day_range_error: str | None = None
+
+
+@dataclass(frozen=True)
+class TaechoRebreakAlert:
+    symbol: str
+    stock_name: str
+    wall_price: Decimal
+    current_price: Decimal
+
+
+@dataclass
+class TaechoRebreakWatch:
+    wall_price: Decimal
+    state: str = "IDLE"
+    last_price: Decimal | None = None
+
+
+@dataclass(frozen=True)
+class TaechoRebreakWatchSnapshot:
+    symbol: str
+    stock_name: str
+    wall_price: Decimal
+    current_price: Decimal | None
+    state: str
 
 
 @dataclass(frozen=True)
@@ -121,6 +151,7 @@ class CaptureContribution:
     stock_name: str
     chart_type: str
     valid_items: tuple[tuple[str, Decimal], ...]
+    taecho_merged_with_absolute_half: bool = False
 
 
 class StockRegistry:
@@ -129,6 +160,7 @@ class StockRegistry:
     def __init__(self, api_client: TossApiClient | None = None) -> None:
         self._stocks: dict[str, StockRecord] = {}
         self._capture_contributions: dict[str, CaptureContribution] = {}
+        self._taecho_rebreak_watches: dict[str, TaechoRebreakWatch] = {}
         self._contribution_sequence = 0
         self._api_client = api_client or TossApiClient()
         self._lock = RLock()
@@ -145,6 +177,7 @@ class StockRegistry:
         stock.stock_code = symbol
         with self._lock:
             self._stocks[symbol] = stock
+            self._sync_taecho_rebreak_watch_locked(stock)
         return stock
 
     def get(self, symbol: str) -> StockRecord | None:
@@ -182,11 +215,33 @@ class StockRegistry:
         with self._lock:
             return list(self._stocks)
 
+    def taecho_rebreak_watch_snapshots(
+        self,
+    ) -> tuple[TaechoRebreakWatchSnapshot, ...]:
+        """Registry 등록 순서대로 병합 태초마을 감시 상태를 복사한다."""
+        with self._lock:
+            snapshots: list[TaechoRebreakWatchSnapshot] = []
+            for symbol, stock in self._stocks.items():
+                watch = self._taecho_rebreak_watches.get(symbol)
+                if watch is None:
+                    continue
+                snapshots.append(
+                    TaechoRebreakWatchSnapshot(
+                        symbol,
+                        stock.stock_name,
+                        watch.wall_price,
+                        stock.current_price,
+                        watch.state,
+                    )
+                )
+            return tuple(snapshots)
+
     def remove(self, symbol: str) -> StockRecord | None:
         """종목을 Registry와 이후 현재가 polling 대상에서 제거한다."""
         normalized = symbol.strip().upper()
         with self._lock:
             removed = self._stocks.pop(normalized, None)
+            self._taecho_rebreak_watches.pop(normalized, None)
             self._capture_contributions = {
                 capture_id: contribution
                 for capture_id, contribution in self._capture_contributions.items()
@@ -209,6 +264,7 @@ class StockRegistry:
             ]
             if not remaining:
                 self._stocks.pop(symbol, None)
+                self._taecho_rebreak_watches.pop(symbol, None)
                 return (symbol,)
 
             rebuilt = StockRecord(symbol, remaining[0].stock_name or symbol)
@@ -224,6 +280,7 @@ class StockRegistry:
             for item in remaining:
                 self._apply_contribution(rebuilt, item)
             self._stocks[symbol] = rebuilt
+            self._sync_taecho_rebreak_watch_locked(rebuilt, force_reset=True)
             return (symbol,)
 
     def set_holding(self, symbol: str, holding: bool) -> None:
@@ -241,6 +298,93 @@ class StockRegistry:
                     "stale" if stock.current_price is not None else "unavailable"
                 )
                 stock.price_error = error
+
+    def _sync_taecho_rebreak_watch_locked(
+        self,
+        stock: StockRecord,
+        *,
+        force_reset: bool = False,
+    ) -> None:
+        symbol = stock.stock_code
+        if not stock.taecho_merged_with_absolute_half or stock.taecho is None:
+            self._taecho_rebreak_watches.pop(symbol, None)
+            return
+        existing = self._taecho_rebreak_watches.get(symbol)
+        if (
+            not force_reset
+            and existing is not None
+            and existing.wall_price == stock.taecho
+        ):
+            return
+        self._taecho_rebreak_watches[symbol] = TaechoRebreakWatch(
+            wall_price=stock.taecho,
+            last_price=stock.current_price,
+        )
+        if existing is not None:
+            print(
+                "[TAECHO WATCH] "
+                f"{symbol} reset wall={stock.taecho} state=IDLE",
+                flush=True,
+            )
+
+    def _observe_taecho_rebreak_locked(
+        self,
+        stock: StockRecord,
+    ) -> TaechoRebreakAlert | None:
+        watch = self._taecho_rebreak_watches.get(stock.stock_code)
+        current_price = stock.current_price
+        if watch is None or current_price is None:
+            return None
+
+        previous_price = watch.last_price
+        watch.last_price = current_price
+        drop_price = watch.wall_price * (
+            Decimal("1") - TAECHO_REBREAK_DROP_THRESHOLD
+        )
+
+        if watch.state == "IDLE":
+            # 첫 가격은 시작 기준값으로만 저장한다. 시작부터 -10% 아래인 종목은
+            # 위쪽 가격을 관측한 뒤 실제 하향 이탈해야만 ARMED가 된다.
+            if (
+                previous_price is not None
+                and previous_price > drop_price
+                and current_price <= drop_price
+            ):
+                watch.state = "ARMED"
+                print(
+                    "[TAECHO WATCH] "
+                    f"{stock.stock_code} armed wall={watch.wall_price} "
+                    f"threshold={drop_price} current={current_price}",
+                    flush=True,
+                )
+            return None
+
+        if watch.state == "ARMED":
+            if current_price >= watch.wall_price:
+                watch.state = "ALERTED"
+                print(
+                    "[TAECHO REBREAK] "
+                    f"{stock.stock_code} wall={watch.wall_price} "
+                    f"current={current_price} alert=true",
+                    flush=True,
+                )
+                return TaechoRebreakAlert(
+                    stock.stock_code,
+                    stock.stock_name,
+                    watch.wall_price,
+                    current_price,
+                )
+            return None
+
+        if watch.state == "ALERTED" and current_price <= drop_price:
+            watch.state = "ARMED"
+            print(
+                "[TAECHO WATCH] "
+                f"{stock.stock_code} armed wall={watch.wall_price} "
+                f"threshold={drop_price} current={current_price}",
+                flush=True,
+            )
+        return None
 
     def refresh_current_prices(self) -> RefreshResult:
         """등록된 symbol 전체를 매 호출마다 한 번의 API 요청으로 갱신한다.
@@ -286,6 +430,7 @@ class StockRegistry:
 
             updated: list[str] = []
             unavailable: list[str] = []
+            taecho_rebreak_alerts: list[TaechoRebreakAlert] = []
             with self._lock:
                 for symbol in symbols:
                     stock = self._stocks.get(symbol)
@@ -301,11 +446,15 @@ class StockRegistry:
                         unavailable.append(symbol)
                         continue
                     self._apply_quote(stock, quote, daily_ranges.get(symbol))
+                    alert = self._observe_taecho_rebreak_locked(stock)
+                    if alert is not None:
+                        taecho_rebreak_alerts.append(alert)
                     updated.append(symbol)
             return RefreshResult(
                 tuple(symbols),
                 tuple(updated),
                 tuple(unavailable),
+                tuple(taecho_rebreak_alerts),
                 day_range_error="; ".join(daily_range_errors) or None,
             )
 
@@ -366,8 +515,11 @@ class StockRegistry:
                 stock.taecho = taecho
             if absolute_half is not None:
                 stock.absolute_half = absolute_half
+            if taecho is not None or absolute_half is not None:
+                stock.taecho_merged_with_absolute_half = False
             if walls is not None:
                 stock.walls = list(dict.fromkeys(walls))
+            self._sync_taecho_rebreak_watch_locked(stock)
             return stock
 
     def merge_analysis_result(
@@ -391,6 +543,15 @@ class StockRegistry:
             for item in result.items
             if item.status == "valid" and item.value is not None
         }
+        taecho_merged_with_absolute_half = any(
+            item.key == "taecho"
+            and item.status == "valid"
+            and item.value is not None
+            and bool(
+                getattr(item, "metadata", {}).get(TAECHO_MERGED_METADATA_KEY)
+            )
+            for item in result.items
+        )
         with self._lock:
             if capture_id is None:
                 self._contribution_sequence += 1
@@ -403,6 +564,7 @@ class StockRegistry:
                 (stock_info.stock_name or symbol).strip() or symbol,
                 chart_type,
                 tuple(valid_items.items()),
+                taecho_merged_with_absolute_half,
             )
             self._capture_contributions[contribution_id] = contribution
             stock = self._stocks.get(symbol)
@@ -426,7 +588,12 @@ class StockRegistry:
             if chart_type == "daily":
                 self._append_daily_snapshot(stock, valid_items)
             else:
-                self._replace_minute_snapshot(stock, valid_items)
+                self._replace_minute_snapshot(
+                    stock,
+                    valid_items,
+                    taecho_merged_with_absolute_half,
+                )
+                self._sync_taecho_rebreak_watch_locked(stock)
 
             # 기존 소비자를 위한 합산 벽 목록. 출처별 원본은 위 필드에 유지된다.
             stock.walls = list(
@@ -480,7 +647,11 @@ class StockRegistry:
         if contribution.chart_type == "daily":
             cls._append_daily_snapshot(stock, valid_items)
         else:
-            cls._replace_minute_snapshot(stock, valid_items)
+            cls._replace_minute_snapshot(
+                stock,
+                valid_items,
+                contribution.taecho_merged_with_absolute_half,
+            )
         stock.walls = list(
             dict.fromkeys([*stock.daily_price_candidates, *stock.minute_walls])
         )
@@ -507,7 +678,9 @@ class StockRegistry:
 
     @staticmethod
     def _replace_minute_snapshot(
-        stock: StockRecord, valid_items: dict[str, Decimal]
+        stock: StockRecord,
+        valid_items: dict[str, Decimal],
+        taecho_merged_with_absolute_half: bool = False,
     ) -> None:
         # 새 캡처에 없는 값은 None/빈 목록이 되어 이전 snapshot을 보충하지 않는다.
         stock.minute_values = dict(valid_items)
@@ -522,4 +695,7 @@ class StockRegistry:
         stock.rebound_price = valid_items.get("rebound_price")
         stock.taecho = valid_items.get("taecho")
         stock.absolute_half = valid_items.get("absolute_half")
+        stock.taecho_merged_with_absolute_half = (
+            taecho_merged_with_absolute_half and stock.taecho is not None
+        )
         stock.minute_loaded = True

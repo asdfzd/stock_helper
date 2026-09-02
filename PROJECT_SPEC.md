@@ -76,6 +76,8 @@
 
 - 통합 시 `taecho`를 유지하고 `absolute_half`만 제거한다.
 - 예를 들어 두 값이 모두 `6.6526`이면 최종 `taecho = 6.6526`, `absolute_half = null`이다.
+- 통합된 `taecho`의 `PriceResult.metadata`에는 `merged_absolute_half = true`와 원래 half 값을 남긴다. 최종 UI 가격 목록은 기존처럼 `taecho` 하나만 사용한다.
+- 병합 기준은 `taecho_rebreak_config.py`의 `TAECHO_MERGE_THRESHOLD`에서 관리한다.
 
 ### 일봉 inline 숫자
 
@@ -126,7 +128,10 @@
 - calibration은 `TICKER_SEARCH_WIDTH = 160`, `TICKER_SEARCH_HEIGHT = 60`의 임시 search ROI를 OCR하고, 마우스와 겹치거나 가까운 1~4자 영문 대문자 token을 선택한다.
 - 검출 bbox를 screen absolute 좌표로 변환한 뒤 좌/우 4px, 상/하 3px margin을 더한 고정 ticker ROI를 현재 실행 세션에만 저장한다.
 - calibration 성공 후 매 백틱 입력마다 고정 ticker ROI와 마우스 상대 Tooltip ROI를 같은 callback에서 즉시 캡처하여 하나의 `CaptureTask`에 함께 저장한다.
-- 고정되는 것은 화면 좌표뿐이며 ticker 문자열은 매 capture마다 전용 ROI를 다시 OCR한다. ticker 형식은 trim/uppercase 후 `^[A-Z]{1,4}$`만 허용하고 문자를 추측하거나 보정하지 않는다.
+- 고정되는 것은 화면 좌표뿐이며 ticker 문자열은 매 capture마다 전용 ROI를 다시 OCR한다. ticker 형식은 trim/uppercase 후 `^[A-Z]{1,4}$`만 허용한다.
+- 형식 검사를 통과한 ticker는 Toss 공식 종목정보로 검증한다. OCR 원문이 공식 종목이면 항상 원문을 우선하고, 원문이 없을 때 `V/Y`, `I/L`, `O/D/Q`, `C/G`, `M/N/W`, `U/V` 계열의 한 글자 혼동 후보 중 공식 종목이 정확히 하나인 경우에만 자동 보정한다.
+- 공식 혼동 후보가 둘 이상이면 ticker를 unresolved로 보존하며 임의 선택하지 않는다. 공식 종목정보 API를 사용할 수 없으면 기존 OCR 원문을 유지하고 해당 실패 결과는 캐시하지 않는다.
+- 정상 검증과 보정 결과는 실행 중 캐시해 같은 OCR ticker의 후속 캡처에서 종목정보 API를 반복 호출하지 않는다.
 - Tooltip의 회사명, 한글 종목명 및 괄호 ticker hint는 표시 정보로 보존할 수 있지만 Registry ticker key 결정에는 사용하지 않는다.
 - 회사명 기반 Toss `/stocks/all` catalog resolver는 live ticker 결정 경로에서 호출하지 않는다. live ticker는 전용 ROI OCR을 1순위, 사용자 수동 입력을 2순위로 사용한다.
 - 전용 ticker ROI OCR이 실패하거나 confidence 기준에 미달하면 `ticker unresolved`로 보존한다.
@@ -157,6 +162,12 @@
 - 응답 가격은 symbol별 종목 데이터에 독립적으로 매핑하고, 응답에서 누락된 종목은 기존 값을 보존하면서 unavailable로 표시한다.
 - 현재 프로그램의 종목 데이터와 UI에는 API 응답의 currency를 저장하거나 표시하지 않는다.
 - 현재가는 OCR worker와 독립된 price worker가 기본 2초마다 `/api/v1/prices`의 최대 200 symbol batch 조회로 갱신한다.
+- price worker가 새 현재가를 Registry에 반영할 때 병합 태초마을 재돌파 상태도 함께 검사한다. OCR을 반복 실행하거나 일반 태초마을·day 벽·시체소굴 벽을 감시하지 않는다.
+- 병합 태초마을 감시는 종목별 현재 벽 가격과 `IDLE / ARMED / ALERTED`, 마지막 관측 가격을 Registry 내부에 보관한다. 최초 관측 가격은 기준값으로만 저장하여 프로그램 시작 당시 이미 `wall × 0.90` 이하인 종목을 자동 ARMED 처리하지 않는다.
+- `IDLE`에서 직전 관측값이 이탈선 위이고 새 현재가가 `wall × (1 - TAECHO_REBREAK_DROP_THRESHOLD)` 이하이면 `ARMED`, 이후 현재가가 wall 이상이면 `ALERTED`와 함께 한 번만 알린다. `ALERTED`에서 다시 이탈선 이하가 확인되어야 새 `ARMED` 사이클이 시작된다.
+- 새 minute OCR에서 병합 여부가 사라지거나 병합 태초마을 가격이 바뀌면 감시 상태를 초기화한다. 종목·캡처 삭제로 Registry record가 제거되면 관련 감시 상태도 제거한다.
+- 재돌파 시 기존 상단 상태 라벨을 강조해 ticker, 종목명, 벽 가격과 현재가를 표시하고 daemon thread에서 Windows `winsound.Beep` 2음을 재생한다. 소리 실패는 로그만 남기며 UI/가격 worker를 중단하지 않는다.
+- 이탈 비율, 5% 접근 기준, 소리 ON/OFF, 주파수·길이, 화면 강조 시간은 `taecho_rebreak_config.py`에서 관리한다.
 - `/api/v1/prices`에는 당일 고가·저가가 없으므로 벽 후보가 있는 종목은 `/api/v1/candles?interval=1d&count=1`의 최신 일봉에서 `lowPrice`와 `highPrice`를 추가로 조회한다.
 - 당일 고가·저가는 10초 동안 캐시하여 2초 현재가 polling과 UI 갱신에 불필요한 네트워크 지연을 추가하지 않는다. 고가·저가 조회가 실패해도 현재가 성공 결과와 마지막 정상 고가·저가는 유지한다.
 - Live UI에서는 `ENABLE_REALTIME_PRICE_POLLING = True`로 반복 polling을 활성화한다. 필요하면 설정을 `False`로 바꿔 Capture 직후 10배 필터용 단발 현재가 조회만 유지할 수 있다.
@@ -241,8 +252,9 @@
 - `StockRegistry`가 UI의 source of truth이며 ticker당 `StockRecord` 1개와 `StockCard` 1개를 유지한다.
 - 카드 영역은 처음 등장한 ticker 순서대로 최대 6개만 표시한다.
 - 종목이 1~3개일 때는 두 번째 행을 만들지 않고 한 행의 큰 카드로 세로 공간을 모두 사용한다.
-- 4번째 종목이 추가되는 순간부터 `상단 1·2·3 / 하단 4·5·6`의 3열×2행 구조로 전환한다.
-- 각 행의 카드 묶음은 중앙 정렬하고 새 카드는 기존 카드의 오른쪽에 추가한다.
+- 종목이 4개 이상이면 카드 최소 폭 440px과 104px 헤더를 유지한 채 한 행에 왼쪽부터 오른쪽으로 배치하고, 화면 너비를 넘는 카드는 가로 스크롤로 확인한다.
+- 4개 이상에서도 두 번째 행과 compact header를 사용하지 않아 카드 가격 차트의 가독성을 유지한다.
+- 1~3개 카드 묶음은 중앙 정렬하고, 4~6개는 왼쪽 정렬로 신규 ticker를 기존 카드 오른쪽에 추가한다.
 - 카드 ON/OFF 위의 `X`를 누르면 `(티커) 추적 종료할까요?` Yes/No 확인창을 표시한다. Yes 선택 시 Registry에서 종목을 제거하여 UI 카드와 현재가 polling 대상에서 함께 제외한다.
 - daily만 또는 minute만 로드된 중간 상태에서도 사용 가능한 최신 후보로 카드를 표시한다.
 - UI 후보는 누적된 일봉 벽, 최신 `minute_values`의 시체소굴 벽, `taecho`, `buy_price`, `rebound_price`에서 만든다.
@@ -253,6 +265,7 @@
 - ±10% 안의 후보를 우선 자연스럽게 볼 수 있으며 후보가 더 많아도 방향별 2개 제한을 적용한다. 예를 들어 `-15%, -10%, -7%, +5%, +11%, +19%`이면 `-10%, -7%, +5%, +11%`를 표시한다.
 - 상단 2개 후보에 벽이 없고 현재가 위에 벽 후보가 존재하면, 두 번째 상단 후보를 가장 가까운 상단 벽으로 교체해 벽을 최소 1개 표시한다.
 - 이 규칙으로 추가된 상단 벽은 차트 스케일을 확장하지 않고 상단 끝에 고정한다. 라벨의 가격과 퍼센트는 고정 위치가 아니라 실제 벽 가격을 기준으로 계산한다.
+- 상·하단 끝에 배치된 가격선의 라벨은 차트 안쪽 안전 여백에 배치하고, 같은 방향의 두 라벨이 가까우면 최소 글자 간격을 확보한다. 카드 폭이 좁으면 전체 문구가 잘리지 않도록 글자 크기를 단계적으로 줄인다.
 - ON/OFF는 `StockRecord.holding`에 저장하며 OCR snapshot과 독립적으로 유지한다.
 - OCR worker의 완료 callback은 Qt signal을 emit하고, GUI thread slot이 Registry의 복사 snapshot을 읽어 Widget을 갱신한다.
 - price worker도 Widget을 직접 수정하지 않고 Qt signal을 통해 GUI thread가 모든 카드를 다시 계산한다.
@@ -272,10 +285,14 @@
 - 이평선, day 벽 및 시체소굴 벽은 현재가가 벽의 ±3% 이내에 진입한 뒤 하락하여 벽 아래로 내려오거나, 관측 가격이 벽 위에서 아래로 통과하면 해당 선에 `터치`를 표시한다. 터치 여부는 카드가 유지되는 동안 보존하며 바닥·매입가·반등가·태초마을·절대값 half에는 적용하지 않는다.
 - Toss 최신 일봉의 당일 저가~고가 범위가 벽 가격의 ±3% 구간과 겹치면 polling 전에 이미 닿은 벽으로 판단해 즉시 `터치`를 표시한다. 이후 고가·저가 범위가 달라져도 해당 카드와 벽이 유지되는 동안 `터치` 상태를 보존한다.
 
-## 12. Live UI 메뉴와 로그 확인
+## 12. Live UI 메뉴, 재돌파 추적과 로그 확인
 
-- Live UI 왼쪽 메뉴는 `실시간`과 `로그 확인` 화면을 전환한다.
+- Live UI 왼쪽 메뉴는 `실시간`, `추적중`, `로그 확인` 순서로 화면을 전환한다.
 - `실시간` 화면은 기존 종목 카드와 캡처 상태 표시를 유지하며 수동 ticker 입력 영역은 표시하지 않는다.
+- `추적중` 화면에는 `absolute_half`와 `taecho`가 1% 이내로 병합되어 Registry에서 실제 재돌파 감시 중인 종목만 표시한다.
+- 각 추적 카드는 ticker, 종목명, 병합 태초마을 벽 가격, 현재가와 흰색 말풍선을 표시한다. 기본 말풍선은 검은색 `...`이다.
+- 감시 상태가 `ARMED`이고 현재가가 병합 태초마을 벽 아래쪽 5% 범위에 진입하면 말풍선을 분홍색 `접근중..1`로 변경한다. 일반 태초마을이나 병합되지 않은 absolute half는 이 화면에 추가하지 않는다.
+- Registry의 벽 변경·종목 삭제·캡처 삭제와 price worker 현재가 갱신 직후 `추적중` 화면도 같은 snapshot으로 갱신한다.
 - `로그 확인` 상단에는 ticker가 확정되어 Registry에 등록된 순서대로 최대 6개의 종목 상태 카드만 동적으로 생성한다.
 - 로그 상태 카드 묶음은 한 줄 중앙 정렬하고 신규 ticker 카드는 기존 카드의 오른쪽에 추가한다.
 - 각 상태 카드는 ticker, `일봉 완료/아직..`, 구분선, `분봉 완료/아직..` 및 현재가 polling 상태를 표시한다.

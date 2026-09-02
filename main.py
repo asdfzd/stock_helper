@@ -54,7 +54,10 @@ class PriceArea(QWidget):
 
     MIN_PRICE_SPAN_RATIO = 0.10
     MIN_TEXT_GAP = 24
-    EDGE_MARGIN = 14
+    EDGE_MARGIN = 30
+    TEXT_TOP_MARGIN = 30
+    TEXT_BOTTOM_MARGIN = 12
+    TEXT_HORIZONTAL_MARGIN = 8
     GENERIC_LEVEL_COLOR = QColor(77, 171, 247)
     BUY_REBOUND_COLOR = QColor(0, 0, 0)
     TAECHO_COLOR = QColor(255, 0, 255)
@@ -136,6 +139,48 @@ class PriceArea(QWidget):
         return label
 
     @classmethod
+    def _upper_text_positions(
+        cls,
+        line_ys: list[float],
+        center_y: float,
+    ) -> list[float]:
+        if not line_ys:
+            return []
+        bottom = center_y - (cls.MIN_TEXT_GAP / 2)
+        positions = [0.0] * len(line_ys)
+        for index in range(len(line_ys) - 1, -1, -1):
+            minimum = (
+                cls.TEXT_TOP_MARGIN
+                if index == len(line_ys) - 1
+                else positions[index + 1] + cls.MIN_TEXT_GAP
+            )
+            maximum = bottom - (index * cls.MIN_TEXT_GAP)
+            positions[index] = min(max(line_ys[index], minimum), maximum)
+        return positions
+
+    @classmethod
+    def _lower_text_positions(
+        cls,
+        line_ys: list[float],
+        center_y: float,
+        height: float,
+    ) -> list[float]:
+        if not line_ys:
+            return []
+        top = center_y + (cls.MIN_TEXT_GAP / 2)
+        bottom = height - cls.TEXT_BOTTOM_MARGIN
+        positions = [0.0] * len(line_ys)
+        for index in range(len(line_ys) - 1, -1, -1):
+            maximum = (
+                bottom
+                if index == len(line_ys) - 1
+                else positions[index + 1] - cls.MIN_TEXT_GAP
+            )
+            minimum = top + (index * cls.MIN_TEXT_GAP)
+            positions[index] = max(min(line_ys[index], maximum), minimum)
+        return positions
+
+    @classmethod
     def _level_color(cls, level: PriceLevel) -> QColor:
         if level.key in {"buy_price", "rebound_price"}:
             return cls.BUY_REBOUND_COLOR
@@ -164,17 +209,19 @@ class PriceArea(QWidget):
             True,
         )
 
-        previous_text_y: float | None = None
-        for upper in self._upper:
-            upper_y = self._level_y(
+        upper_ys = [
+            self._level_y(
                 upper.price,
                 center_y,
                 half_height,
                 pinned_to_upper_edge=upper.pinned_to_upper_edge,
             )
-            upper_text_y = min(upper_y, center_y - (self.MIN_TEXT_GAP / 2))
-            if previous_text_y is not None:
-                upper_text_y = min(upper_text_y, previous_text_y - self.MIN_TEXT_GAP)
+            for upper in self._upper
+        ]
+        upper_text_ys = self._upper_text_positions(upper_ys, center_y)
+        for upper, upper_y, upper_text_y in zip(
+            self._upper, upper_ys, upper_text_ys
+        ):
             self._draw_label(
                 painter,
                 upper_y,
@@ -182,14 +229,19 @@ class PriceArea(QWidget):
                 self._level_color(upper),
                 text_y=upper_text_y,
             )
-            previous_text_y = upper_text_y
 
-        previous_text_y = None
-        for lower in self._lower:
-            lower_y = self._level_y(lower.price, center_y, half_height)
-            lower_text_y = max(lower_y, center_y + (self.MIN_TEXT_GAP / 2))
-            if previous_text_y is not None:
-                lower_text_y = max(lower_text_y, previous_text_y + self.MIN_TEXT_GAP)
+        lower_ys = [
+            self._level_y(lower.price, center_y, half_height)
+            for lower in self._lower
+        ]
+        lower_text_ys = self._lower_text_positions(
+            lower_ys,
+            center_y,
+            self.height(),
+        )
+        for lower, lower_y, lower_text_y in zip(
+            self._lower, lower_ys, lower_text_ys
+        ):
             self._draw_label(
                 painter,
                 lower_y,
@@ -197,7 +249,6 @@ class PriceArea(QWidget):
                 self._level_color(lower),
                 text_y=lower_text_y,
             )
-            previous_text_y = lower_text_y
 
     def _draw_label(
         self,
@@ -217,12 +268,40 @@ class PriceArea(QWidget):
         font.setBold(emphasized)
         painter.setFont(font)
         label = self._label_text(level, emphasized)
+        available_width = max(self.width() - line_left - self.TEXT_HORIZONTAL_MARGIN, 1)
+        while (
+            painter.fontMetrics().horizontalAdvance(label) > available_width
+            and font.pointSize() > 7
+        ):
+            font.setPointSize(font.pointSize() - 1)
+            painter.setFont(font)
         label_y = y if text_y is None else text_y
+        metrics = painter.fontMetrics()
+        baseline_y = int(label_y) - 8
+        baseline_y = max(
+            metrics.ascent() + 2,
+            min(baseline_y, self.height() - metrics.descent() - 2),
+        )
         if emphasized:
-            text_width = painter.fontMetrics().horizontalAdvance(label)
-            painter.drawText(line_right - text_width, int(label_y) - 8, label)
+            text_width = metrics.horizontalAdvance(label)
+            text_x = max(
+                self.TEXT_HORIZONTAL_MARGIN,
+                min(
+                    line_right - text_width,
+                    self.width() - text_width - self.TEXT_HORIZONTAL_MARGIN,
+                ),
+            )
+            painter.drawText(text_x, baseline_y, label)
         else:
-            painter.drawText(line_left, int(label_y) - 8, label)
+            text_width = metrics.horizontalAdvance(label)
+            text_x = min(
+                line_left,
+                max(
+                    self.TEXT_HORIZONTAL_MARGIN,
+                    self.width() - text_width - self.TEXT_HORIZONTAL_MARGIN,
+                ),
+            )
+            painter.drawText(text_x, baseline_y, label)
 
 
 class StockCard(QFrame):
@@ -230,6 +309,7 @@ class StockCard(QFrame):
     PROXIMITY_RATIO = 0.04
     WALL_TOUCH_RATIO = 0.03
     HEADER_HEIGHT = 104
+    COMPACT_HEADER_HEIGHT = 80
 
     def __init__(
         self,
@@ -254,12 +334,12 @@ class StockCard(QFrame):
         card_layout.setContentsMargins(0, 0, 0, 0)
         card_layout.setSpacing(0)
 
-        header = QWidget()
-        header.setObjectName("cardHeader")
-        header.setFixedHeight(self.HEADER_HEIGHT)
-        header_layout = QVBoxLayout(header)
-        header_layout.setContentsMargins(24, 12, 24, 12)
-        header_layout.setSpacing(2)
+        self.header = QWidget()
+        self.header.setObjectName("cardHeader")
+        self.header.setFixedHeight(self.HEADER_HEIGHT)
+        self.header_layout = QVBoxLayout(self.header)
+        self.header_layout.setContentsMargins(24, 12, 24, 12)
+        self.header_layout.setSpacing(2)
 
         top_row = QWidget()
         top_row.setObjectName("cardHeaderTopRow")
@@ -299,14 +379,21 @@ class StockCard(QFrame):
         self.halt_label.setObjectName("circuitBreakerStatus")
         self.halt_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.halt_label.setVisible(False)
-        header_layout.addWidget(top_row, 1)
-        header_layout.addWidget(self.halt_label, 0)
+        self.header_layout.addWidget(top_row, 1)
+        self.header_layout.addWidget(self.halt_label, 0)
 
         self.price_area = PriceArea()
-        card_layout.addWidget(header, 0)
+        card_layout.addWidget(self.header, 0)
         card_layout.addWidget(self.price_area, 1)
 
         self.update_stock(stock)
+
+    def set_compact_header(self, compact: bool) -> None:
+        self.header.setFixedHeight(
+            self.COMPACT_HEADER_HEIGHT if compact else self.HEADER_HEIGHT
+        )
+        vertical_margin = 8 if compact else 12
+        self.header_layout.setContentsMargins(24, vertical_margin, 24, vertical_margin)
 
     def update_stock(self, stock: StockData) -> None:
         """기존 카드 객체를 유지하면서 Registry 최신 snapshot을 반영한다."""
@@ -501,7 +588,7 @@ def stock_data_from_record(stock: StockRecord) -> StockData:
 
 
 class StockCardsView(QScrollArea):
-    """Registry 순서대로 최대 6개 카드를 중앙 정렬한 3열×2행 영역."""
+    """Registry 순서대로 최대 6개 카드를 크게 유지해 표시한다."""
 
     MAX_CARDS = 6
     CARDS_PER_ROW = 3
@@ -519,6 +606,7 @@ class StockCardsView(QScrollArea):
         self.cards: dict[str, StockCard] = {}
         self.setWidgetResizable(True)
         self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
 
         container = QWidget()
         container.setObjectName("stockCardsContainer")
@@ -605,11 +693,16 @@ class StockCardsView(QScrollArea):
                 row_layout.takeAt(0)
 
         cards = list(self.cards.values())
-        use_two_rows = len(cards) >= 4
-        self._row_widgets[1].setVisible(use_two_rows)
-        for index, card in enumerate(cards):
-            row_index = index // self.CARDS_PER_ROW if use_two_rows else 0
-            self._row_layouts[row_index].addWidget(card)
+        use_horizontal_scroll = len(cards) >= 4
+        self._row_widgets[1].setVisible(False)
+        self._row_layouts[0].setAlignment(
+            (Qt.AlignmentFlag.AlignLeft if use_horizontal_scroll else Qt.AlignmentFlag.AlignHCenter)
+            | Qt.AlignmentFlag.AlignVCenter
+        )
+        for card in cards:
+            card.set_compact_header(False)
+            card.setMinimumWidth(440 if use_horizontal_scroll else 340)
+            self._row_layouts[0].addWidget(card)
 
     def _confirm_remove_stock(self, symbol: str) -> None:
         answer = QMessageBox.question(

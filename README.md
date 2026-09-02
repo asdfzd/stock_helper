@@ -30,6 +30,26 @@ py -3.11 -m venv .venv-paddle
 ./.venv-paddle/Scripts/python.exe -m pip install -r requirements-paddle.txt
 ```
 
+PaddlePaddle backend는 환경에 맞게 별도로 설치합니다. Windows NVIDIA GPU
+(CUDA 12.6 호환 드라이버)는 다음 공식 cu126 패키지를 사용합니다.
+
+```powershell
+& .\.venv-paddle\Scripts\python.exe -m pip uninstall -y paddlepaddle
+& .\.venv-paddle\Scripts\python.exe -m pip install paddlepaddle-gpu==3.3.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu126/
+```
+
+GPU를 사용할 수 없는 PC의 CPU fallback 설치 방법은 다음과 같습니다.
+
+```powershell
+& .\.venv-paddle\Scripts\python.exe -m pip uninstall -y paddlepaddle-gpu
+& .\.venv-paddle\Scripts\python.exe -m pip install paddlepaddle==3.3.0 -i https://www.paddlepaddle.org.cn/packages/stable/cpu/
+```
+
+실행 시 `[PADDLE DEVICE]` 로그에서 요청 장치, 실제 장치, CUDA 지원 여부와
+GPU 개수를 한 번 확인할 수 있습니다. GPU 사용량과 VRAM은 별도 PowerShell에서
+`nvidia-smi -l 1`로 확인합니다. GTX 1650 4GB에서는 reader를 한 번 생성해 계속
+재사용하는 현재 구조를 유지하며, FP16/TensorRT/INT8은 사용하지 않습니다.
+
 ## 실행
 
 메인 UI:

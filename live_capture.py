@@ -72,6 +72,21 @@ HOTKEYS = {
 }
 
 TICKER_PATTERN = re.compile(r"^[A-Z]{1,4}$")
+TICKER_OCR_CONFUSION_ALTERNATIVES: dict[str, tuple[str, ...]] = {
+    "C": ("G",),
+    "D": ("O",),
+    "G": ("C",),
+    "I": ("L",),
+    "L": ("I",),
+    "M": ("N", "W"),
+    "N": ("M",),
+    "O": ("D", "Q"),
+    "Q": ("O",),
+    "U": ("V",),
+    "V": ("U", "Y"),
+    "W": ("M",),
+    "Y": ("V",),
+}
 
 
 class POINT(ctypes.Structure):
@@ -143,6 +158,15 @@ class TickerOcrResult:
     confidence: float
     reason: str | None
     elapsed_seconds: float
+
+
+@dataclass(frozen=True)
+class TickerResolution:
+    ticker: str | None
+    candidates: tuple[str, ...]
+    matched_candidates: tuple[str, ...]
+    reason: str
+    error: str | None = None
 
 
 @dataclass(frozen=True)
@@ -222,6 +246,58 @@ def normalize_ticker_text(text: str) -> str:
 def validate_ticker_text(text: str) -> str | None:
     normalized = normalize_ticker_text(text)
     return normalized if TICKER_PATTERN.fullmatch(normalized) else None
+
+
+def generate_ticker_confusion_candidates(ticker: str) -> tuple[str, ...]:
+    """OCR 원문과 한 글자 시각 혼동 후보만 안정적인 순서로 만든다."""
+    normalized = validate_ticker_text(ticker)
+    if normalized is None:
+        return ()
+    candidates = [normalized]
+    for index, character in enumerate(normalized):
+        for replacement in TICKER_OCR_CONFUSION_ALTERNATIVES.get(character, ()):
+            candidate = normalized[:index] + replacement + normalized[index + 1 :]
+            if candidate not in candidates:
+                candidates.append(candidate)
+    return tuple(candidates)
+
+
+def resolve_ticker_symbol(api_client: Any, ticker: str) -> TickerResolution:
+    """공식 종목정보에서 원문 우선, 유일한 혼동 후보 차선으로 ticker를 확정한다."""
+    candidates = generate_ticker_confusion_candidates(ticker)
+    if not candidates:
+        return TickerResolution(None, (), (), "invalid_ticker_format")
+    original = candidates[0]
+    try:
+        listed = api_client.get_stocks(list(candidates))
+    except TossApiError as exc:
+        return TickerResolution(
+            original,
+            candidates,
+            (),
+            "official_validation_unavailable",
+            str(exc),
+        )
+
+    matched = tuple(candidate for candidate in candidates if candidate in listed)
+    if original in matched:
+        return TickerResolution(original, candidates, matched, "exact_official_match")
+    alternatives = tuple(candidate for candidate in matched if candidate != original)
+    if len(alternatives) == 1:
+        return TickerResolution(
+            alternatives[0],
+            candidates,
+            matched,
+            "confusion_candidate_official_match",
+        )
+    if alternatives:
+        return TickerResolution(
+            None,
+            candidates,
+            matched,
+            "ambiguous_official_ticker_candidates",
+        )
+    return TickerResolution(None, candidates, matched, "official_ticker_not_found")
 
 
 def point_to_bbox_distance(point: tuple[float, float], bbox: tuple[int, int, int, int]) -> float:
@@ -529,6 +605,47 @@ class CaptureProcessor:
         self._state_lock = threading.Lock()
         self._reader_ready = threading.Event()
         self._startup_error: Exception | None = None
+        self._ticker_resolution_cache: dict[str, TickerResolution] = {}
+
+    def _resolve_ticker_result(self, result: TickerOcrResult) -> TickerOcrResult:
+        if result.ticker is None:
+            return result
+        raw_ticker = result.ticker
+        resolution = self._ticker_resolution_cache.get(raw_ticker)
+        cache_hit = resolution is not None
+        if resolution is None:
+            resolution = resolve_ticker_symbol(self._registry.api_client, raw_ticker)
+            if resolution.reason != "official_validation_unavailable":
+                self._ticker_resolution_cache[raw_ticker] = resolution
+
+        print("[TICKER RESOLUTION]", flush=True)
+        print(f"raw_ticker: {raw_ticker}", flush=True)
+        print(f"candidates: {','.join(resolution.candidates)}", flush=True)
+        print(
+            "official_matches: "
+            + (",".join(resolution.matched_candidates) or "0"),
+            flush=True,
+        )
+        print(f"resolved_ticker: {resolution.ticker or 'unresolved'}", flush=True)
+        print(f"reason: {resolution.reason}", flush=True)
+        print(f"cache_hit: {str(cache_hit).lower()}", flush=True)
+        if resolution.error:
+            print(f"validation_error: {resolution.error}", flush=True)
+        if resolution.reason == "confusion_candidate_official_match":
+            print(
+                "[TICKER CORRECTION] "
+                f"raw={raw_ticker} resolved={resolution.ticker} "
+                "reason=official_symbol_match",
+                flush=True,
+            )
+
+        if resolution.ticker == raw_ticker:
+            return result
+        return replace(
+            result,
+            ticker=resolution.ticker,
+            reason=(None if resolution.ticker is not None else resolution.reason),
+        )
 
     def start(self) -> None:
         if not self._started:
@@ -952,26 +1069,29 @@ class CaptureProcessor:
         if self._stop_requested(task, "after_capture_materialize"):
             return
         if task.ticker_image_path is None:
-            ticker_result = TickerOcrResult(
+            ticker_ocr_result = TickerOcrResult(
                 None, "", 0.0, "ticker_image_not_available", 0.0
             )
         else:
-            ticker_result = read_ticker_crop(
+            ticker_ocr_result = read_ticker_crop(
                 self._reader,
                 task.ticker_image_path,
                 task.performance,
             )
         print("[TICKER OCR]", flush=True)
-        print(f"raw_text: {ticker_result.raw_text or 'null'}", flush=True)
-        print(f"ticker: {ticker_result.ticker or 'null'}", flush=True)
-        print(f"confidence: {ticker_result.confidence:.3f}", flush=True)
-        print(f"elapsed: {ticker_result.elapsed_seconds:.2f}s", flush=True)
+        print(f"raw_text: {ticker_ocr_result.raw_text or 'null'}", flush=True)
+        print(f"ticker: {ticker_ocr_result.ticker or 'null'}", flush=True)
+        print(f"confidence: {ticker_ocr_result.confidence:.3f}", flush=True)
+        print(f"elapsed: {ticker_ocr_result.elapsed_seconds:.2f}s", flush=True)
+        if ticker_ocr_result.reason:
+            print(f"reason: {ticker_ocr_result.reason}", flush=True)
+        ticker_result = self._resolve_ticker_result(ticker_ocr_result)
         self._update_capture_history(
             task.capture_id,
             parsed_ticker=ticker_result.ticker,
             raw_ticker_text=ticker_result.raw_text,
         )
-        if ticker_result.reason:
+        if ticker_result.reason and ticker_result.reason != ticker_ocr_result.reason:
             print(f"reason: {ticker_result.reason}", flush=True)
         step_started = time.perf_counter()
         print(

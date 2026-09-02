@@ -6,6 +6,7 @@ import tempfile
 from decimal import Decimal
 from io import StringIO
 from pathlib import Path
+from unittest.mock import patch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -18,15 +19,25 @@ from PySide6.QtGui import QImage  # noqa: E402
 from PySide6.QtWidgets import QApplication, QPushButton  # noqa: E402
 
 from capture_history import CaptureHistoryItem  # noqa: E402
+import live_ui  # noqa: E402
 from live_ui import (  # noqa: E402
     CaptureGallery,
     CaptureStatusCardsView,
     ConsoleLogBridge,
     LiveStockWindow,
     LogDashboard,
+    TaechoTrackingCard,
     TeeTextStream,
+    start_taecho_rebreak_sound,
+    taecho_tracking_bubble_text,
 )
-from stock_models import StockRecord, StockRegistry  # noqa: E402
+from stock_models import (  # noqa: E402
+    StockRecord,
+    StockRegistry,
+    TaechoRebreakAlert,
+    TaechoRebreakWatchSnapshot,
+)
+from taecho_rebreak_config import TAECHO_REBREAK_SOUND_TONES  # noqa: E402
 
 
 def main() -> int:
@@ -73,6 +84,7 @@ def main() -> int:
             "[OCR] complete status: success",
             "ticker: unresolved",
             "[CAPTURE FAILED] parser error",
+            "[TAECHO REBREAK] YJ wall=3.50 current=3.51 alert=true",
         ]
     )
     process_text = dashboard.process_log.toPlainText()
@@ -82,6 +94,7 @@ def main() -> int:
     assert "[CAPTURE FAILED]" in process_text
     assert "ticker: unresolved" in activity_text
     assert "[CAPTURE FAILED]" in activity_text
+    assert "[TAECHO REBREAK]" in activity_text
 
     bridge = ConsoleLogBridge()
     assert 100 <= bridge.BATCH_INTERVAL_MS <= 150
@@ -101,14 +114,18 @@ def main() -> int:
     ]
 
     window = LiveStockWindow()
-    assert window.page_stack.count() == 3
+    assert window.page_stack.count() == 4
     assert window.page_stack.currentIndex() == 0
     window._show_page(1)
     assert window.page_stack.currentIndex() == 1
-    assert window.log_button.isChecked()
+    assert window.tracking_button.isChecked()
+    assert not window.log_button.isChecked()
     assert not window.realtime_button.isChecked()
     window._show_page(2)
     assert window.page_stack.currentIndex() == 2
+    assert window.log_button.isChecked()
+    window._show_page(3)
+    assert window.page_stack.currentIndex() == 3
     assert window.log_button.isChecked()
     assert [action.text() for action in window.log_menu.actions()] == [
         "진행사항 오류",
@@ -118,6 +135,71 @@ def main() -> int:
         button.text() != "티커명 직접 입력"
         for button in window.findChildren(QPushButton)
     )
+    assert window.tracking_button.text() == "추적중"
+    assert not window.tracking_view.cards
+    window.registry.register(
+        StockRecord(
+            "MERG",
+            "MERGED TEST",
+            current_price=Decimal("8.5"),
+            taecho=Decimal("10"),
+            taecho_merged_with_absolute_half=True,
+            price_status="valid",
+        )
+    )
+    window.tracking_view.sync_from_registry()
+    assert tuple(window.tracking_view.cards) == ("MERG",)
+    assert window.tracking_view.cards["MERG"].bubble_label.text() == "..."
+    assert window.registry.remove("MERG") is not None
+    window.tracking_view.sync_from_registry()
+    assert not window.tracking_view.cards
+
+    idle_snapshot = TaechoRebreakWatchSnapshot(
+        "YJ", "YJ TEST", Decimal("10"), Decimal("9.6"), "IDLE"
+    )
+    approaching_snapshot = TaechoRebreakWatchSnapshot(
+        "YJ", "YJ TEST", Decimal("10"), Decimal("9.6"), "ARMED"
+    )
+    far_snapshot = TaechoRebreakWatchSnapshot(
+        "YJ", "YJ TEST", Decimal("10"), Decimal("9.4"), "ARMED"
+    )
+    assert taecho_tracking_bubble_text(idle_snapshot) == ("...", False)
+    assert taecho_tracking_bubble_text(approaching_snapshot) == (
+        "접근중..1",
+        True,
+    )
+    assert taecho_tracking_bubble_text(far_snapshot) == ("...", False)
+    tracking_card = TaechoTrackingCard(approaching_snapshot)
+    assert tracking_card.bubble_label.text() == "접근중..1"
+    assert tracking_card.bubble_label.property("approaching") is True
+    tracking_card.update_snapshot(far_snapshot)
+    assert tracking_card.bubble_label.text() == "..."
+    assert tracking_card.bubble_label.property("approaching") is False
+
+    played_tones: list[tuple[int, int]] = []
+    sound_thread = start_taecho_rebreak_sound(
+        lambda frequency, duration: played_tones.append((frequency, duration))
+    )
+    assert sound_thread is not None
+    sound_thread.join(timeout=2.0)
+    assert not sound_thread.is_alive()
+    assert tuple(played_tones) == TAECHO_REBREAK_SOUND_TONES
+
+    alert = TaechoRebreakAlert(
+        "YJ",
+        "YJ TEST",
+        Decimal("3.50"),
+        Decimal("3.51"),
+    )
+    with patch.object(live_ui, "start_taecho_rebreak_sound", return_value=None):
+        window._show_taecho_rebreak_alert(alert)
+    assert "YJ" in window.status_label.text()
+    assert "태초마을 재돌파" in window.status_label.text()
+    assert "3.50" in window.status_label.text()
+    assert "3.51" in window.status_label.text()
+    assert window.status_label.property("taechoRebreakAlert") is True
+    window._clear_taecho_rebreak_alert(window._taecho_alert_generation)
+    assert window.status_label.property("taechoRebreakAlert") is False
 
     deleted: list[str] = []
     with tempfile.TemporaryDirectory(dir=PROJECT_ROOT) as temporary_directory:
@@ -154,7 +236,12 @@ def main() -> int:
     print("capture_gallery: verified")
     print("manual_ticker_input_ui: removed")
     print("tracking_remove_status_card: verified")
+    print("tracking_menu_second: verified")
+    print("tracking_bubble_black_and_pink: verified")
+    print("taecho_rebreak_visual_alert: verified")
+    print("taecho_rebreak_async_two_tone_sound: verified")
     window.deleteLater()
+    tracking_card.deleteLater()
     dashboard.deleteLater()
     app.processEvents()
     return 0

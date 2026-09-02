@@ -1,4 +1,5 @@
-paddlepaddle==3.3.0
+# Install the Paddle backend separately; see README.md.  Its package/index is
+# platform-specific (Windows CPU or NVIDIA CUDA 12.6).
 paddleocr==3.7.0
 PySide6==6.11.2
 python-dotenv==1.1.1
