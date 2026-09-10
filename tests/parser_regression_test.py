@@ -137,6 +137,27 @@ def main() -> int:
     }
     assert minute_values["buy_price"] == Decimal("17.1222")
 
+    # 실제 TPET OCR 형태: 끝판왕 라벨과 가격 사이의 ':'와 공백이 모두
+    # 사라져도 원본 1배 벽을 수집해야 한다.
+    joined_endgame_items = collect_minute_items(
+        [
+            visual_line("[시체소굴]", 1950),
+            visual_line("관문 :2.1667", 2000),
+            visual_line("끝판왕2.3367", 2050),
+        ],
+        Decimal("2.1981"),
+        image_width=800,
+    )
+    joined_endgame_values = {
+        item.key: item.value
+        for item in joined_endgame_items
+        if item.status == "valid"
+    }
+    assert joined_endgame_values == {
+        "corpse_wall_1": Decimal("2.1667"),
+        "corpse_wall_2": Decimal("2.3367"),
+    }
+
     endgame = price_result("corpse_wall_4", "0.8334")
     endgame.item_text = "끝판왕"
     expanded = expand_endgame_wall_multipliers([endgame], Decimal("1.0000"))

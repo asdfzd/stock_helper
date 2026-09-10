@@ -57,6 +57,32 @@ def main() -> int:
     assert kwargs["text_detection_model_name"] == "PP-OCRv5_mobile_det"
     assert kwargs["text_recognition_model_name"] == "korean_PP-OCRv5_mobile_rec"
 
+    # GPU가 목록에는 보이지만 드라이버/런타임 문제로 OCR 초기화에 실패하는
+    # 노트북에서는 CPU로 장치를 바꾸고 reader를 한 번 더 생성한다.
+    cpu_reader = object()
+    fallback_output = StringIO()
+    with (
+        patch.object(
+            paddle_ocr_validation,
+            "_select_paddle_device",
+            return_value="gpu:0",
+        ),
+        patch.object(
+            paddle_ocr_validation,
+            "PaddleOCR",
+            side_effect=[RuntimeError("CUDA runtime unavailable"), cpu_reader],
+        ) as fallback_constructor,
+        patch.object(paddle_ocr_validation.paddle, "set_device") as set_device,
+        redirect_stdout(fallback_output),
+    ):
+        assert create_reader() is cpu_reader
+    assert [call.kwargs["device"] for call in fallback_constructor.call_args_list] == [
+        "gpu:0",
+        "cpu",
+    ]
+    set_device.assert_called_once_with("cpu")
+    assert "fallback_completed=true" in fallback_output.getvalue()
+
     image = np.full((30, 40), 180, dtype=np.uint8)
     item = PriceResult(
         key="test_price",

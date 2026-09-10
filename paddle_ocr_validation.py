@@ -84,6 +84,12 @@ SECTION_PATTERN = re.compile(r"\[\s*([^\]]+?)\s*\]")
 NUMBER_PATTERN = re.compile(
     r"(?<![\w.])[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?![\w.])"
 )
+# PaddleOCR sometimes joins the final corpse-wall label and its value into one
+# token (for example, ``끝판왕2.3367``).  Keep this exception specific to the
+# known label so digits embedded in arbitrary labels are not treated as prices.
+ENDGAME_INLINE_NUMBER_PATTERN = re.compile(
+    r"(?<=끝판왕)[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?![\w.])"
+)
 
 
 BBox = tuple[int, int, int, int]
@@ -217,7 +223,18 @@ def _select_paddle_device(requested_device: str = PADDLE_DEVICE) -> str:
         else:
             active_device = requested_device
 
-    paddle.set_device(active_device)
+    try:
+        paddle.set_device(active_device)
+    except Exception as exc:
+        if not active_device.startswith("gpu:"):
+            raise
+        print(
+            "[PADDLE DEVICE] GPU activation failed fallback=cpu "
+            f"reason={type(exc).__name__}: {exc}",
+            flush=True,
+        )
+        active_device = "cpu"
+        paddle.set_device(active_device)
     print("[PADDLE DEVICE]", flush=True)
     print(f"requested={requested_device}", flush=True)
     print(f"active={active_device}", flush=True)
@@ -233,20 +250,37 @@ def _select_paddle_device(requested_device: str = PADDLE_DEVICE) -> str:
 
 def create_reader() -> Any:
     active_device = _select_paddle_device()
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", UserWarning)
-        return PaddleOCR(
-            lang="korean",
-            text_detection_model_name="PP-OCRv5_mobile_det",
-            text_recognition_model_name="korean_PP-OCRv5_mobile_rec",
-            ocr_version="PP-OCRv5",
-            enable_mkldnn=False,
-            cpu_threads=PADDLE_CPU_THREADS,
-            device=active_device,
-            use_doc_orientation_classify=False,
-            use_doc_unwarping=False,
-            use_textline_orientation=False,
+
+    def initialize(device: str) -> Any:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            return PaddleOCR(
+                lang="korean",
+                text_detection_model_name="PP-OCRv5_mobile_det",
+                text_recognition_model_name="korean_PP-OCRv5_mobile_rec",
+                ocr_version="PP-OCRv5",
+                enable_mkldnn=False,
+                cpu_threads=PADDLE_CPU_THREADS,
+                device=device,
+                use_doc_orientation_classify=False,
+                use_doc_unwarping=False,
+                use_textline_orientation=False,
+            )
+
+    try:
+        return initialize(active_device)
+    except Exception as exc:
+        if not active_device.startswith("gpu:"):
+            raise
+        print(
+            "[PADDLE DEVICE] GPU OCR initialization failed fallback=cpu "
+            f"reason={type(exc).__name__}: {exc}",
+            flush=True,
         )
+        paddle.set_device("cpu")
+        reader = initialize("cpu")
+        print("[PADDLE DEVICE] active=cpu fallback_completed=true", flush=True)
+        return reader
 
 
 def primary_ocr(reader: Any, image_path: Path) -> list[OCRToken]:
@@ -525,6 +559,8 @@ def price_token_for_row(
     for token in ordered:
         searchable = token.text.split("(", 1)[0]
         matches = list(NUMBER_PATTERN.finditer(searchable))
+        if not matches and "끝판왕" in searchable:
+            matches = list(ENDGAME_INLINE_NUMBER_PATTERN.finditer(searchable))
         if ":" in searchable:
             colon = searchable.rfind(":")
             # inline 행은 ':' 뒤 첫 숫자만 가격이다. 뒤에 다른 숫자가 있어도
@@ -831,7 +867,9 @@ def collect_minute_items(
         key: str | None = None
         close_corpse_after_line = False
         if section == "시체소굴":
-            if NUMBER_PATTERN.search(line.text):
+            if NUMBER_PATTERN.search(line.text) or ENDGAME_INLINE_NUMBER_PATTERN.search(
+                line.text
+            ):
                 corpse_index += 1
                 key = f"corpse_wall_{corpse_index}"
                 if "끝판왕" in normalized_text:
