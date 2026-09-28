@@ -1,0 +1,329 @@
+{
+  "revision": "953e5dbff123f437ab4d11a78a95191a685eb51f",
+  "source_sha256": "42a7b3912c9d9588c83bdc2db7779c8d2e038703a2b5562e54ef46ae905cba79",
+  "apis": {
+    "usa06011": {
+      "path": "/api/us/chart",
+      "request_fields": [
+        "stex_tp",
+        "stk_cd",
+        "strt_dt",
+        "tic_scope",
+        "upd_stkpc_tp",
+        "exrt_appl_tp"
+      ],
+      "response_fields": [
+        "result_list",
+        "cur_prc",
+        "trde_qty",
+        "open_pric",
+        "high_pric",
+        "low_pric",
+        "cntr_tm",
+        "bus_dt",
+        "upd_stkpc_tp",
+        "upd_rt"
+      ],
+      "example": {
+        "stex_tp": "ND",
+        "stk_cd": "NVDA",
+        "strt_dt": "20260305",
+        "tic_scope": "1",
+        "upd_stkpc_tp": "0",
+        "exrt_appl_tp": "1"
+      }
+    },
+    "usa06012": {
+      "path": "/api/us/chart",
+      "request_fields": [
+        "stex_tp",
+        "stk_cd",
+        "strt_dt",
+        "upd_stkpc_tp",
+        "exrt_appl_tp"
+      ],
+      "response_fields": [
+        "result_list",
+        "cur_prc",
+        "pred_pre",
+        "flu_rt",
+        "acc_trde_qty",
+        "acc_trde_prica",
+        "open_pric",
+        "high_pric",
+        "low_pric",
+        "dt",
+        "upd_stkpc_tp",
+        "upd_rt"
+      ],
+      "example": {
+        "stex_tp": "ND",
+        "stk_cd": "NVDA",
+        "strt_dt": "20260412",
+        "upd_stkpc_tp": "1",
+        "exrt_appl_tp": "0"
+      }
+    },
+    "usa10099": {
+      "path": "/api/us/stkinfo",
+      "request_fields": [
+        "stex_tp"
+      ],
+      "response_fields": [
+        "list",
+        "stex_tp",
+        "stk_cd",
+        "stk_nm",
+        "stk_enm",
+        "mkgb",
+        "upgb",
+        "isEtf"
+      ],
+      "example": {
+        "stex_tp": "%"
+      }
+    },
+    "usa20100": {
+      "path": "/api/us/mrkcond",
+      "request_fields": [
+        "stex_tp",
+        "stk_cd"
+      ],
+      "response_fields": [
+        "stex_tp",
+        "stk_cd",
+        "stk_nm",
+        "stk_enm",
+        "52wk_hgst_pric",
+        "52wk_hgst_pric_pre_rt",
+        "52wk_hgst_pric_dt",
+        "52wk_lwst_pric",
+        "52wk_lwst_pric_pre_rt",
+        "52wk_lwst_pric_dt",
+        "stk_cnt",
+        "mac",
+        "setl_mm",
+        "lg_inds_cd",
+        "sm_inds_cd",
+        "cur_prc",
+        "pred_pre_sig",
+        "pred_pre",
+        "flu_rt",
+        "acc_trde_qty",
+        "oyr_hgst",
+        "oyr_hgst_dt",
+        "oyr_hgst_pre_rt",
+        "oyr_lwst",
+        "oyr_lwst_dt",
+        "oyr_lwst_pre_rt",
+        "pre_open_pric",
+        "pre_high_pric",
+        "pre_low_pric",
+        "base_close_pric",
+        "upl_pric",
+        "lst_pric",
+        "trde_qty_unit",
+        "uncert_lv",
+        "comp_adv_tp",
+        "curr_unit",
+        "open_pric",
+        "high_pric",
+        "low_pric",
+        "trd_susp_tp",
+        "base_exrt"
+      ],
+      "example": {
+        "stex_tp": "ND",
+        "stk_cd": "NVDA"
+      }
+    },
+    "usa20530": {
+      "path": "/api/us/rkinfo",
+      "request_fields": [
+        "stex_tp",
+        "inds_cd",
+        "stk_tp",
+        "trde_qty_tp",
+        "qry_tp",
+        "stk_cnd",
+        "pric_cnd",
+        "trde_prica_cnd"
+      ],
+      "response_fields": [
+        "result_list",
+        "rank",
+        "stex_tp",
+        "stk_cd",
+        "stk_nm",
+        "stk_enm",
+        "cur_prc",
+        "pred_pre_sig",
+        "pred_pre",
+        "flu_rt",
+        "acc_trde_qty",
+        "pred_rt",
+        "trde_prica"
+      ],
+      "example": {
+        "stex_tp": "0",
+        "inds_cd": "",
+        "stk_tp": "0",
+        "trde_qty_tp": "0",
+        "qry_tp": "0",
+        "stk_cnd": "0",
+        "pric_cnd": "0",
+        "trde_prica_cnd": "0"
+      }
+    },
+    "usa20540": {
+      "path": "/api/us/rkinfo",
+      "request_fields": [
+        "stex_tp",
+        "inds_cd",
+        "stk_tp",
+        "trde_qty_tp",
+        "stk_cnd",
+        "pric_cnd",
+        "trde_prica_cnd"
+      ],
+      "response_fields": [
+        "result_list",
+        "rank",
+        "stex_tp",
+        "stk_cd",
+        "stk_nm",
+        "stk_enm",
+        "cur_prc",
+        "pred_pre_sig",
+        "pred_pre",
+        "flu_rt",
+        "acc_trde_qty",
+        "pred_trde_qty",
+        "trde_prica"
+      ],
+      "example": {
+        "stex_tp": "0",
+        "inds_cd": "",
+        "stk_tp": "0",
+        "trde_qty_tp": "0",
+        "stk_cnd": "0",
+        "pric_cnd": "0",
+        "trde_prica_cnd": "0"
+      }
+    },
+    "usa20590": {
+      "path": "/api/us/mrkcond",
+      "request_fields": [
+        "stex_tp",
+        "stk_cd",
+        "base_dt"
+      ],
+      "response_fields": [
+        "result_list",
+        "dt",
+        "cur_prc",
+        "pred_pre_sig",
+        "pred_pre",
+        "flu_rt",
+        "acc_trde_qty",
+        "trde_prica",
+        "open_pric",
+        "high_pric",
+        "low_pric",
+        "base_pric",
+        "base_open_flu_rt",
+        "base_high_flu_rt",
+        "base_low_flu_rt"
+      ],
+      "example": {
+        "stex_tp": "ND",
+        "stk_cd": "NVDA",
+        "base_dt": "20260501"
+      }
+    },
+    "usa20910": {
+      "path": "/api/us/rkinfo",
+      "request_fields": [
+        "stex_tp",
+        "inds_cd",
+        "inds_cls_tp",
+        "sort_tp",
+        "stk_tp",
+        "stk_cnd",
+        "pric_cnd",
+        "trde_prica_cnd",
+        "trde_qty_tp"
+      ],
+      "response_fields": [
+        "result_list",
+        "rank",
+        "stex_tp",
+        "stk_cd",
+        "stk_nm",
+        "stk_enm",
+        "cur_prc",
+        "pred_pre_sig",
+        "pred_pre",
+        "flu_rt",
+        "sel_req",
+        "buy_req",
+        "trde_qty",
+        "cnt"
+      ],
+      "example": {
+        "stex_tp": "0",
+        "inds_cd": "",
+        "inds_cls_tp": "0",
+        "sort_tp": "1",
+        "stk_tp": "0",
+        "stk_cnd": "0",
+        "pric_cnd": "0",
+        "trde_prica_cnd": "0",
+        "trde_qty_tp": ""
+      }
+    },
+    "usa20930": {
+      "path": "/api/us/stkinfo",
+      "request_fields": [
+        "stex_tp",
+        "stk_tp",
+        "inds_cd",
+        "stk_cnd",
+        "flu_tp",
+        "tm_tp",
+        "tm",
+        "pric_cnd",
+        "trde_qty_tp",
+        "trde_prica_cnd"
+      ],
+      "response_fields": [
+        "result_list",
+        "mgn_type",
+        "stex_tp",
+        "stk_cd",
+        "stk_nm",
+        "stk_enm",
+        "pred_pre_sig",
+        "pred_pre",
+        "flu_rt",
+        "base_pric",
+        "cur_prc",
+        "base_pre",
+        "acc_trde_qty",
+        "sdnin_rt"
+      ],
+      "example": {
+        "stex_tp": "0",
+        "stk_tp": "0",
+        "inds_cd": "",
+        "stk_cnd": "1",
+        "flu_tp": "2",
+        "tm_tp": "1",
+        "tm": "0",
+        "pric_cnd": "0",
+        "trde_qty_tp": "0",
+        "trde_prica_cnd": "0"
+      }
+    }
+  }
+}

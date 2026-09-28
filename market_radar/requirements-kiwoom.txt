@@ -1,0 +1,3 @@
+# Optional live provider; legacy OCR requirements remain unchanged.
+websockets==15.0.1
+exchange_calendars==4.13.2

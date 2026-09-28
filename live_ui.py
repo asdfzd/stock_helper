@@ -888,6 +888,10 @@ class LiveStockWindow(QMainWindow):
         self.log_button.hovered.connect(self._show_log_menu)
         self.realtime_button.setChecked(True)
         menu_layout.insertWidget(0, menu_title)
+        self.radar_button = QPushButton("Market Radar")
+        self.radar_button.setObjectName("sideMenuButton")
+        self.radar_button.clicked.connect(self._open_market_radar)
+        menu_layout.addWidget(self.radar_button)
         menu_layout.addStretch()
 
         central = QWidget()
@@ -938,6 +942,14 @@ class LiveStockWindow(QMainWindow):
         self.bridge.capture_status_changed.connect(self.status_label.setText)
         self.bridge.calibration_finished.connect(self._on_calibration_finished)
         self.bridge.history_updated.connect(self._on_history_updated)
+
+    @Slot()
+    def _open_market_radar(self) -> None:
+        try:
+            from market_radar.ui import show_radar
+            show_radar(self)
+        except Exception as exc:
+            QMessageBox.warning(self, "Market Radar", f"Radar 시작 실패: {exc}")
 
     @Slot(int)
     def _show_page(self, index: int) -> None:
@@ -1219,6 +1231,10 @@ class LiveStockWindow(QMainWindow):
         if self._shutting_down:
             return
         self._shutting_down = True
+        radar_panel = getattr(self, "_market_radar_panel", None)
+        if radar_panel is not None:
+            radar_panel.stop()
+            radar_panel.close()
         self.ui_perf_monitor.stop()
         print("[LIVE UI] stopping ...", flush=True)
         try:

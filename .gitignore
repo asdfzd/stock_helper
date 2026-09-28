@@ -9,3 +9,4 @@ ocr_results/
 build/
 dist/
 .build-runtime-backup/
+data/

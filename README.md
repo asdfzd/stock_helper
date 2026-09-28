@@ -1,5 +1,8 @@
 # stock_helper
 
+독립적인 Market Radar 연구 수집 모듈: [실행 방법·공급원 상태·DB schema](market_radar/README.md).
+Kiwoom 미국주식 live provider와 별도 연구 DB를 지원합니다. 실행 전 Radar 문서의 완료 1분 기준 RVOL·VWAP NULL 정책을 확인하세요.
+
 Windows에서 영웅문 Global Tooltip을 캡처·OCR하고, Toss Open API 현재가와 결합해 종목 카드로 표시하는 주식 매매 보조 도구입니다.
 
 ## 환경 변수

@@ -1,0 +1,2 @@
+# Install only into tools/kiwoom_probe/output/deps; leave application dependencies unchanged.
+websockets==15.0.1
