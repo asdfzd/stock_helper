@@ -33,6 +33,7 @@ class StockRecord:
     daily_price_candidates: list[Decimal] = field(default_factory=list)
     minute_walls: list[Decimal] = field(default_factory=list)
     daily_loaded: bool = False
+    daily_capture_count: int = 0
     minute_loaded: bool = False
     holding: bool = False
     last_price_update: str | None = None
@@ -161,6 +162,7 @@ class StockRegistry:
         self._stocks: dict[str, StockRecord] = {}
         self._capture_contributions: dict[str, CaptureContribution] = {}
         self._taecho_rebreak_watches: dict[str, TaechoRebreakWatch] = {}
+        self._taecho_rebreak_realtime_overrides: set[str] = set()
         self._contribution_sequence = 0
         self._api_client = api_client or TossApiClient()
         self._lock = RLock()
@@ -236,12 +238,26 @@ class StockRegistry:
                 )
             return tuple(snapshots)
 
+    def taecho_rebreak_watch_symbols(self) -> frozenset[str]:
+        with self._lock:
+            return frozenset(self._taecho_rebreak_watches)
+
+    def move_taecho_watch_to_realtime(self, symbol: str) -> bool:
+        """Stop the rebreak watch while keeping the stock in the live registry."""
+        normalized = symbol.strip().upper()
+        with self._lock:
+            removed = self._taecho_rebreak_watches.pop(normalized, None) is not None
+            if removed:
+                self._taecho_rebreak_realtime_overrides.add(normalized)
+            return removed
+
     def remove(self, symbol: str) -> StockRecord | None:
         """종목을 Registry와 이후 현재가 polling 대상에서 제거한다."""
         normalized = symbol.strip().upper()
         with self._lock:
             removed = self._stocks.pop(normalized, None)
             self._taecho_rebreak_watches.pop(normalized, None)
+            self._taecho_rebreak_realtime_overrides.discard(normalized)
             self._capture_contributions = {
                 capture_id: contribution
                 for capture_id, contribution in self._capture_contributions.items()
@@ -279,6 +295,9 @@ class StockRegistry:
                 rebuilt.price_error = previous.price_error
             for item in remaining:
                 self._apply_contribution(rebuilt, item)
+            rebuilt.daily_capture_count = sum(
+                item.chart_type == "daily" for item in remaining
+            )
             self._stocks[symbol] = rebuilt
             self._sync_taecho_rebreak_watch_locked(rebuilt, force_reset=True)
             return (symbol,)
@@ -307,6 +326,10 @@ class StockRegistry:
     ) -> None:
         symbol = stock.stock_code
         if not stock.taecho_merged_with_absolute_half or stock.taecho is None:
+            self._taecho_rebreak_watches.pop(symbol, None)
+            self._taecho_rebreak_realtime_overrides.discard(symbol)
+            return
+        if symbol in self._taecho_rebreak_realtime_overrides:
             self._taecho_rebreak_watches.pop(symbol, None)
             return
         existing = self._taecho_rebreak_watches.get(symbol)
@@ -587,6 +610,10 @@ class StockRegistry:
             previous_minute_walls_count = len(stock.minute_walls)
             if chart_type == "daily":
                 self._append_daily_snapshot(stock, valid_items)
+                stock.daily_capture_count = sum(
+                    item.stock_code == symbol and item.chart_type == "daily"
+                    for item in self._capture_contributions.values()
+                )
             else:
                 self._replace_minute_snapshot(
                     stock,

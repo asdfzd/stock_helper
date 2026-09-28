@@ -45,5 +45,12 @@ TICKER_MOUSE_MAX_DISTANCE = 24
 
 # True이면 calibration을 생략하고 아래 screen absolute ROI를 즉시 사용한다.
 # False이면 기존처럼 첫 백틱으로 ticker 위치를 다시 지정한다.
-USE_FIXED_TICKER_ROI = True
+USE_FIXED_TICKER_ROI = False
 TICKER_FIXED_ROI = (85, 114, 121, 135)
+
+# Size of the fallback OCR crop centered on the ticker point chosen by the user.
+TICKER_POINT_ROI_WIDTH = 64
+TICKER_POINT_ROI_HEIGHT = 32
+
+# Experimental fast path: click the ticker field and read Ctrl+C before OCR fallback.
+ENABLE_TICKER_CLIPBOARD_CAPTURE = True

@@ -112,6 +112,11 @@ def main() -> int:
                 "grab",
                 return_value=combined_at_hotkey.copy(),
             ) as grab_mock,
+            patch.object(
+                live_capture,
+                "copy_ticker_from_screen",
+                return_value=("DAIC", "DAIC\r\n", 0.06, None),
+            ),
         ):
             task = processor.enqueue_live_capture(ticker_roi)
             assert grab_mock.call_count == 1
@@ -122,6 +127,7 @@ def main() -> int:
             assert not task.image_path.exists()
             assert task.ticker_image_path is not None
             assert not task.ticker_image_path.exists()
+            assert task.clipboard_ticker == "DAIC"
             processor._materialize_live_capture(task)
         assert task.ticker_roi == ticker_roi
         assert task.ticker_image_path is not None and task.ticker_image_path.is_file()

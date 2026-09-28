@@ -100,6 +100,14 @@ def main() -> int:
         assert stock is not None
         assert stock.daily_loaded and stock.minute_loaded
 
+    merge_and_refresh(
+        registry,
+        view,
+        analysis("AAAA", "daily", [("moving_average_60_wall", "13.0000")]),
+    )
+    assert view.cards["AAAA"].daily_count_label.text() == "+2"
+    assert not view.cards["AAAA"].daily_count_label.isHidden()
+
     first_card = view.cards["AAAA"]
     upper, lower = first_card._nearest_levels(8.0)
     assert upper and upper[0].kind == "매입가" and upper[0].price == 8.4147

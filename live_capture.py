@@ -35,6 +35,7 @@ from runtime_paths import APP_ROOT
 from stock_models import StockRecord, StockRegistry
 from toss_api import TossApiError
 from tooltip_capture_config import (
+    ENABLE_TICKER_CLIPBOARD_CAPTURE,
     LIVE_CLAHE_CLIP_LIMIT,
     LIVE_CLAHE_TILE_GRID_SIZE,
     LIVE_OCR_SCALE,
@@ -111,6 +112,59 @@ class MONITORINFO(ctypes.Structure):
     ]
 
 
+class MOUSEINPUT(ctypes.Structure):
+    _fields_ = [
+        ("dx", ctypes.wintypes.LONG),
+        ("dy", ctypes.wintypes.LONG),
+        ("mouseData", ctypes.wintypes.DWORD),
+        ("dwFlags", ctypes.wintypes.DWORD),
+        ("time", ctypes.wintypes.DWORD),
+        ("dwExtraInfo", ctypes.c_size_t),
+    ]
+
+
+class KEYBDINPUT(ctypes.Structure):
+    _fields_ = [
+        ("wVk", ctypes.wintypes.WORD),
+        ("wScan", ctypes.wintypes.WORD),
+        ("dwFlags", ctypes.wintypes.DWORD),
+        ("time", ctypes.wintypes.DWORD),
+        ("dwExtraInfo", ctypes.c_size_t),
+    ]
+
+
+class INPUTUNION(ctypes.Union):
+    _fields_ = [("mi", MOUSEINPUT), ("ki", KEYBDINPUT)]
+
+
+class INPUT(ctypes.Structure):
+    _anonymous_ = ("value",)
+    _fields_ = [("type", ctypes.wintypes.DWORD), ("value", INPUTUNION)]
+
+
+def _send_inputs(*inputs: INPUT) -> None:
+    records = (INPUT * len(inputs))(*inputs)
+    sent = ctypes.windll.user32.SendInput(len(records), records, ctypes.sizeof(INPUT))
+    if sent != len(records):
+        raise ctypes.WinError()
+
+
+def _send_left_click() -> None:
+    _send_inputs(
+        INPUT(type=0, value=INPUTUNION(mi=MOUSEINPUT(dwFlags=0x0002))),
+        INPUT(type=0, value=INPUTUNION(mi=MOUSEINPUT(dwFlags=0x0004))),
+    )
+
+
+def _send_ctrl_c() -> None:
+    _send_inputs(
+        INPUT(type=1, value=INPUTUNION(ki=KEYBDINPUT(wVk=0x11))),
+        INPUT(type=1, value=INPUTUNION(ki=KEYBDINPUT(wVk=ord("C")))),
+        INPUT(type=1, value=INPUTUNION(ki=KEYBDINPUT(wVk=ord("C"), dwFlags=0x0002))),
+        INPUT(type=1, value=INPUTUNION(ki=KEYBDINPUT(wVk=0x11, dwFlags=0x0002))),
+    )
+
+
 @dataclass(frozen=True)
 class CaptureTask:
     capture_id: str
@@ -125,6 +179,10 @@ class CaptureTask:
     raw_image: Image.Image | None = None
     ticker_image: Image.Image | None = None
     capture_elapsed_seconds: float = 0.0
+    clipboard_ticker: str | None = None
+    clipboard_raw_text: str = ""
+    clipboard_elapsed_seconds: float = 0.0
+    clipboard_error: str | None = None
     performance: OcrPerformanceMetrics = field(
         default_factory=OcrPerformanceMetrics,
         compare=False,
@@ -158,6 +216,118 @@ class TickerOcrResult:
     confidence: float
     reason: str | None
     elapsed_seconds: float
+
+
+def _read_windows_clipboard_text() -> str | None:
+    """Read CF_UNICODETEXT without adding a GUI-framework dependency."""
+    if not ctypes.windll.user32.OpenClipboard(None):
+        return None
+    try:
+        ctypes.windll.user32.GetClipboardData.restype = ctypes.c_void_p
+        handle = ctypes.windll.user32.GetClipboardData(13)  # CF_UNICODETEXT
+        if not handle:
+            return None
+        ctypes.windll.kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
+        ctypes.windll.kernel32.GlobalLock.restype = ctypes.c_void_p
+        ctypes.windll.kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
+        pointer = ctypes.windll.kernel32.GlobalLock(handle)
+        if not pointer:
+            return None
+        try:
+            return ctypes.wstring_at(pointer)
+        finally:
+            ctypes.windll.kernel32.GlobalUnlock(handle)
+    finally:
+        ctypes.windll.user32.CloseClipboard()
+
+
+def _write_windows_clipboard_text(text: str) -> bool:
+    if not ctypes.windll.user32.OpenClipboard(None):
+        return False
+    memory = None
+    try:
+        if not ctypes.windll.user32.EmptyClipboard():
+            return False
+        encoded = (text + "\0").encode("utf-16-le")
+        ctypes.windll.kernel32.GlobalAlloc.argtypes = [ctypes.c_uint, ctypes.c_size_t]
+        ctypes.windll.kernel32.GlobalAlloc.restype = ctypes.c_void_p
+        memory = ctypes.windll.kernel32.GlobalAlloc(0x0042, len(encoded))
+        if not memory:
+            return False
+        ctypes.windll.kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
+        ctypes.windll.kernel32.GlobalLock.restype = ctypes.c_void_p
+        ctypes.windll.kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
+        pointer = ctypes.windll.kernel32.GlobalLock(memory)
+        if not pointer:
+            return False
+        try:
+            ctypes.memmove(pointer, encoded, len(encoded))
+        finally:
+            ctypes.windll.kernel32.GlobalUnlock(memory)
+        ctypes.windll.user32.SetClipboardData.argtypes = [ctypes.c_uint, ctypes.c_void_p]
+        ctypes.windll.user32.SetClipboardData.restype = ctypes.c_void_p
+        if not ctypes.windll.user32.SetClipboardData(13, memory):
+            return False
+        memory = None  # Clipboard now owns the allocation.
+        return True
+    finally:
+        ctypes.windll.user32.CloseClipboard()
+        if memory:
+            ctypes.windll.kernel32.GlobalFree.argtypes = [ctypes.c_void_p]
+            ctypes.windll.kernel32.GlobalFree(memory)
+
+
+def copy_ticker_from_screen(
+    ticker_roi: tuple[int, int, int, int],
+    *,
+    after_copy_point: tuple[int, int] | None = None,
+    settle_seconds: float = 0.04,
+    timeout_seconds: float = 0.20,
+) -> tuple[str | None, str, float, str | None]:
+    """Click the ticker field, copy it, and immediately restore the cursor."""
+    started = time.perf_counter()
+    if os.name != "nt":
+        return None, "", 0.0, "clipboard_capture_requires_windows"
+
+    original_position = get_mouse_position()
+    previous_clipboard_text = _read_windows_clipboard_text()
+    sequence_before = ctypes.windll.user32.GetClipboardSequenceNumber()
+    left, top, right, bottom = ticker_roi
+    target = ((left + right) // 2, (top + bottom) // 2)
+    try:
+        ctypes.windll.user32.SetCursorPos(*target)
+        _send_left_click()
+        time.sleep(settle_seconds)
+        _send_ctrl_c()
+
+        deadline = time.perf_counter() + timeout_seconds
+        while (
+            ctypes.windll.user32.GetClipboardSequenceNumber() == sequence_before
+            and time.perf_counter() < deadline
+        ):
+            time.sleep(0.005)
+        if ctypes.windll.user32.GetClipboardSequenceNumber() == sequence_before:
+            return None, "", time.perf_counter() - started, "clipboard_not_changed"
+        raw_text = _read_windows_clipboard_text() or ""
+        ticker = validate_ticker_text(raw_text)
+        error = None if ticker else "invalid_clipboard_ticker"
+        return ticker, raw_text, time.perf_counter() - started, error
+    except (OSError, ValueError) as exc:
+        return None, "", time.perf_counter() - started, str(exc)
+    finally:
+        if after_copy_point is not None:
+            ctypes.windll.user32.SetCursorPos(*after_copy_point)
+            _send_left_click()
+        ctypes.windll.user32.SetCursorPos(*original_position)
+        if previous_clipboard_text is not None:
+            _write_windows_clipboard_text(previous_clipboard_text)
+
+
+def set_windows_input_blocked(blocked: bool) -> bool:
+    """Temporarily reject physical input while an atomic capture is running."""
+    if os.name != "nt":
+        return False
+    return bool(ctypes.windll.user32.BlockInput(bool(blocked)))
 
 
 @dataclass(frozen=True)
@@ -682,16 +852,38 @@ class CaptureProcessor:
         return task
 
     def enqueue_live_capture(
-        self, ticker_roi: tuple[int, int, int, int]
+        self,
+        ticker_roi: tuple[int, int, int, int],
+        after_copy_point: tuple[int, int] | None = None,
     ) -> CaptureTask:
         if self._shutdown.is_set():
             raise RuntimeError("capture_processor_shutting_down")
         capture_started = time.perf_counter()
         capture_id = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        image, ticker_image, mouse_position, capture_box, combined_box = (
-            capture_live_rois(ticker_roi)
-        )
-        captured_at = datetime.now().astimezone().isoformat()
+        input_blocked = set_windows_input_blocked(True)
+        try:
+            image, ticker_image, mouse_position, capture_box, combined_box = (
+                capture_live_rois(ticker_roi)
+            )
+            captured_at = datetime.now().astimezone().isoformat()
+            screen_capture_elapsed = time.perf_counter() - capture_started
+            if ENABLE_TICKER_CLIPBOARD_CAPTURE:
+                clipboard_ticker, clipboard_raw, clipboard_elapsed, clipboard_error = (
+                    copy_ticker_from_screen(
+                        ticker_roi,
+                        after_copy_point=after_copy_point,
+                    )
+                )
+            else:
+                clipboard_ticker, clipboard_raw, clipboard_elapsed, clipboard_error = (
+                    None,
+                    "",
+                    0.0,
+                    "clipboard_capture_disabled",
+                )
+        finally:
+            if input_blocked:
+                set_windows_input_blocked(False)
         capture_elapsed = time.perf_counter() - capture_started
         print("[ROI]", flush=True)
         print(f"mouse_x: {mouse_position[0]}", flush=True)
@@ -718,6 +910,10 @@ class CaptureProcessor:
             raw_image=image,
             ticker_image=ticker_image,
             capture_elapsed_seconds=capture_elapsed,
+            clipboard_ticker=clipboard_ticker,
+            clipboard_raw_text=clipboard_raw,
+            clipboard_elapsed_seconds=clipboard_elapsed,
+            clipboard_error=clipboard_error,
         )
         self._queue.put(task)
         print(
@@ -728,8 +924,15 @@ class CaptureProcessor:
             f"combined_roi: {combined_box}", flush=True,
         )
         print(
-            f"[CAPTURE TIMING] screen_grab_and_crop={capture_elapsed:.3f}s "
-            "queued_in_memory=true",
+            f"[CAPTURE TIMING] screen_grab_and_crop={screen_capture_elapsed:.3f}s "
+            f"total={capture_elapsed:.3f}s "
+            f"clipboard={clipboard_elapsed:.3f}s queued_in_memory=true",
+            flush=True,
+        )
+        print(
+            "[TICKER CLIPBOARD] "
+            f"raw={clipboard_raw!r} ticker={clipboard_ticker or 'null'} "
+            f"error={clipboard_error or 'none'} input_blocked={input_blocked}",
             flush=True,
         )
         print(f"[QUEUE] pending={self._queue.qsize()}", flush=True)
@@ -1068,7 +1271,15 @@ class CaptureProcessor:
         self._begin_capture_history(task)
         if self._stop_requested(task, "after_capture_materialize"):
             return
-        if task.ticker_image_path is None:
+        if task.clipboard_ticker is not None:
+            ticker_ocr_result = TickerOcrResult(
+                task.clipboard_ticker,
+                task.clipboard_raw_text,
+                1.0,
+                None,
+                task.clipboard_elapsed_seconds,
+            )
+        elif task.ticker_image_path is None:
             ticker_ocr_result = TickerOcrResult(
                 None, "", 0.0, "ticker_image_not_available", 0.0
             )

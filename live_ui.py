@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
     QMenu,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QStackedWidget,
@@ -35,12 +36,15 @@ from PySide6.QtWidgets import (
 )
 
 from capture_history import CaptureHistoryItem
+from capture_points import CapturePoints, CONFIG_PATH, load_capture_points, save_capture_points
 from halt_monitor import HaltRefreshEvent, HaltRefreshWorker
 from live_capture import (
     CaptureProcessor,
     GlobalCaptureHotkey,
     TickerCalibrationResult,
     enable_dpi_awareness,
+    get_mouse_position,
+    monitor_bounds_for_point,
 )
 from live_ui_config import (
     ENABLE_REALTIME_PRICE_POLLING,
@@ -64,11 +68,17 @@ from taecho_rebreak_config import (
     TAECHO_REBREAK_SOUND_ENABLED,
     TAECHO_REBREAK_SOUND_TONES,
 )
-from tooltip_capture_config import TICKER_FIXED_ROI, USE_FIXED_TICKER_ROI
+from tooltip_capture_config import (
+    TICKER_FIXED_ROI,
+    TICKER_POINT_ROI_HEIGHT,
+    TICKER_POINT_ROI_WIDTH,
+    USE_FIXED_TICKER_ROI,
+)
 
 
 class CaptureMode(str, Enum):
     TICKER_CALIBRATION = "ticker_calibration"
+    AFTER_COPY_CALIBRATION = "after_copy_calibration"
     CAPTURE_READY = "capture_ready"
 
 
@@ -356,6 +366,10 @@ class LogDashboard(QWidget):
     @staticmethod
     def _line_style(line: str) -> tuple[QColor, bool, bool]:
         lowered = line.lower()
+        clipboard_failure = (
+            "[ticker clipboard]" in lowered
+            and "error=none" not in lowered
+        )
         ticker_warning = (
             ("ticker" in lowered and any(
                 marker in lowered
@@ -376,7 +390,7 @@ class LogDashboard(QWidget):
                 "error:",
             )
         )
-        if is_error:
+        if is_error or clipboard_failure:
             return QColor("#ff6b6b"), True, True
         if ticker_warning:
             return QColor("#ffd43b"), True, True
@@ -397,6 +411,7 @@ class LogDashboard(QWidget):
                 "[price",
                 "[taecho",
                 "[pending",
+                "[ticker clipboard]",
                 "[hotkey",
                 "[live",
                 "[shutdown",
@@ -622,17 +637,31 @@ class TaechoTrackingCard(QFrame):
     def __init__(
         self,
         snapshot: TaechoRebreakWatchSnapshot,
+        on_move_to_realtime: Callable[[str], None] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.setObjectName("taechoTrackingCard")
         self.setMinimumSize(300, 220)
         self.setMaximumWidth(420)
+        self._symbol = snapshot.symbol
+        self._on_move_to_realtime = on_move_to_realtime
         layout = QVBoxLayout(self)
         layout.setContentsMargins(22, 20, 22, 20)
         layout.setSpacing(10)
+        ticker_row = QWidget()
+        ticker_layout = QHBoxLayout(ticker_row)
+        ticker_layout.setContentsMargins(0, 0, 0, 0)
         self.ticker_label = QLabel()
         self.ticker_label.setObjectName("trackingTicker")
+        self.realtime_button = QPushButton("O")
+        self.realtime_button.setObjectName("trackingRealtimeButton")
+        self.realtime_button.setFixedSize(28, 28)
+        self.realtime_button.setToolTip("실시간으로 보내기")
+        self.realtime_button.clicked.connect(self._request_move_to_realtime)
+        ticker_layout.addWidget(self.ticker_label)
+        ticker_layout.addStretch()
+        ticker_layout.addWidget(self.realtime_button)
         self.wall_label = QLabel()
         self.wall_label.setObjectName("trackingDetail")
         self.price_label = QLabel()
@@ -645,7 +674,7 @@ class TaechoTrackingCard(QFrame):
         self.bubble_tail.setObjectName("trackingBubbleTail")
         self.bubble_tail.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.bubble_tail.setFixedHeight(13)
-        layout.addWidget(self.ticker_label)
+        layout.addWidget(ticker_row)
         layout.addWidget(self.wall_label)
         layout.addWidget(self.price_label)
         layout.addStretch()
@@ -654,6 +683,7 @@ class TaechoTrackingCard(QFrame):
         self.update_snapshot(snapshot)
 
     def update_snapshot(self, snapshot: TaechoRebreakWatchSnapshot) -> None:
+        self._symbol = snapshot.symbol
         name = snapshot.stock_name.strip()
         self.ticker_label.setText(
             f"{snapshot.symbol} · {name}" if name and name != snapshot.symbol else snapshot.symbol
@@ -671,6 +701,10 @@ class TaechoTrackingCard(QFrame):
         self.bubble_label.style().unpolish(self.bubble_label)
         self.bubble_label.style().polish(self.bubble_label)
 
+    def _request_move_to_realtime(self) -> None:
+        if self._on_move_to_realtime is not None:
+            self._on_move_to_realtime(self._symbol)
+
 
 class TaechoTrackingView(QScrollArea):
     COLUMNS = 3
@@ -678,10 +712,12 @@ class TaechoTrackingView(QScrollArea):
     def __init__(
         self,
         registry: StockRegistry,
+        on_move_to_realtime: Callable[[str], None] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.registry = registry
+        self._on_move_to_realtime = on_move_to_realtime
         self.cards: dict[str, TaechoTrackingCard] = {}
         self.setWidgetResizable(True)
         self.setFrameShape(QFrame.Shape.NoFrame)
@@ -709,7 +745,10 @@ class TaechoTrackingView(QScrollArea):
         for snapshot in snapshots:
             card = self.cards.get(snapshot.symbol)
             if card is None:
-                card = TaechoTrackingCard(snapshot)
+                card = TaechoTrackingCard(
+                    snapshot,
+                    on_move_to_realtime=self._on_move_to_realtime,
+                )
                 self.cards[snapshot.symbol] = card
             else:
                 card.update_snapshot(snapshot)
@@ -774,6 +813,11 @@ class LiveStockWindow(QMainWindow):
             USE_FIXED_TICKER_ROI,
             TICKER_FIXED_ROI,
         )
+        saved_points = load_capture_points()
+        if saved_points is not None:
+            initial_mode = CaptureMode.CAPTURE_READY
+            initial_roi = self._point_to_ticker_roi(saved_points.ticker)
+            initial_status = "저장된 클릭 위치 사용 중 · ` 키로 종목 캡처"
         self.status_label = QLabel(initial_status)
         self.status_label.setObjectName("liveStatus")
         self.status_label.setProperty("taechoRebreakAlert", False)
@@ -785,7 +829,10 @@ class LiveStockWindow(QMainWindow):
         realtime_layout.addWidget(self.status_label)
         realtime_layout.addWidget(self.cards_view, 1)
 
-        self.tracking_view = TaechoTrackingView(self.registry)
+        self.tracking_view = TaechoTrackingView(
+            self.registry,
+            on_move_to_realtime=self._confirm_move_to_realtime,
+        )
         tracking_page = QWidget()
         tracking_layout = QVBoxLayout(tracking_page)
         tracking_layout.setContentsMargins(24, 16, 24, 16)
@@ -823,6 +870,14 @@ class LiveStockWindow(QMainWindow):
             menu_layout.addWidget(button)
         self.realtime_button.clicked.connect(lambda: self._show_page(0))
         self.tracking_button.clicked.connect(lambda: self._show_page(1))
+        self.tracking_alert_badge = QLabel("!", self.tracking_button)
+        self.tracking_alert_badge.setObjectName("trackingMenuAlertBadge")
+        self.tracking_alert_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.tracking_alert_badge.setFixedSize(22, 22)
+        self.tracking_alert_badge.move(82, 3)
+        self.tracking_alert_badge.setVisible(False)
+        self.tracking_alert_badge.raise_()
+        self._tracking_alert_symbols: set[str] = set()
         self.log_button.clicked.connect(lambda: self._show_page(2))
         self.log_menu = QMenu(self)
         self.log_menu.setObjectName("logSubmenu")
@@ -872,6 +927,8 @@ class LiveStockWindow(QMainWindow):
         self._shutting_down = False
         self._capture_mode = initial_mode
         self._ticker_roi = initial_roi
+        self._ticker_point = saved_points.ticker if saved_points else None
+        self._after_copy_point = saved_points.after_copy if saved_points else None
         self._calibration_in_progress = False
 
         self.bridge.registry_updated.connect(self._on_registry_updated)
@@ -916,13 +973,17 @@ class LiveStockWindow(QMainWindow):
             self.halt_countdown_timer.stop()
             return
         self._services_started = True
-        if USE_FIXED_TICKER_ROI:
-            self.status_label.setText("고정 티커 ROI 사용 중 · ` 키로 종목 캡처")
-            print(f"[TICKER ROI] fixed={TICKER_FIXED_ROI}", flush=True)
+        if self._capture_mode == CaptureMode.CAPTURE_READY:
+            self.status_label.setText("저장된 클릭 위치 사용 중 · ` 키로 종목 캡처")
+            print(
+                f"[CAPTURE POINTS] ticker={self._ticker_point} "
+                f"after_copy={self._after_copy_point} path={CONFIG_PATH}",
+                flush=True,
+            )
             print("`: capture stock", flush=True)
         else:
-            self.status_label.setText("티커명 위치에서 ` 키를 눌러주세요")
-            print("`: set ticker position", flush=True)
+            self.status_label.setText("티커 위치에서 ` 키를 눌러주세요")
+            print("`: set ticker click position", flush=True)
         if not ENABLE_REALTIME_PRICE_POLLING:
             print("[PRICE REFRESH] disabled for OCR testing", flush=True)
         else:
@@ -947,23 +1008,64 @@ class LiveStockWindow(QMainWindow):
     def _capture_for_hotkey(self, key: str) -> None:
         try:
             if self._capture_mode == CaptureMode.TICKER_CALIBRATION:
-                if self._calibration_in_progress:
-                    self.bridge.capture_status_changed.emit("티커 위치 판독 중입니다")
-                    return
-                self._calibration_in_progress = True
-                self.bridge.capture_status_changed.emit("티커 위치 판독 중")
-                self.processor.enqueue_ticker_calibration()
+                x, y = get_mouse_position()
+                self._ticker_point = (x, y)
+                self._ticker_roi = self._point_to_ticker_roi(self._ticker_point)
+                self._capture_mode = CaptureMode.AFTER_COPY_CALIBRATION
+                self.bridge.capture_status_changed.emit(
+                    "티커 위치 저장 완료 · 복사 후 클릭할 하단 위치에서 ` 키를 눌러주세요"
+                )
+                print(f"[TICKER POINT] selected=({x},{y}) roi={self._ticker_roi}", flush=True)
+                print("`: set after-copy click position", flush=True)
+                return
+            if self._capture_mode == CaptureMode.AFTER_COPY_CALIBRATION:
+                self._after_copy_point = get_mouse_position()
+                if self._ticker_point is None:
+                    raise RuntimeError("ticker_point_not_calibrated")
+                config_path = save_capture_points(
+                    CapturePoints(self._ticker_point, self._after_copy_point)
+                )
+                self._capture_mode = CaptureMode.CAPTURE_READY
+                self.bridge.capture_status_changed.emit(
+                    "두 클릭 위치 저장 완료 · 차트에서 ` 키로 캡처"
+                )
+                print(
+                    f"[AFTER COPY POINT] selected={self._after_copy_point} "
+                    f"saved={config_path}",
+                    flush=True,
+                )
+                print("`: capture stock", flush=True)
                 return
             if self._ticker_roi is None:
                 raise RuntimeError("ticker_roi_not_calibrated")
             self.bridge.capture_status_changed.emit(f"OCR 처리 중 · 입력 키: {key}")
-            self.processor.enqueue_live_capture(self._ticker_roi)
+            self.processor.enqueue_live_capture(
+                self._ticker_roi,
+                self._after_copy_point,
+            )
         except Exception as exc:
             self._calibration_in_progress = False
             self.bridge.capture_status_changed.emit(
                 f"캡처 실패 · {type(exc).__name__}: {exc}"
             )
             raise
+
+    @staticmethod
+    def _point_to_ticker_roi(
+        point: tuple[int, int],
+    ) -> tuple[int, int, int, int]:
+        x, y = point
+        ml, mt, mr, mb = monitor_bounds_for_point(x, y)
+        half_width = TICKER_POINT_ROI_WIDTH // 2
+        half_height = TICKER_POINT_ROI_HEIGHT // 2
+        left = min(max(x - half_width, ml), mr - TICKER_POINT_ROI_WIDTH)
+        top = min(max(y - half_height, mt), mb - TICKER_POINT_ROI_HEIGHT)
+        return (
+            left,
+            top,
+            left + TICKER_POINT_ROI_WIDTH,
+            top + TICKER_POINT_ROI_HEIGHT,
+        )
 
     @Slot(object)
     def _on_calibration_finished(self, result: TickerCalibrationResult) -> None:
@@ -1000,7 +1102,34 @@ class LiveStockWindow(QMainWindow):
         self.tracking_view.sync_from_registry()
         self.status_label.setText(f"{symbol} 추적 종료 · 대기")
 
+    def _confirm_move_to_realtime(self, symbol: str) -> None:
+        answer = QMessageBox.question(
+            self,
+            "실시간으로 이동",
+            f"{symbol}을(를) 실시간으로 보낼까요?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        if not self.registry.move_taecho_watch_to_realtime(symbol):
+            return
+        self._tracking_alert_symbols.discard(symbol)
+        self._refresh_tracking_alert_badge()
+        self.tracking_view.sync_from_registry()
+        self.cards_view.sync_from_registry()
+        self.status_label.setText(f"{symbol} 실시간으로 이동 완료 · 대기")
+        print(f"[TRACKING TO REALTIME] ticker={symbol}", flush=True)
+
+    def _refresh_tracking_alert_badge(self) -> None:
+        count = len(self._tracking_alert_symbols)
+        self.tracking_alert_badge.setText(str(count) if count > 1 else "!")
+        self.tracking_alert_badge.setVisible(count > 0)
+        self.tracking_alert_badge.raise_()
+
     def _show_taecho_rebreak_alert(self, alert: TaechoRebreakAlert) -> None:
+        self._tracking_alert_symbols.add(alert.symbol)
+        self._refresh_tracking_alert_badge()
         name = alert.stock_name.strip()
         identity = (
             f"{alert.symbol} {name}"
@@ -1139,6 +1268,18 @@ QLabel#trackingTicker {
     font-size: 18px;
     font-weight: 800;
 }
+QPushButton#trackingRealtimeButton {
+    color: #69db7c;
+    background: #18222d;
+    border: 1px solid #69db7c;
+    border-radius: 14px;
+    font-size: 16px;
+    font-weight: 800;
+}
+QPushButton#trackingRealtimeButton:hover {
+    color: #102117;
+    background: #69db7c;
+}
 QLabel#trackingDetail {
     color: #cbd5e1;
     font-family: "Malgun Gothic";
@@ -1202,6 +1343,14 @@ QPushButton#sideMenuButton:checked {
     color: #f2f5f8;
     background: #2b3a49;
     border-left: 3px solid #69db7c;
+}
+QLabel#trackingMenuAlertBadge {
+    color: #ffffff;
+    background: #ff2aa1;
+    border: 2px solid #18222d;
+    border-radius: 11px;
+    font-size: 12px;
+    font-weight: 900;
 }
 QMenu#logSubmenu {
     color: #f2f5f8;

@@ -103,12 +103,14 @@ def main() -> int:
     capture_registry.merge_analysis_result(
         analysis("daily", [("day33_wall", "33")]), capture_id="daily_2"
     )
+    assert capture_registry.get_snapshot("XPON").daily_capture_count == 2
     capture_registry.merge_analysis_result(minute_a, capture_id="minute_1")
     capture_registry.merge_analysis_result(minute_b, capture_id="minute_2")
     assert capture_registry.remove_capture("daily_2") == ("XPON",)
     restored = capture_registry.get_snapshot("XPON")
     assert restored is not None
     assert restored.daily_price_levels == [("day20_wall", Decimal("20"))]
+    assert restored.daily_capture_count == 1
     assert capture_registry.remove_capture("minute_2") == ("XPON",)
     restored = capture_registry.get_snapshot("XPON")
     assert restored is not None

@@ -148,8 +148,18 @@ def main() -> int:
         )
     )
     window.tracking_view.sync_from_registry()
+    window.cards_view.sync_from_registry()
     assert tuple(window.tracking_view.cards) == ("MERG",)
+    assert "MERG" not in window.cards_view.cards
     assert window.tracking_view.cards["MERG"].bubble_label.text() == "..."
+    with patch.object(
+        live_ui.QMessageBox,
+        "question",
+        return_value=live_ui.QMessageBox.StandardButton.Yes,
+    ):
+        window.tracking_view.cards["MERG"]._request_move_to_realtime()
+    assert "MERG" not in window.tracking_view.cards
+    assert "MERG" in window.cards_view.cards
     assert window.registry.remove("MERG") is not None
     window.tracking_view.sync_from_registry()
     assert not window.tracking_view.cards
@@ -193,6 +203,8 @@ def main() -> int:
     )
     with patch.object(live_ui, "start_taecho_rebreak_sound", return_value=None):
         window._show_taecho_rebreak_alert(alert)
+    assert not window.tracking_alert_badge.isHidden()
+    assert "YJ" in window._tracking_alert_symbols
     assert "YJ" in window.status_label.text()
     assert "태초마을 재돌파" in window.status_label.text()
     assert "3.50" in window.status_label.text()

@@ -46,6 +46,7 @@ class StockData:
     owned: bool = False
     stock_name: str = ""
     status: str = ""
+    daily_capture_count: int = 0
     price_decimals: int = 2
 
 
@@ -354,8 +355,11 @@ class StockCard(QFrame):
         self.code_label.setObjectName("stockCode")
         self.status_label = QLabel()
         self.status_label.setObjectName("stockStatus")
+        self.daily_count_label = QLabel()
+        self.daily_count_label.setObjectName("dailyCaptureCount")
         code_layout.addWidget(self.code_label)
         code_layout.addWidget(self.status_label)
+        code_layout.addWidget(self.daily_count_label)
         code_layout.addStretch()
         self.price_label = QLabel()
         self.price_label.setObjectName("currentPrice")
@@ -403,6 +407,13 @@ class StockCard(QFrame):
         self.delete_button.setToolTip(f"{stock.code} 추적 종료")
         self.status_label.setText(stock.status)
         self.status_label.setVisible(bool(stock.status))
+        count_text = (
+            f"+{stock.daily_capture_count}"
+            if stock.daily_capture_count >= 2
+            else ""
+        )
+        self.daily_count_label.setText(count_text)
+        self.daily_count_label.setVisible(bool(count_text))
         self.set_current_price(stock.current_price)
 
     def set_current_price(self, price: float | None) -> None:
@@ -583,6 +594,7 @@ def stock_data_from_record(stock: StockRecord) -> StockData:
         ],
         owned=stock.holding,
         status=status,
+        daily_capture_count=stock.daily_capture_count,
         price_decimals=4,
     )
 
@@ -656,7 +668,12 @@ class StockCardsView(QScrollArea):
 
     def sync_from_registry(self) -> None:
         """현재가 polling을 포함한 Registry 최신 snapshot 전체를 다시 그린다."""
-        stocks = self.registry.all_snapshots()[: self.MAX_CARDS]
+        tracking_symbols = self.registry.taecho_rebreak_watch_symbols()
+        stocks = tuple(
+            stock
+            for stock in self.registry.all_snapshots()
+            if stock.stock_code not in tracking_symbols
+        )[: self.MAX_CARDS]
         desired_symbols = {stock.stock_code for stock in stocks}
         for symbol in tuple(self.cards):
             if symbol not in desired_symbols:
@@ -824,6 +841,11 @@ QLabel#stockStatus {
     font-family: "Malgun Gothic";
     font-size: 11px;
     font-weight: 600;
+}
+QLabel#dailyCaptureCount {
+    color: #e57373;
+    font-size: 13px;
+    font-weight: 800;
 }
 QLabel#currentPrice {
     color: #69db7c;
