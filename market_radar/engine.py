@@ -5,7 +5,7 @@ from datetime import timedelta
 
 from .calculations import calculate, pct, rank
 from .config import RadarConfig
-from .models import MarketBatch, instant, utc
+from .models import ET, MarketBatch, instant, utc
 from .storage import RadarStore
 
 HORIZONS = {"30s": 30, "1m": 60, "3m": 180, "5m": 300, "10m": 600, "30m": 1800, "60m": 3600}
@@ -64,13 +64,32 @@ class RadarEngine:
                 session = db.execute("SELECT close_utc FROM market_sessions WHERE session_date=?", (close.session_date,)).fetchone()
                 if session is None or instant(session[0]) != instant(close.timestamp_utc):
                     raise ValueError("Official close requires matching exchange calendar close")
-                if self.store.schema_version == 2:
+                if self.store.schema_version >= 2:
                     db.execute("INSERT OR REPLACE INTO market_closes VALUES(?,?,?,?,?,?)", (
                         close.ticker, close.session_date, utc(instant(close.timestamp_utc)), close.price, close.source, close.status))
                 elif close.status == "complete":
                     db.execute("INSERT OR REPLACE INTO market_closes VALUES(?,?,?,?)", (
                         close.ticker, close.session_date, utc(instant(close.timestamp_utc)), close.price))
             present = {r["ticker"] for r in rows}
+            if self.store.schema_version >= 3:
+                day = instant(stamp).astimezone(ET).date().isoformat()
+                reasons = batch.metadata.get("missing_reasons", {})
+                for item in batch.metadata.get("candidates", []):
+                    prior = db.execute("SELECT candidate_sources FROM radar_discoveries WHERE session_date=? AND ticker=?",
+                                       (day, item["ticker"])).fetchone()
+                    sources = sorted(set(item.get("sources", [])) | set(json.loads(prior[0]) if prior else []))
+                    state = ("excluded_symbol_type" if item.get("excluded_symbol_type") else
+                             reasons.get(item["ticker"], "subscribed" if item["ticker"] in batch.metadata.get("active", {}) else "awaiting_subscription"))
+                    db.execute("INSERT INTO radar_discoveries VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(session_date,ticker) "
+                        "DO UPDATE SET last_seen_utc=excluded.last_seen_utc,symbol_type=excluded.symbol_type,"
+                        "symbol_type_evidence=excluded.symbol_type_evidence,excluded_symbol_type=excluded.excluded_symbol_type,"
+                        "candidate_sources=excluded.candidate_sources,candidate_tracking_state=excluded.candidate_tracking_state",
+                        (day,item["ticker"],stamp,stamp,item.get("type", "unknown"),json.dumps(item.get("symbol_type_evidence", {})),
+                         int(bool(item.get("excluded_symbol_type"))),json.dumps(sources),state))
+                db.execute("UPDATE radar_candidates SET candidate_tracking_state='released' WHERE tracking_protected_until<?", (stamp,))
+                for c in db.execute("SELECT id,ticker FROM radar_candidates WHERE tracking_protected_until>=?", (stamp,)).fetchall():
+                    db.execute("UPDATE radar_candidates SET candidate_tracking_state=? WHERE id=?",
+                        (reasons.get(c["ticker"], "protected"),c["id"]))
             # Absence from a full universe means a ranking exit, not a repeated entry.
             for state in db.execute("SELECT ticker,snapshot_json FROM radar_state").fetchall():
                 if state[0] not in present:
@@ -92,9 +111,15 @@ class RadarEngine:
                         first_detected_et=row["timestamp_et"], first_price=row["price"],
                         session_close_utc=utc(instant(observation.session.close_utc)), test_version=self.config.test_version))
                     self._new_results(candidate_id, stamp, observation.session.close_utc)
-                    if self.store.schema_version == 2:
+                    if self.store.schema_version >= 2:
                         db.execute("UPDATE radar_candidates SET candidate_sources=?,provider=?,exchange=? WHERE id=?", (
                             row.get("candidate_sources"), self.provider, row.get("exchange"), candidate_id))
+                    if self.store.schema_version >= 3:
+                        end = min(instant(stamp)+timedelta(seconds=max(max(HORIZONS.values()), self.config.result_tracking_hold_minutes*60)),
+                                  instant(observation.session.close_utc)) + timedelta(seconds=self.config.result_tolerance_seconds)
+                        db.execute("UPDATE radar_candidates SET tracking_protected_until=?,candidate_tracking_state='protected',"
+                            "symbol_type=?,symbol_type_evidence=? WHERE id=?", (utc(end), row.get("symbol_type", "unknown"),
+                            row.get("symbol_type_evidence", "{}"), candidate_id))
                     events.append("FIRST_DETECTED")
                 for key, label in (("current_leader_rank", "LEADER"), ("emerging_rank", "EMERGING")):
                     for threshold in (10, 5, 3):
@@ -122,6 +147,8 @@ class RadarEngine:
             target = instant(detected) + timedelta(seconds=seconds)
             status = "pending" if target <= instant(close) else "outside_session"
             self.store.insert("radar_results", dict(candidate_id=candidate_id, horizon=name, target_utc=utc(target), status=status))
+            if self.store.schema_version >= 3 and status == "outside_session":
+                self.store.db.execute("UPDATE radar_results SET missing_reason='outside_session' WHERE candidate_id=? AND horizon=?", (candidate_id,name))
         for name in ("EOD", "D+1", "D+2", "D+3"):
             self.store.insert("radar_results", dict(candidate_id=candidate_id, horizon=name,
                                                    target_utc=utc(instant(close)) if name == "EOD" else None))
@@ -151,8 +178,25 @@ class RadarEngine:
                     "SELECT timestamp_utc,price FROM radar_snapshots WHERE ticker=? AND session_date=? "
                     "AND timestamp_utc>=? AND timestamp_utc<=? ORDER BY timestamp_utc LIMIT 1",
                     (result["ticker"], result["session_date"], target, limit)).fetchone()
+                selection = 'post_target'
+                # Wait out the post-target window before using any early sample.
+                # Otherwise a later valid post-target sample would lose priority.
+                if observed is None and instant(now) > instant(limit) and self.store.schema_version >= 4:
+                    earliest = utc(instant(target) - timedelta(seconds=self.config.result_pre_target_grace_seconds))
+                    observed = db.execute(
+                        "SELECT timestamp_utc,price FROM radar_snapshots WHERE ticker=? AND session_date=? "
+                        "AND timestamp_utc>=? AND timestamp_utc<? ORDER BY timestamp_utc DESC LIMIT 1",
+                        (result['ticker'], result['session_date'], earliest, target)).fetchone()
+                    selection = 'pre_target_grace'
                 if observed is None and instant(now) > instant(limit):
                     db.execute("UPDATE radar_results SET status='missing' WHERE id=?", (result["id"],))
+                    if self.store.schema_version >= 3:
+                        evidence = db.execute("SELECT raw_json FROM radar_batches WHERE timestamp_utc>=? AND timestamp_utc<=? "
+                            "ORDER BY timestamp_utc DESC LIMIT 1", (target,limit)).fetchone()
+                        reason = "no_snapshot_within_tolerance"
+                        if evidence:
+                            reason = json.loads(evidence[0]).get("metadata", {}).get("missing_reasons", {}).get(result["ticker"], reason)
+                        db.execute("UPDATE radar_results SET missing_reason=? WHERE id=?", (reason,result["id"]))
             else:
                 observed = db.execute("SELECT timestamp_utc,price FROM market_closes WHERE ticker=? AND timestamp_utc=?",
                                       (result["ticker"], target)).fetchone()
@@ -168,7 +212,10 @@ class RadarEngine:
                            observed[0], observed[1], pct(observed[1], result["first_price"]),
                            (instant(observed[0]) - instant(target)).total_seconds(),
                            pct(high, result["first_price"]), pct(low, result["first_price"]), result["id"]))
-            if self.store.schema_version == 2:
+            if self.store.schema_version >= 4 and result['horizon'] in HORIZONS:
+                db.execute("UPDATE radar_results SET sample_timestamp=?,sample_offset_seconds=?,sample_selection=? WHERE id=?",
+                    (observed[0], (instant(observed[0])-instant(target)).total_seconds(), selection, result['id']))
+            if self.store.schema_version >= 2:
                 source, status = "sampled_prices", "complete"
                 if result["horizon"] not in HORIZONS:
                     provenance = db.execute("SELECT source,status FROM market_closes WHERE ticker=? AND timestamp_utc=?",

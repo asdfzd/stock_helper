@@ -1,10 +1,148 @@
 # CODEX HANDOFF
 
-갱신일: **2026-09-29 KST**. 프로젝트: Windows `stock_helper`.
+갱신: 2026-10-01 KST / 운영일 2026-09-30 ET. 프로젝트: Windows stock_helper.
+현재 버전은 **test_version=kiwoom_radar_v2_1 / schema_version=4**다. 기존 사용자의 uncommitted v2 변경 위에 안정화 작업을 추가했다. 캡처/OCR/Registry/매입가·반등가·벽/Toss/halt/UI 구현, 전략/순위 공식은 변경하지 않았다. 주문·계좌 기능, .env 편집, commit/push/staging, 임시 MD/REPORT 생성은 없다.
 
-**현재 상태: Kiwoom Market Radar Provider v1 구현 및 짧은 실서버 검증 완료. 제약을 명시한 연구 데이터 수집을 시작할 수 있다.** 완료된 1분 기준 RVOL/return, VWAP NULL, 과거 일봉 결과 provisional 정책이다. 1주 연속 운영·전략 유효성·전 거래소 통합 feed·공식 종가 확정은 검증하지 않았다.
+이 문서가 프로젝트 상태 전달의 기준이다. 이전 KIWOOM_PROBE_REPORT.md와 KIWOOM_PROVIDER_V1_REPORT.md는 작업 시작 때 이미 없었으며 삭제한 파일은 없다. 새 일회성 REPORT 문서는 만들지 않았다.
 
-기존 캡처/OCR/자동입력/Registry/매입가·반등가·벽/Toss/halt 코드는 이번 provider 작업에서 변경하지 않았다. 주문·계좌·잔고·환전 API가 없다. Commit/push/staging, `.bak` 생성은 하지 않았다. 기존 미커밋 변경을 보존했다.
+## v2.1 실제 v2 baseline 재계산
+
+`data/kiwoom_week_v2` 전체를 읽기 전용으로 분석했다. SQLite는 mode=ro; 시작 파일 SHA256은 `data/kiwoom_v2_1_validation/evidence_hashes.json`, SQL/CSV/log 재계산 결과는 같은 폴더 `baseline.json`이다. 원본 export/DB/cache를 재생성하거나 ALTER하지 않았다.
+
+| 항목 | 직접 확인한 수치 |
+|---|---:|
+| snapshot / unique ticker / FIRST_DETECTED | 4,595 / 40 / 33 |
+| CSV candidate / snapshot / event / result | 33 / 4,595 / 1,365 / 363 |
+| RVOL available | 266 / 4,595 = 5.7889% |
+| +30s complete / missing | 29 / 4 |
+| +1m / +3m complete | 각각 33/33 |
+| +5m complete / missing | 32 / 1 |
+| +10m complete / pending | 32 / 1 |
+| +30m complete / pending | 30 / 3 |
+| +60m complete / missing / pending | 20 / 0 / 13 |
+| 첫 포착 순 첫 20개 +60m | 20/20 complete |
+| ws_gap / DB error / export error | 0 / 0 / 0 |
+| tracking_slot_unavailable 이벤트 / 마지막 gauge | 674 / 39 |
+| 마지막 active / protected / discovery | 20 / 13 / 74 |
+| historical backfill complete / incomplete / error | 91 / 1,421 / 182 |
+| runtime API error / worker error | 1,020 / 158 |
+| FFR snapshot / FE raw | 158 / 7,821 |
+| FFR day_change_pct / volume / RVOL non-null | 모두 0 |
+
+기존 summary와 SQL/CSV/로그 수치가 일치했다. **1,421건 incomplete가 API 1,020건에 포함된 것은 아니다.** v2도 incomplete를 별도 WARNING/counter로 집계했다. v2.1은 이를 유지하고 오류 분류를 확장했다.
+
+## v2.1 REST root cause와 FFR
+
+v2 REST 시도 오류 1,020건은 usa20100 474건 + usa06011 546건이다. retry=2로 각각 158/182개의 실패 cycle이 3번씩 호출됐다. 백필 오류의 ticker 분포는 FFR 174, GTNA 3, RZAI 3, GOW 2다. quote 오류는 ticker가 로그에 없어서 474건 모두를 FFR로 확정하지 않는다. worker_error 158건은 quote 실패가 scheduler의 광범위 exception handler까지 전파된 기록과 일치한다. 실패 분류 없이 즉시 3회 retry하고, quote는 다음 순회마다/백필은 60초 뒤 같은 요청을 재시도하는 구조가 오류를 증폭했다.
+
+**v2 증거 한계:** 실패 응답은 raw에 저장되지 않았고 HTTP status/return_code/message/timeout/connection/parse 구분이 없었다. 과거 1,020건의 해당 차원은 unknown이며 모두를 1903으로 소급 분류하지 않는다. endpoint는 기존 allowlist상 usa20100 `/api/us/mrkcond`, usa06011 `/api/us/chart`다.
+
+FFR은 첫 universe에서 CHG+VOL, 일간 합집합에 SPIKE로도 발견됐다. 거래소는 ND이며 FE가 실제 수신됐다. usa10099 catalog에 없어 type=unknown으로 유지했다. usa20100/usa06011 성공 raw는 없었다. FE 가격은 있지만 REST previous_close/completed 1m history가 없어 day_change_pct/volume/RVOL이 NULL이다. FE 필드로 기존 계산 정의를 대체하지 않았다.
+
+정규장 중 허용 read-only probe를 7회 실행했다: ND/NY/NA usa10099 각 1회, FFR/NVDA usa20100·usa06011 각 1회. 공개 결과는 `data/kiwoom_v2_1_validation/public_failure_probe.json`이다.
+
+- catalog: HTTP 200 / return_code 0, 각각 5,206 / 5,579 / 1,947행. 세 거래소 모두 FFR entry 없음.
+- FFR 현재가·분봉: HTTP 200 / return_code **7**, message 내 **1903: 종목 정보가 없습니다**. 입력 ND/FFR, 분봉 0행.
+- 같은 ND의 NVDA: 두 TR 모두 HTTP 200 / return_code 0, 분봉 100행.
+- 확인된 현상은 **후보/FE에는 존재하지만 해당 REST catalog/조회에서는 symbol을 찾지 못하는 불일치**다. 공급자 내부 원인, 상장상태, 유형, 거래소 이동을 추측하지 않는다. ticker 하드코딩/제외/영구 blacklist는 없다.
+
+분류 근거는 [Kiwoom 공식 오류 구현](https://github.com/Kiwoom-Securities/Kiwoom-REST-API/blob/main/kiwoom/core/errors.py)이다. top-level 7만으로 transient를 판정하지 않는다. 공식 1901/1902/1903은 symbol lookup 오류, 1700/1701/1702는 rate limit, 8005/8031/8103은 인증 회복 대상이다. 그 외 확인되지 않은 service error는 unclassified로 남긴다.
+
+## v2.1 재시도·품질 정책
+
+`kiwoom_failures.py`는 공개 오류 정보를 가진 RestFailure와 StopRequested를 구분한다. HTTP 429/5xx, timeout/connection error, 확인된 rate-limit/auth-expiry만 최대 2회 재시도한다. 인증 회복도 동일 budget이다. unknown/parse는 즉시 재시도 없이 60초 cooldown이다.
+
+negative cache 키는 **ET 날짜 + TR + 전체 allowlist body(ticker/exchange/date 포함) + cursor**다. deterministic unsupported/invalid request/빈 initial chart는 6시간 TTL(`rest_negative_ttl_seconds=21600`) 내 같은 요청을 막는다. ET 날짜 변경 또는 TTL 만료 후 재검증하고 성공 시 실패 상태를 해제한다. first/last failed time, attempt count, retry_after, reason을 메모리에 보존한다. 프로세스 재시작은 새 세션이다. transient exhausted/unknown은 60초 cooldown이다. 억제 호출은 추가 API 오류로 세지 않는다.
+
+백필 complete/incomplete/skipped/deterministic_unavailable/transient_error/unclassified_error를 분리하고 legacy error 필드를 유지한다. historical 시도 기준이며 skipped는 eligibility로 생략한 scheduler 기회 횟수다. 정상 empty initial chart는 deterministic no_data지만 runtime API 오류가 아니다. HTTP/API/parse/transport 실패는 api_error_count에 남기고 transport/parse counter는 그 부분집합이다. REST가 이미 집계한 실패를 scheduler가 worker_error로 다시 더하지 않는다.
+
+quality_summary_version=2, 기존 필드 유지. rest_errors에 total/transient/deterministic/unclassified/timeout/rate-limit/no-data/unsupported 등을 제공한다. TR/ticker/endpoint/HTTP/top-level code/embedded code는 각각 상위 10개만 출력한다. raw REST_ERROR에는 공개 상태와 sanitized message를 남기며 인증값/Authorization/token은 저장하지 않는다. shutdown 요청·취소·마지막 시간 및 result_sampling을 추가했다. tracking은 마지막 batch의 slot_saturation_pct/active/protected/unavailable이다.
+
+## v2.1 Ctrl+C와 무결성
+
+기존 pending jobs는 FIFO 전체를 drain하는 구조가 아니라 IO thread가 페이지 단위로 처리하는 dict였다. 기존 stop_event도 있었다. 따라서 '기존 종료가 반드시 queue 전체를 처리했다'고 주장하지 않는다. scheduler 내부 loop/page/구독 선택의 stop 확인이 부족했고 stop 예외가 오류로 집계될 수 있었다. v2에는 Ctrl+C 요청 시각이 없어 전체 지연을 재구성할 수 없다. 마지막 WS disconnect 15:27:27.612 UTC→final export 15:27:40.307은 12.695초, program_stop까지는 12.709초지만 Ctrl+C부터의 시간은 아니다.
+
+- CLI/실제 smoke에서 Ctrl+C를 KeyboardInterrupt로 기록하고 Event를 즉시 설정한다. 추가 Ctrl+C는 같은 종료 상태를 사용한다. Windows launcher에서 상속될 수 있는 Ctrl+C ignore flag도 해제한다.
+- universe refresh/각 page/백필 시작/REST retry/limiter wait/새 WS REG 앞에서 stop을 검사한다. 진행 중 bounded request 이후 pending historical jobs를 취소한다. thread kill/os._exit/process terminate는 없다.
+- shutdown_requested, shutdown_stop_scheduling, shutdown_backfill_cancelled, shutdown_ws_closing, shutdown_export_start, shutdown_export_complete, shutdown_complete 및 program_stop을 기록한다. 단계별 timestamp/elapsed_ms를 확인할 수 있다.
+- 실제 순서: scheduling stop → REST IO join/백필 jobs 취소 → WS REMOVE/disconnect → raw cache drain/close 및 REST/collector lock close → 연구 DB commit/checkpoint → CSV/quality final export → DB close → program_stop. WS thread는 같은 Event를 받아 먼저 종료할 수 있다. provider close를 export보다 앞에 두는 것은 종료 REMOVE/raw/error counter까지 summary에 포함하기 위함이다.
+- 완료 후 반복 close는 REMOVE/cache close를 반복하지 않는다. 취소는 API 오류가 아니다. CSV/JSON 파일별 atomic replace는 유지한다.
+
+모의 active request + pending historical 300건 + 반복 stop은 **78ms**, 300건 취소, DB integrity ok, final CSV/summary 및 phase 순서 통과였다. HTTP timeout은 connect 5초/read 10초 그대로이며 정상 환경 목표는 15~20초다. 악조건 WS/파일시스템까지 20초를 절대 보장한다는 뜻은 아니다.
+
+## v2.1 결과 샘플과 기존 정책
+
+원본 missing 4건의 가까운 pre-target offset은 LIQT -0.001633s, NVDA -0.003049s, PACB -0.002346s, FRGT -0.002783s다. 다음 snapshot은 각각 +30.001094/+30.020835/+30.006155/+30.003765s였다. 원본 결과는 수정하지 않았다. `counterfactual_sampling.json`의 읽기 전용 재검산에서는 기존 complete 선택이 전부 동일하고 이 4건만 grace로 복구 가능했다. 운영 증거 전체 SHA256도 작업 전후 동일하다.
+
+selector는 target~target+30초의 가장 빠른 실제 snapshot을 우선한다. 창이 끝난 뒤 post-target이 없을 때만 target-`result_pre_target_grace_seconds`(기본 0.25초) 이상~target 미만 중 가장 가까운 snapshot을 쓴다. 그 외 missing이다. grace=0으로 비활성 가능하고 30초 tolerance는 유지한다. A~F 경계, 정확한 0.25초 경계, 비활성, 나머지 intraday horizon을 테스트했다. DB/CSV의 sample_timestamp/sample_offset_seconds/sample_selection은 기존 observed_utc/timing_error_seconds와 일치한다. entry/price/return/MFE/MAE 의미와 EOD/D+n은 유지하며 보간하지 않는다.
+
+보호 배정 알고리즘은 변경하지 않았고 stop guard만 추가했다. FIRST_DETECTED부터 최대 intraday+tolerance 보호, 기존 보호 우선, 60분 결과 후 release, DB 복원, EOD/D+n 분리 회귀를 통과했다. 기존 v2 첫 20개 +60m 완료 evidence를 보존하며 짧은 smoke로 새 60분 수집 성능을 증명하지 않는다.
+
+Current Leaders=day_change_pct descending, Emerging=completed 1m return_5m descending, 동률 ticker 그대로다. RVOL available/warming/incomplete_history/not_eligible/zero_denominator/unknown 및 MIXED_OR_UNCERTAIN 정책도 그대로다. 가짜 zero-volume minute은 만들지 않았다. ETF/ETN/warrant/확정 unit-other 제외, common+unknown 포함을 유지한다. calculations 변경은 기존 v2 정책을 v2.1에도 적용하는 버전 조건 확장뿐이다.
+
+20슬롯은 smoke/test 규모다. 기존 CLI/config max_ws_symbols와 공식 상한 200을 유지했다. 20→200 임의 변경은 없다. 50/100/200 중 주간 권장 capacity 결정은 별도 smoke가 필요하다.
+
+## v2.1 버전·검증·다음 실행
+
+기본 연구 DB는 `data/stock_helper_market_kiwoom_v2_1.db`, schema 4다. 기존 schema3 DB는 DDL 이전 identity/version 검사로 거부하며 byte 불변 테스트를 통과했다. cache OHLCV contract/schema 1/assumed_et_start_v1은 그대로여서 별도 cache schema는 필요 없다. basename `market_radar_cache/kiwoom_v2.db`를 유지하되 실제 smoke는 새 폴더에 새 cache를 만들었다. 기존 운영 cache는 변경하지 않았다.
+
+자동 검증: **168 통과 / 실패 0**. 기존 133개 유지 + 신규 stability 35개. 테스트 삭제 없음. version/schema/path 기대값만 새 버전에 맞췄다. artifact는 `data/kiwoom_provider_validation/tests_summary.json` 및 suite 로그다. 기존 실제 OCR 초기화·Registry·UI·Toss·halt 회귀가 모두 통과했다. 해당 제품 구현 파일은 수정하지 않았다. `git diff --check`도 통과했다.
+
+실제 v2.1 smoke: **완료**. 새 `data/kiwoom_smoke_v2_1`, 20슬롯, production provider. 약 10분(collector 596.875초; interpreter/초기화 포함 driver 600초) 동안 수집했다. windows_ctrlc_smoke.py가 숨김 콘솔에 실제 Windows CTRL_C_EVENT를 전달했고 정상 KeyboardInterrupt handler가 수신했다. ordinary timer의 worker.stop/강제 종료로 대체하지 않았다. driver의 child exit code=0, forced_termination=false다.
+
+| 실제 smoke 항목 | 수치 |
+|---|---:|
+| 실행 UTC | 2026-09-30 16:53:57.439569 ~ 17:03:56.713607 |
+| snapshot / unique ticker / candidate | 378 / 21 / 19 |
+| +30s / +1m / +3m / +5m complete | 각각 19/19, missing 0 |
+| +10m / +30m / +60m | 각각 pending 19 (짧은 smoke) |
+| result_sampling post-target / pre-grace | 76 / 0 |
+| REST errors / deterministic / transient / unclassified | 17 / 17 / 0 / 0 |
+| FFR usa20100 / usa06012 / usa06011 | 1 / 1 / 15 |
+| 동일 요청 재시도 / 억제 호출 | 0 / 134 |
+| historical backfill complete / incomplete / deterministic_unavailable | 56 / 179 / 14 |
+| DB / worker / export / transport / parse 오류 | 모두 0 |
+| WS gap / raw dropped / stale | 0 / 0 / 1 |
+| ack add / remove 종목 수 | 21 / 21 |
+| slot saturation / active / protected / unavailable 마지막 gauge | 100% / 20 / 19 / 37 |
+| slot unavailable 진입 이벤트 | 77 |
+| RVOL available / warming / incomplete_history | 0 / 92 / 286 |
+| 제외 유형 snapshot | 0 |
+| FFR FE raw | 110 |
+| 연구 DB / cache integrity_check | 둘 다 ok |
+| 종료 취소 historical jobs / stop 이후 새 백필 | 8 / 0 |
+
+17건 모두 HTTP 200 / top-level 7 / embedded 1903 / attempt=1이며 FFR이다. 분봉 15건은 당일+이전 14거래일 각각 1회다. 각 날짜의 backfill_start도 1회씩이므로 같은 query를 반복한 15회가 아니다. API 오류 자체는 숨기지 않고 남겼다. 실제 오류 class 분류와 retry 억제가 확인됐다. 신규 캐시·짧은 수집에서 RVOL available=0이므로 RVOL 개선을 주장하지 않는다. 실제 grace 사용은 0건이어서 경계 개선 근거는 자동 테스트와 원본 read-only 재검산이며 live pre-grace 사용 검증이라고 주장하지 않는다.
+
+| 실제 종료 단계 | UTC |
+|---|---|
+| 마지막 새 historical backfill 시작 | 17:03:54.692 |
+| shutdown_requested, reason=KeyboardInterrupt | 17:03:56.377905 |
+| WS REMOVE 20개 | 17:03:56.432 |
+| WS disconnect | 17:03:56.439 |
+| shutdown_export_start | 17:03:56.523 |
+| final CSV export | 17:03:56.662 |
+| shutdown_complete / program_stop | 17:03:56.707 / 17:03:56.708 |
+
+Ctrl+C 수신→program_stop은 로그 기준 **0.331초**다. driver 신호 전송 helper 반환→process exit 관측은 0.640초다. summary의 last_shutdown_elapsed_ms=281은 CSV 및 첫 quality export까지의 측정이며, 이후 timing gauge를 반영한 작은 summary 재출력/DB close는 phase 로그의 328ms 및 program_stop에 포함된다. 이 측정 범위를 전체 shutdown 시간과 혼동하지 않는다.
+
+근거: smoke_summary.json, ctrlc_driver.json, export/2026-09-30/quality_summary.json, logs/2026-09-30.log 및 `data/kiwoom_v2_1_validation/smoke_audit.json`. raw/log/export에 실제 APP_KEY/APP_SECRET 문자열이 없고 기존 v2 evidence SHA256가 전부 동일함을 확인했다.
+
+smoke 시작 당시 166개가 통과했고, 수집 중 최종 검토에서 **중첩 Ctrl+C handler 재진입 방지**와 **provider close 실패 표시**만 추가했다. 두 예외 경로는 이후 mock 테스트를 추가해 stability 35개/전체 168개로 확인했다. 정상 live 수집·REST·sampling 경로는 smoke 이후 변경하지 않았다. 실제 연속 두 번 Ctrl+C나 provider close 실패를 live에서 재현했다고 주장하지 않는다.
+
+다음 실행(새 폴더, 20슬롯 제한 수집):
+
+~~~powershell
+& .\.venv-paddle\Scripts\python.exe -m market_radar --collect --max-ws-symbols 20 --result-pre-target-grace-seconds 0.25 --data-dir data/kiwoom_week_v2_1
+& .\.venv-paddle\Scripts\python.exe tools/kiwoom_provider/run_validation.py
+& .\.venv-paddle\Scripts\python.exe tools/kiwoom_provider/windows_ctrlc_smoke.py --seconds 600 --max-ws-symbols 20 --data-dir data/kiwoom_smoke_v2_1_next
+~~~
+
+남은 제한: v2 실패 응답 코드 복원 불가; FFR 공급자 내부 원인 미확정; unknown 오류는 60초 cooldown 후 재검증; 6시간 negative TTL 안에 데이터가 회복돼도 즉시 감지하지 않음; slot saturation/RVOL NULL은 남음; 짧은 live smoke가 장기 네트워크 장애/주간 capacity를 보증하지 않음. **새 v2.1 폴더에서 20슬롯 한계를 이해한 일주일 제한 수집은 시작 가능**하다. 전체 후보 추적 목적의 주간 운영 권장은 50/100/200 capacity 검증까지 보류한다. 신규 임시 MD는 없다. commit/push/git add는 하지 않았다.
+
+## 이전 v2 기록
+
+아래의 '현재', schema 3, 133개 및 실행 경로는 **v2 당시의 역사적 기록**이다. 현재 v2.1 상태와 실행법은 위를 따른다. 기존 evidence/인수인계 내용을 보존했다.
 
 ## 1. 기존 프로그램 구조와 실행 흐름
 
@@ -31,311 +169,333 @@
 
 창을 여는 것만으로 네트워크 수집하지 않는다. 실제 시작 버튼 또는 headless `--collect`가 필요하다. REPLAY는 별도 버튼/CLI이며 합성 fixture를 실시간으로 위장하지 않는다.
 
-## 3. Market Radar 전체 구조
 
-```text
-market_radar/
-  config.py                    # CONFIG: Kiwoom 실행 설정
-  models.py                    # Session/Bar/Observation/MarketBatch/DailyClose
-  provider.py                  # connect/fetch/close Protocol, factory, replay
-  calculations.py              # 일반 계산 및 명시적 completed_1m 분기
-  engine.py                    # ranking/event/result, batch 트랜잭션
-  storage.py                   # legacy schema v1 / 별도 Kiwoom schema v2, CSV
-  runtime.py                   # snapshot worker, 로그, 오류·종료
-  ui.py / __main__.py           # 두 TOP10 표, UI/headless/replay
-  requirements-kiwoom.txt       # optional live 의존성
-  providers/
-    kiwoom.py                  # 후보·구독·scheduler·정규화 조합
-    kiwoom_rest.py             # OAuth/read-only REST/중앙 limiter/retry
-    kiwoom_ws.py               # LOGIN/REG/REMOVE/PING/FE/optional FT/reconnect
-    kiwoom_cache.py            # raw/분봉/일봉/catalog/cache completeness
-    kiwoom_calendar.py         # exchange_calendars:XNYS
-    kiwoom_lock.py             # 로컬 단일 collector lock
-    kiwoom_contract.json       # Probe 고정 revision의 9 TR 부분 계약
-tests/
-  market_radar_test.py         # 기존 Radar 31개
-  market_radar_audit_test.py   # 기존 검수 19개, 새 기본 provider 기대값만 갱신
-  kiwoom_provider_test.py      # 신규 offline 33개
-tools/kiwoom_provider/
-  run_validation.py           # 전체 테스트 + OCR 초기화, API 연결 없음
-  smoke.py                    # 별도 DB, 실서버 최대 2종목, 시간 제한
-tools/kiwoom_probe/            # 앞 단계 조사 근거, 이번 작업에서 수정 안 함
-```
+## 3. Radar 현재 구조
 
-`create_live_provider(config)` → KiwoomProvider → RadarWorker → MarketBatch 검증 → 계산/재정렬 → DB/event/결과 → 크기 1 메시지 큐 → Qt 표. 제품은 probe 코드·output/deps를 import하지 않는다.
+CONFIG는 provider=kiwoom / test_version=kiwoom_radar_v2다. RadarConfig() 자체는 legacy fixture용 unconfigured / market_radar_v1 기본값을 유지한다.
 
-## 4. 실제 데이터 공급원과 근거
-
-키움 real 미국주식 REST `https://api.kiwoom.com`, WS `wss://api.kiwoom.com:10000/api/us/websocket`.
-고정 공식 revision은 `953e5dbff123f437ab4d11a78a95191a685eb51f`이며 Probe가 실제 검증한 계약을 사용한다.
-
-- [키움 공식 API 명세](https://github.com/Kiwoom-Securities/Kiwoom-REST-API/blob/953e5dbff123f437ab4d11a78a95191a685eb51f/kiwoom/_data/kiwoom_api_spec.json)
-- [공식 제한](https://openapi.kiwoom.com/intro?dummyVal=0)
-- [달력 라이브러리](https://github.com/gerrymanoim/exchange_calendars), [NYSE 휴장·조기폐장](https://www.nyse.com/trade/hours-calendars)
-
-FE/FT 공식 명세는 무료 나스닥 토탈뷰 제공을 설명한다. 이를 미국 전체 거래소 SIP 통합 체결·거래량·VWAP으로 보장하지 않는다. 유료 시세를 신청해도 REST에서는 무료 시세로 제공한다는 공식 설명이 있다.
-
-## 5. REST 목록과 인증
-
-| TR | 용도 | endpoint |
-|---|---|---|
-| usa20100 | 현재가·전일종가·OHLC·누적량 | /api/us/mrkcond |
-| usa10099 | ND/NY/NA 종목 목록 | /api/us/stkinfo |
-| usa20910 | 당일 등락률 상위 | /api/us/rkinfo |
-| usa20930 | 5분 가격급등 후보 | /api/us/stkinfo |
-| usa20530 | 거래량 상위 | /api/us/rkinfo |
-| usa20540 | 거래대금 상위 | /api/us/rkinfo |
-| usa06011 | 1분 OHLCV / pagination | /api/us/chart |
-| usa06012 | 일봉·조건부 후속 종가 | /api/us/chart |
-| usa20590 | 일별주가 비교 raw | /api/us/mrkcond |
-
-OAuth는 `/oauth2/token`, client_credentials다. 루트 `.env`의 KIWOOM_MODE=real, APP_KEY, APP_SECRET을 connect 시 로드한다. 키/secret/token은 로그나 DB에 저장하지 않는다. HTTP 헤더·OAuth 응답 전체·WS LOGIN frame은 raw 수집 대상에서 제외한다. 반환 필드는 계약 allowlist로 제한하고 실제 secret 문자열도 제거한다.
-
-가격 필드 방향 부호는 abs로 정규화하고 등락률/변동 금액 부호는 유지한다. 잘못된/nonfinite 값은 쓰지 않는다. minute volume 부호 의미를 임의 추정하지 않으며 잘못된 OHLCV는 계산에서 제외한다.
-
-## 6. 후보 universe와 타입 정책
-
-등락률/5분급등/거래량/거래대금 네 source의 상위 페이지 합집합, ticker dedup이다. candidate_sources, source별 원래 rank와 received timestamp를 보존한다. 여러 페이지는 원자적 snapshot이 아니다. source 요청이 부분 실패하면 전체 universe를 교체하지 않는다. 기존 universe가 180초 또는 refresh×3보다 오래되면 batch 갱신을 보류한다.
-
-종목리스트의 ND=NASDAQ/NY=NYSE/NA=AMEX와 순위 TR의 숫자 거래소 필터를 구분했다. 전체 12,000개 이상 개별 polling하지 않는다. 거래소가 상충하는 ticker는 raw 후보에 남기고 구독에서는 제외한다.
-
-기본 stock_type_policy=common_and_unknown. 공식 mkgb/upgb/isEtf enum이 아직 불명확하여 v1은 type_unknown으로 보존한다. 이름/suffix로 보통주·ETF·워런트를 추정하지 않는다. 따라서 워런트·ETF가 포함될 수 있다. `all` 설정도 가능하지만 현재 unknown 분류에서는 동일하게 보존된다. 정확한 분류 확인 이후 필터를 강화해야 한다.
-
-## 7. 200종목 슬롯과 WebSocket
-
-운영 우선순위: 여러 source에 등장 → 등락률 source rank → 5분급등 rank → 거래량 rank → 거래대금 rank → ticker. 투자 점수가 아니다. max_ws_symbols 기본 200, 초과 설정은 거부한다. 후보를 우선 배정하고 남는 슬롯에 pending 추적 종목을 넣는다. 슬롯이 부족한 추적 종목은 단기 결과 missing 가능, 일봉 보완은 별도로 지속한다.
-
-단일 관리 thread가 LOGIN 후 REG, REMOVE를 전송하고 성공 ack 후 active set을 변경한다. REG refresh=1은 공식 명세상 기존 등록 유지다. 종목 제거를 먼저 ack 받고 신규 등록하여 일시적 초과를 막는다. 서버 JSON PING을 echo한다. 계좌 F4/F5 이벤트는 사용하지 않는다.
-
-FE raw: 10/12/13/14/15/16/17/18/20/22/290/51020 및 received_utc, exchange, connection_generation, real mode. 290의 의미는 해석하지 않는다. FT 10호가 raw는 optional/default OFF다. 호가는 순위에 사용하지 않는다.
-
-## 8. 재연결·gap·중복 실행
-
-단절 시 active set과 최신 가격을 비우고 gap을 기록한다. 지수 backoff(최대 60초), 인증 재확인, 재연결, desired set 재등록. 오래된 연결의 가격을 새 수신처럼 재사용하지 않는다. gap은 보수적으로 유지하며 완전한 tick 복원으로 표시하지 않는다. 연결 후 30초 안정화되면 실패 횟수를 초기화한다.
-
-실제 강제 단절 부하시험은 하지 않았으며 mock으로 재등록/gap을 검증했다. websocket 라이브러리 내부 수신 thread가 추가될 수 있다. 로컬 파일 OS lock은 UI/headless 중복 collector를 차단하고 프로세스 종료 시 해제된다. 다른 PC·별도 프로그램은 통제하지 못한다.
-
-## 9. Snapshot·시각·완료 봉 정책
-
-기본 snapshot=30초. Observation/batch timestamp는 공통 **클라이언트 수집 시각 UTC**이며 거래소 생성 시각으로 주장하지 않는다. 최신 FE 가격의 received_utc 및 price_age_ms, raw 체결시각을 따로 저장한다. 거래소 timestamp 해상도가 미확정이므로 provider_latency_ms는 NULL이다. 수신 후 90초 초과 또는 개장 이전 FE는 현재 세션 Observation에서 제외한다.
-
-정규장 달력은 exchange_calendars 4.13.2의 XNYS를 사용하고 America/New_York/DST/조기폐장을 반영한다. 이 출처를 batch metadata에 저장한다. Kiwoom 달력 API를 구현한 것이 아니며 돌발 휴장은 업데이트·운영 확인이 필요하다.
-
-cntr_tm은 **가정 `assumed_et_start_v1`**로 해석한다. 현재 시각에서 2초를 뺀 최근 분 경계까지 종료된 봉만 계산한다. 캐시에 진행 봉으로 수신된 값은 시간이 지나도 완료로 승격하지 않고 다시 조회해야 한다. 24시 이상 시간과 extended 자료는 원문으로 남기고 regular 계산에서 제외한다. 이 정책은 공식 봉 라벨 확정이 아니라 Probe 관측에 근거한 연구 선택이다.
-
-## 10. Current Leaders / Emerging
-
-Current Leaders: `(live price / previous_close - 1)*100` 내림차순. Emerging: 최근 완료 봉 close 기반 return_5m 내림차순. 동률은 ticker 오름차순이다. provider source rank를 그대로 UI rank로 복사하지 않는다. source 급등률은 후보 발견에만 쓴다.
-
-정규화된 유효 구독 후보 안에서 재정렬하고 UI는 TOP10씩 표시한다. 전체 시장 통합 순위가 아니다. NULL은 해당 순위에서 제외하고 in_universe=False 추적 전용 종목도 순위에서 제외한다. VWAP NULL, 음수 상승률 등을 이유로 종목을 제거하지 않는다.
-
-## 11. 1분/5분 Return
-
-Kiwoom은 cutoff의 완료 봉 close / 정확히 1·5분 이전 봉 close - 1로 계산한다. 실시간 price는 snapshot에 별도로 유지한다. 진행 봉과 30초 snapshot fallback은 return에 섞지 않는다. 필요한 끝점이 없으면 NULL이다.
-
-기존 replay/일반 provider는 기존 관측시각 기준 return 및 정확한 snapshot fallback을 유지한다. completed_1m metadata가 있는 경우에만 새 분기를 사용해 legacy 의미를 바꾸지 않는다.
-
-## 12. RVOL
-
-**rvol_basis=completed_1m**. 오늘 정규장 시작~완료 분 cutoff 누적 volume / 최근 완료된 14거래일 각각 동일 경과분 누적 volume 평균. rvol_lookback_days는 config다. cutoff ET와 Observation 시각을 분리한다. 동일 분 안의 30초 snapshot은 같은 분모·분자를 사용하고 임의 반분량 추정은 없다.
-
-history 중 하나라도 미완료, 해당 cutoff의 봉 누락, 0 분모, 과거 조기폐장 이후 시각이면 NULL이다. 무체결 분을 0으로 생성하지 않는다. Kiwoom 분기에는 기존 정확한 30초 DB snapshot fallback을 적용하지 않는다.
-
-실서버 검증: AAPL의 14거래일 cache가 완료된 뒤 cutoff 2026-09-28 15:19 ET에서 **RVOL 0.7414334602**를 수신 원시값으로 계산했다. 15:19:19와 15:19:49 snapshot에서 동일하게 유지됐다. SOAR는 과거 coverage 부족으로 NULL이었다.
-
-## 13. Historical cache와 일별 증분
-
-`data/market_radar_cache/kiwoom_v1.db`. ticker/exchange/session_date/raw_timestamp 키로 OHLCV 원본과 수신 시각 저장. cache_days.complete는 달력의 모든 regular 분을 검증한 결과다. 이미 complete인 날은 재호출하지 않는다. 다음 거래일에는 새로 완료된 하루만 추가한다. 신규 후보는 background 페이지별 수집으로 warm-up한다.
-
-REST/cache worker 한 개가 source refresh, 종목별 quote/일봉/당일 분봉과 과거 페이지를 번갈아 수행한다. 당일 처음에는 개장까지 backfill하고 이후는 이미 연속 확보한 마지막 구간과 겹쳐 갱신한다. 과거 불완전일은 15분 후 재시도하며 다른 날짜를 진행한다. 완료일의 이후 정정·분할 수정은 자동 재다운로드하지 않는 제한이 있다.
-
-원본 보존 테이블: minute_bars, cache_days, daily_bars, raw_records, symbol_catalog, cache_metadata. raw REST/FE/optional FT를 저장하므로 연구 DB와 cache DB 둘 다 있어야 알고리즘을 재계산할 수 있다. queue 상한 초과는 raw_dropped와 로그/gap으로 남긴다.
-
-## 14. VWAP / OR / HOD
-
-Kiwoom exact_vwap_enabled=false. VWAP/거리/above_vwap은 NULL이다. FE14는 raw로만 보존하고 단위/세션 초기화/정밀도를 추정하지 않는다. OHLC typical-price 근사나 누적 notional의 임의 봉 배분이 없다. legacy/replay의 실제 bar.notional 기반 계산과 테스트는 그대로다.
-
-OR1/OR5는 09:30 ET 시작의 연속된 1/5분 high/low. 구간 완료 전 또는 해당 봉 누락 시 NULL. HOD는 개장~bar cutoff 전체의 연속된 봉 high이며 quote의 당일 high를 regular HOD로 대체하지 않는다. coverage_complete는 이 시간 가정 아래의 **봉 연속성**이고 통합시장/tick 완전성은 아니다. HOD 거리=(live price/HOD-1)*100이다.
-
-## 15. Event
-
-FIRST_DETECTED, ENTER_LEADER_TOP10/5/3, ENTER_EMERGING_TOP10/5/3, HOD_BREAK, VWAP_LOSS/RECLAIM을 유지한다. 최초 두 TOP10 진입에서 candidate를 생성하고 같은 snapshot/event 및 유지 중 진입은 중복 기록하지 않는다. 순위 이탈 후 재진입은 새 event다. 상태는 DB에 남아 재시작에도 유지되고 거래일 변경 시 새 포착이다.
-
-VWAP NULL↔값은 전이로 간주하지 않는다. Kiwoom의 VWAP는 계속 NULL이므로 VWAP event를 생성하지 않는다. 일부 종목의 stale/구독 제외로 순위에서 빠질 수 있으므로 event 분석 시 raw universe/active 상태를 함께 확인한다.
-
-## 16. 결과 추적·MFE/MAE
-
-최초 포착 가격·시각 기준 +30초/+1/3/5/10/30/60분은 목표 이후 첫 snapshot, 기본 허용 지연 30초 이내다. 세션 밖은 outside_session, 허용 구간에 없으면 missing, 미래는 pending/NULL이다.
-
-EOD/D+1~D+3는 calendar 거래일에 맞춰 과거 usa06012 일봉을 후속 조회한다. **다음 ET 날짜부터 과거 일봉을 provisional / kiwoom:usa06012로 기록**한다. 현재 장중 일봉·15:59/16:00 분봉으로 확정 종가를 만들지 않는다. official close 계약이 확인되기 전 complete로 승격하지 않는다. provisional 결과는 다시 조회해 수정 가능하다. 이번 smoke 시점에 미래였던 D+n을 실제 검증했다고 주장하지 않는다.
-
-MFE/MAE는 최초 가격·관측 snapshot·결과 가격을 사용하고 excursion_basis=sampled_prices다. tick-level 극값이 아니다. 포착 가격 포함으로 MFE≥0/MAE≤0이다. 정지 중 단기 결과를 소급 가격 추정으로 채우지 않는다.
-
-## 17. 연구 DB와 schema
-
-실제 기본 DB는 `data/stock_helper_market_kiwoom_v1.db`, **schema_version=2**, test_version=kiwoom_radar_v1. 기존 stock_helper_market.db를 조용히 ALTER하지 않는다. identity/schema 불일치 시 거부한다. replay는 `data/replay/stock_helper_market.db`와 legacy schema v1이다.
-
-기존 9개 테이블 유지:
-
-| 테이블 | 주요 데이터 / v2 추가 |
+| 영역 | 역할 |
 |---|---|
-| radar_metadata | identity, schema_version |
-| radar_batches | 시각/provider/mode/universe/raw_json/received_utc; observations 및 전체 source 후보 metadata |
-| radar_snapshots | 기존 가격·변화율·volume/RVOL/return/VWAP/OR/HOD/rank/coverage + previous_close, candidate_sources, source_ranks, symbol_type, rvol_basis, rvol_cutoff_et, bar_cutoff_et, price_received_utc, provider_latency_ms, price_age_ms, ws_gap_detected, provider, exchange, bar_label_policy |
-| radar_candidates | 최초 포착/가격/session_close/version + candidate_sources/provider/exchange |
-| radar_events | timestamp/ticker/event/price/snapshot FK/version |
-| radar_state | ticker별 마지막 snapshot/거래일 |
-| market_sessions | session_date/open_utc/close_utc |
-| market_closes | ticker/date/time/price + source/status |
-| radar_results | horizon/목표·관측시각/price/return/status/오차/MFE/MAE/basis + result_source/close_status |
+| config / provider / models | 설정, read-only provider/replay 계약, 검증된 batch 모델 |
+| providers/kiwoom.py | 네 후보 source 합집합, 보호 구독, REST scheduler, completed_1m Observation |
+| providers/kiwoom_types.py | 공식 public fields/명시적 상품명 근거의 보수적 분류 |
+| providers/kiwoom_rest.py | OAuth, 9 TR allowlist, 중앙 limiter, timeout/retry, 비밀값 제거 |
+| providers/kiwoom_ws.py | LOGIN/REG/REMOVE ack, FE/optional FT, PING, 재연결 |
+| providers/kiwoom_cache.py | 별도 OHLCV/cache/raw/catalog DB와 contract 검증 |
+| providers/kiwoom_calendar.py / kiwoom_lock.py | XNYS 달력 / 로컬 단일 collector lock |
+| calculations / engine / storage | 순위 공식, candidate/event/result, research schema 3, CSV |
+| quality.py | thread-safe ET 일별 구조화 counter 및 DB 기반 quality_summary |
+| runtime / ui / __main__ | Qt 밖 수집·계산·저장, UI/headless/replay |
+| tools/kiwoom_provider | 전체 회귀 검증, read-only audit/probe, production smoke_v2 |
 
-정확한 DDL은 storage.py의 SCHEMA 및 SCHEMA_V2다. batch별 snapshot/event/result는 원자적 transaction, WAL/foreign_keys/5초 busy timeout을 사용한다. cache는 별도 연결·별도 identity/schema v1이며 RLock으로 thread 접근을 직렬화한다. 두 DB 사이를 한 transaction으로 묶지는 않는다.
+REST https://api.kiwoom.com, WS wss://api.kiwoom.com:10000/api/us/websocket.
+계약은 [키움 공식 명세 고정 revision](https://github.com/Kiwoom-Securities/Kiwoom-REST-API/blob/953e5dbff123f437ab4d11a78a95191a685eb51f/kiwoom/_data/kiwoom_api_spec.json)에서 추출했고 이번 작업에서도 공개 원문을 확인했다.
+허용 TR은 usa20100(현재가), usa10099(목록), usa20910/usa20930/usa20530/usa20540(후보), usa06011(분봉), usa06012(일봉), usa20590(일별주가)다. 새 endpoint/TR를 추정·추가하지 않았다. 제품은 probe output을 import하지 않는다.
 
-## 18. CSV / 파일 / 로그
+## 4. 실제 v1 첫 운영 baseline
 
-```text
-data/
-  stock_helper_market_kiwoom_v1.db (+ 실행 중 wal/shm)
-  market_radar_cache/kiwoom_v1.db (+ wal/shm)
-  kiwoom_collector.lock
-  logs/YYYY-MM-DD.log
-  export/YYYY-MM-DD/{candidates,snapshots,events,results}.csv
-  export/YYYY-MM-DD/metadata.json
-  replay/stock_helper_market.db
-  kiwoom_provider_validation/    # 전체 테스트·보호 파일 검사 증거
-  kiwoom_provider_smoke/20260928T191747Z/  # 이번 실데이터 smoke, 생산 DB와 분리
-```
+입력 data/kiwoom_week_01은 읽기 전용 evidence다. SQLite mode=ro 및 파일 SHA256으로 감사했다. 재현 도구 tools/kiwoom_provider/audit.py, 결과 data/kiwoom_v2_validation/baseline.json. 날짜는 ET 2026-09-28이다.
 
-CSV는 SQLite에서 300초 및 정상 종료 때 갱신, 신규 컬럼 포함, UTF-8 BOM, NULL 빈 칸이다. 후속 결과는 최초 포착일 results.csv를 갱신한다. 개별 파일 임시쓰기 후 replace이며 네 파일 전체 묶음 atomic은 아니다. SQLite가 원본, DB 클라우드 동기화/자동 업로드는 없고 export만 추후 복사한다.
-
-로그 날짜는 ET, 내용 시각은 UTC. 기존 시작/종료/DB/export/계산 오류 외에 kiwoom_auth_success, rest_error, rate_limit, ws_connected/disconnected/reconnected, subscription_add/remove, backfill_start/complete/error, data_gap, stale_data를 기록한다. 키/토큰/응답 exception 본문을 출력하지 않는다.
-
-## 19. Thread와 호출 제한
-
-Radar snapshot worker + REST/cache scheduler 1개 + WS 관리 thread 1개. 라이브러리 내부 수신 thread 추가 가능. Qt는 250ms timer와 크기 1 큐로 최신 화면만 받는다. 네트워크/인증/backfill/DB/export는 Qt 밖이다. stop 요청은 Event만 설정하며 종료 작업/timeout은 background에서 기다린다.
-
-공식 조회 일반 5회/초·한국시간 09~10시 3회/초보다 낮은 **3/2회**로 설정했다. 종목리스트는 **4회/60초**로 공식 5회/분보다 낮다. 모든 REST/OAuth가 중앙 lock/limiter를 공유한다. 공식 추가 50/20 유량을 일반 제한 우회에 사용하지 않는다.
-
-HTTP connect/read timeout 5/10초, 최대 2회 재시도, 2·4초 backoff. 429와 일반 오류를 로그에 구분하고 실패 응답을 값으로 사용하지 않는다. 토큰 실패/WS 재연결에서 OAuth를 다시 확인한다. source/cache 규모에 따라 warm-up 및 bar 갱신이 느릴 수 있으며 stale/NULL을 감추지 않는다.
-
-## 20. 설정과 실행 방법
-
-```powershell
-& .\.venv-paddle\Scripts\python.exe -m pip install -r market_radar/requirements-kiwoom.txt
-& .\.venv-paddle\Scripts\python.exe -m market_radar
-& .\.venv-paddle\Scripts\python.exe -m market_radar --collect
-# 첫 주에는 작은 후보 구독 집합으로 시작 가능
-& .\.venv-paddle\Scripts\python.exe -m market_radar --collect --max-ws-symbols 20 --data-dir data/kiwoom_week_01
-& .\.venv-paddle\Scripts\python.exe -m market_radar --replay tests/fixtures/market_radar_replay.jsonl --fast
-```
-
-`.env`의 KIWOOM_MODE=real / APP_KEY / APP_SECRET 사용. 기존 TOSS_CLIENT_ID/SECRET은 기존 기능 전용이며 Radar에서 쓰지 않는다. 현재 환경에는 Kiwoom optional 의존성을 설치했다. numpy/pandas/Paddle/OCR 기존 버전은 바꾸지 않고 websockets/exchange_calendars와 필요한 신규 보조 라이브러리만 추가했다.
-
-CONFIG 기본: provider=kiwoom, test_version=kiwoom_radar_v1, snapshot=30, lookback=14, max_ws=200, refresh=60, pages=1, backfill_concurrency=1, extended=false, orderbook=false, exact_vwap=false. RadarConfig() 자체 기본은 legacy 테스트 호환용이며 CONFIG와 구별해야 한다. 환경변수 값은 출력하지 않는다. EXE 빌드/배포는 이번에 검증하지 않았다.
-
-## 21. 테스트 결과와 실제 smoke
-
-최종 전체 자동 테스트는 `tools/kiwoom_provider/run_validation.py`로 별도 subprocess에서 실행한다. 결과 파일은 `data/kiwoom_provider_validation/tests_summary.json`, 각 suite 로그와 OCR 초기화 로그다. 기존 assert 스크립트는 1개=검증 단위 1, unittest는 method 수로 계산하며 재실행은 중복 집계하지 않는다.
-
-| 범위 | 최종 검증 단위 |
+| 항목 | 수정 전 실제 수치 |
 |---|---:|
-| 기존 OCR/Registry/UI/Toss/halt/성능/캡처 등 assert 스크립트 12개 | 12 |
-| market_radar_test.py | 31 |
-| market_radar_audit_test.py | 19 |
-| kiwoom_provider_test.py | 33 |
-| 기존 probe_test.py | 4 |
-| 실제 GPU OCR 초기화 | 1 |
-| 합계 | **100 통과 / 0 실패** |
+| snapshot / unique ticker / FIRST_DETECTED candidate | 676 / 22 / 20 |
+| RVOL non-null | 56 / 676 = 8.2840% |
+| return_1m non-null | 629 / 676 = 93.0473% |
+| return_5m non-null | 618 / 676 = 91.4201% |
+| cache day complete / incomplete | 90 / 249 |
+| 로그 backfill complete / incomplete 시도 | 524 / 440 |
+| stale price 경고 | 29 |
+| ws disconnect / raw dropped | 0 / 0 |
+| subscription add/remove 이벤트 | 21 / 21 |
+| subscription add/remove 종목 수 | 41 / 41 |
+| REST 오류 / api_error | 0 / 1 (초기 warm-up traceback) |
+| 실제 DB / worker / export 오류 기록 | 0 / 0 / 0 |
+| raw FE / REST | 76,765 / 2,643 |
 
-기존 미연결 기본값을 검사하던 audit 2개는 새 CONFIG/factory 기대값으로 갱신했다. 미연결 CLI 오류 검사는 명시적 --provider unconfigured로 유지한다. 실제 UI/main offscreen 시작·종료·Radar 열기, 느린 fetch 중 responsiveness 테스트를 보존했다. OCR 초기화는 실제 캐시 모델/GPU를 사용했고 실제 영웅문 캡처 정확도 전체를 검증한 뜻은 아니다.
+complete 로그 524에는 현재세션 완료도 포함된다. cache day 90과 다른 단위다. v1의 오류/구독 횟수는 당시 structured counter가 없어서 로그를 보조 근거로 썼고, v2는 DB counter를 쓴다.
 
-신규 테스트는 가격 부호, merge/dedup/unknown, 200종목, ack/PING/optional FT/reconnect, 완료 봉/partial cache, 1m/5m return/OR/RVOL, 14일 증분 cache, stale FE, rate/retry/allowlist/redaction, v2 DB/CSV/legacy 거부, provisional EOD/future pending, queue overflow, 단일 lock을 검증한다.
+| horizon | complete | missing | pending | outside_session |
+|---|---:|---:|---:|---:|
+| +30s | 17 | 3 | 0 | 0 |
+| +1m | 17 | 3 | 0 | 0 |
+| +3m | 16 | 4 | 0 | 0 |
+| +5m | 17 | 3 | 0 | 0 |
+| +10m | 17 | 2 | 0 | 1 |
+| +30m | 0 | 0 | 0 | 20 |
+| +60m | 0 | 0 | 0 | 20 |
+| EOD, D+1, D+2, D+3 각각 | 0 | 0 | 20 | 0 |
 
-실서버 smoke: **2026-09-28 19:17:47~19:20:17 UTC / 15:17~15:20 ET**, 약 150초. 자동 테스트 통과 후 실행했다. probe 파일의 과거 자료를 복사하지 않고 새 provider가 실제 API에서 새 cache를 만들었다.
+단기 평가 가능 99건 중 missing 15건(15.15%). 종가 이후 목표 41건은 missing과 구분한다. 첫 운영에서 구독 churn으로 추적 가격이 없어질 수 있는 구조, 저유동 과거 이력 불완전, ETF/워런트 포함, 정상 warm-up ERROR, 일별 품질 집계 부재를 확인했다.
 
-| 실제 결과 | 값 |
-|---|---|
-| OAuth / 네 candidate source / 9 TR | 성공 |
-| 후보 universe | 78종목 |
-| smoke 구독 | AAPL benchmark + 실제 거래량 후보 SOAR, 최대 2 |
-| FE / FT / PING | 1,250 / 0 (OFF) / 14 |
-| REST 시장데이터 요청 | 227 |
-| historical cache | AAPL 14일 complete; SOAR 1일 complete, 나머지는 incomplete/NULL |
-| snapshot / 자체 5분 return | 8 / 8 |
-| RVOL 값 / VWAP 값 | 2 / 0 |
-| CSV | 4종 생성 |
-| worker_error / failed_batches | NULL / 0 |
-| DB 및 cache integrity_check | 둘 다 ok |
-| 정상 REMOVE/연결 종료/export/worker stop | 성공 |
+## 5. 무체결 분 검증 결론
 
-smoke 전용 선택 override는 벤치마크 AAPL과 거래량 후보 하나로 네트워크 범위를 제한한다. 실제 source 목록·시장값은 대체하지 않는다. 생산 provider의 일반 200슬롯 부하를 검증한 결과는 아니다. 실제 EOD/D+3 경과·실제 강제 재연결·1주 연속 수집은 미검증이다.
+**MIXED_OR_UNCERTAIN**. 누락을 거래량 0으로 확정할 증거가 부족하다.
 
-이번 AAPL은 실제 VALUE source에도 포함돼 in_universe=True였고 SOAR는 CHG+VOL이었다. AAPL을 강제로 후보 source에 추가하거나 제거하지 않았다. 후보 2개, event 14개, 단기 complete 결과 4개를 저장했고 미래 결과는 pending이었다.
+공식 usa06011은 OHLCV/체결시간/영업일자와 pagination을 설명하지만 무체결 분 생략/0 봉 규약을 명시하지 않는다. v1 raw에서 정규장 시간만 비교했다.
 
-## 22. 미구현·알려진 위험
+| 표본 / 2026-09-25 | 정규장 봉 / 예상 390 | 정규장 volume 합 | 일봉 acc_trde_qty |
+|---|---:|---:|---:|
+| NVDA | 390 | 45,609,301 | 89,947,712 |
+| SOAR | 250 | 471,229 | 1,028,603 |
+| ARBEW | 13 | 33,429 | 95,554 |
+| WALDW | 13 | 50,736 | 142,194 |
+| SHFSW | 3 | 2,958 | 12,839 |
 
-- Kiwoom 공식 timezone/봉 라벨/24시 이상 표기·장구분 enum 미확정. 사용자 승인된 1분 연구 정책과 raw 증거를 기록했으며 공식 계약으로 단정하지 않는다.
-- Exact VWAP, FE14 단위/정밀도/세션 초기화, 장중 과거 notional 복원 미구현. VWAP NULL은 의도된 상태다.
-- 30초 precision RVOL은 구현하지 않고 명시적 completed_1m으로 대체했다.
-- 전 거래소 통합 feed, 종목유형 enum, 확정 공식 EOD는 미검증. 일봉 결과는 provisional이며 미래는 pending이다.
-- 저유동성·정지·IPO의 분봉 누락은 0으로 채우지 않아 RVOL/HOD가 장기간 NULL일 수 있다. 실제 SOAR 과거 이력에서 확인했다.
-- 완료 과거 cache의 정정/분할 자동 refresh 없음. snapshot 결과의 기업행동 자동 보정도 없다.
-- 200종목/첫 날 많은 신규 후보의 backfill은 비용이 크다. 요청 속도를 올려 제한을 넘기지 말고 작은 구독 집합으로 시작한다.
-- 캐시/원본 자동 삭제·압축·보관기간 관리가 없다. 디스크 사용량을 점검한다. queue overflow는 기록하지만 삭제된 raw는 복구하지 않는다.
-- 다른 PC의 중복 세션, 돌발 휴장, 주간 안정성, EXE 배포는 추가 검증 대상이다.
+표본에서 반환된 regular zero-volume 봉은 0개다. 저유동 표본은 앞뒤 유효 봉 사이 timestamp가 생략돼 있지만, 개별 누락 분에 체결이 없었다는 독립 증거가 없다. 고유동 NVDA도 분봉합과 일봉량이 다르므로 일봉량 일치로 증명할 수 없다. feed/세션 범위 차이가 미확정이다. extended-hours를 제외하고도 regular 구간 누락이 존재한다. BZFDW는 날짜별 regular 봉 0개여서 raw 페이지/coverage 문제도 배제할 수 없다. 이런 빈 집합의 관측 합 0은 정상 일간 거래량 0 판정이 아니다.
 
-## 23. 일주일 실험 전 사용자 체크리스트
+따라서 volume timeline의 0 보완도 구현하지 않았다. 실제 제공된 유효 0-volume 봉만 사용하며 OHLC/high/low/close/HOD/OR 생성은 없다. 미확정 누락은 incomplete/NULL이다. 무체결 확정을 활성화하는 사용자 토글도 두지 않았다.
 
-- [ ] `.env` real 인증값과 인터넷/IP/API 이용 권한 확인. 값 공유/로그 출력 금지.
-- [ ] 다른 Kiwoom WS 프로그램을 끄고 collector 한 개만 실행.
-- [ ] 새 DB 경로 선택, 기존 실험 identity와 다른 설정은 새 data-dir 사용.
-- [ ] 시작은 20개 정도 구독으로 warm-up/속도를 확인한 뒤 범위를 조절.
-- [ ] 일부 종목 raw timestamp/OHLCV와 키움 차트를 대조해 assumed_et_start 정책 검토.
-- [ ] 휴일/조기폐장·돌발 폐장 일정 확인. 무료 feed/unknown 타입의 분석 범위 명시.
-- [ ] backfill 중 NULL이 0으로 표시되지 않는지, 완료 뒤 RVOL과 cutoff를 확인.
-- [ ] 매일 snapshot 간격, ws_gap, stale, raw_dropped, 오류, NULL 비율, 저장 용량·CSV 확인.
-- [ ] EOD/D+n은 pending/provisional을 구분하고 확정 종가처럼 분석하지 않기.
-- [ ] 절전/강제종료 방지, Ctrl+C 또는 중지 버튼으로 export/종료 로그 확인.
-- [ ] 마지막 포착일 D+3 이후까지 수집하고 원본 연구 DB+cache를 보관. 클라우드는 export만 복사.
+## 6. RVOL·return·순위 정책
 
-## 24. 이번 파일 변경 범위
+Current Leaders는 day_change_pct 내림차순, Emerging은 완료 1분봉 return_5m 내림차순, 동률 ticker다. 전략 순위 공식을 바꾸지 않았다. follow-up-only, 제외 유형, 지표 NULL은 해당 순위에 들어가지 않는다. VWAP NULL은 순위 제외 조건이 아니다.
 
-신규: providers/ 아래 8개 파일, requirements-kiwoom.txt, tests/kiwoom_provider_test.py, tools/kiwoom_provider/{run_validation,smoke}.py, KIWOOM_PROVIDER_V1_REPORT.md.
-수정: market_radar/{config,models,provider,calculations,engine,storage,runtime,ui,__main__}.py 및 README.md, 루트 README.md, CODEX_HANDOFF.md, tests/market_radar_audit_test.py.
+RVOL=현재 regular 개장~완료 분 cutoff 누적량 / 직전 14거래일 동일 경과분 누적량 평균. cutoff 2초 유예, historical complete 검증, 조기폐장 cutoff 경계, 진행 봉 재조회 정책을 유지한다. 값 보간이나 과거 DB snapshot fallback은 없다. rvol_status는 available/warming/incomplete_history/not_eligible/zero_denominator/unknown이다.
 
-기존 root Python 파일 전체, `.env`, KIWOOM_PROBE_REPORT.md, probe 소스는 작업 시작 시 SHA256과 일치함을 확인했다. root live_ui.py의 HEAD 대비 16줄은 앞 작업분이다. 이번 변경의 대부분은 원래 untracked인 market_radar/ 내부여서 기본 git diff --stat에 나타나지 않는다.
+새 eligibility 설정:
+- rvol_backfill_enabled=true
+- rvol_backfill_min_day_volume=0
+- rvol_backfill_min_price=0
 
-최종 source/문서/runtime 산출물 54개 실제 APP_KEY/APP_SECRET 비노출 검사, 보호 파일 해시, git diff --check 및 .env/DB ignore 검사를 통과했다. 근거: data/kiwoom_provider_validation/final_checks.json. 토큰은 메모리에서만 사용하며 sanitizer·필드 allowlist·mock 테스트로 저장 방지를 검증했다.
+조건은 과거 RVOL backfill만 제어한다. 미달 후보도 발견/순위/당일 분봉/결과 추적은 계속하며 RVOL은 NULL/not_eligible이다. 양수 조건은 당일 usa20100 acc_trde_qty/cur_prc로 검증하며 없는 값을 0으로 만들지 않는다. 해당 설정 시 quote는 주기적으로 갱신한다.
 
-## 25. git diff --stat
+실제 candidate day-volume 범위는 FVNNU 2,173~2,185부터 SOAR 608,226,198~613,819,995까지 매우 넓다. 큰 당일량 SOAR도 과거 regular 분봉이 불완전하므로 하루량으로 coverage를 예측하는 근거가 부족하다. 임의 양수 임계값을 제시/기본 적용하지 않고 초기값 0을 권장한다. 원본 ticker별 min/max/표본 수는 baseline JSON에 있다.
+
+return은 cutoff close와 정확히 1/5분 전 close를 비교한다. OR1/OR5/HOD는 해당 범위 연속 봉이 필요하다. VWAP는 NULL이며 FE14 단위/세션 초기화 미확정, typical-price 근사 없음. cntr_tm의 ET 분 시작 해석은 공식 확정이 아닌 assumed_et_start_v1 연구 가정이다. 24시 이상/장외 봉은 raw에만 둔다. 무료 나스닥 토탈뷰를 전 거래소 통합 체결량으로 주장하지 않는다.
+
+## 7. 보호 추적과 슬롯 고갈
+
+FIRST_DETECTED된 종목은 DB에 tracking_protected_until을 저장한다. 첫 포착 + max(최대 intraday horizon 60분, result_tracking_hold_minutes=60), 당일 close로 제한하고 tolerance 30초까지 보호한다. 이는 실제 마지막 목표의 snapshot 수집 기회를 보호한다. 재시작은 DB에서 복원한다.
+
+배정 순서: 기존 보호 구독 → 추가 보호 대상 → 현재 universe → 기타 추적. 보호 종목은 단순 순위/source 이탈만으로 제거하지 않는다. 보호 기간 후 release 가능하며 EOD/D+n 일봉 추적은 별개로 계속한다.
+
+모든 슬롯이 차면 신규 발견을 radar_discoveries/raw UNIVERSE에 기록하고 tracking_slot_unavailable 상태와 구조화 event/counter를 남긴다. 유효 live 가격 없는 발견은 가격/기준가/FIRST_DETECTED를 만들지 않는다. 따라서 quality candidate_count는 실제 FIRST_DETECTED 수, discovery_count는 raw universe 수다. 보호 여부/신규 수/실제 ack active 수/미배정 수를 batch metadata 및 summary tracking에 보존한다.
+
+단기 result는 기존 status 의미를 유지하고 missing_reason을 추가했다. 목표~tolerance 내 batch의 실제 사유(stale_price/not_subscribed/ws_gap/tracking_slot_unavailable)를 사용한다. 증거가 없으면 no_snapshot_within_tolerance다. outside_session도 명시한다. provider 전체 실패로 batch 자체가 없을 때 원인을 추정해 provider_error로 단정하지 않는다.
+
+## 8. 종목 유형 검증과 필터
+
+공식 mkgb는 거래소명, upgb는 업종명, isEtf는 ETF 여부다. 실제 read-only usa10099 재조회 결과는 data/kiwoom_v2_validation/public_type_probe.json에 public fields/분류/수신시각만 저장했다. 인증값/토큰은 없다.
+
+| 실제 표본 | 공식 필드/상품명 | v2 판정 |
+|---|---|---|
+| HYG, TQQQ, SOXL | isEtf=Y | ETF, 제외 |
+| ARBEW, WALDW, BZFDW, SHFSW | isEtf=N, 한국명 워런트 + 영문명 C/WTS | warrant, 제외 |
+| FVNNU (v1 catalog) | 한국명 유닛 + 영문명 UNITS | other, 제외 |
+| AAPL, NVDA | isEtf=N, 거래소/업종만 제공 | unknown, 포함 |
+
+워런트/유닛은 공식 상품명에 명시된 양 언어 descriptor의 일관성에 근거한다. 공식 전용 type enum이나 ticker suffix 판정이 아니다. N만으로 보통주라 표시하지 않는다. 명시적 COMMON STOCK/ORDINARY SHARES, ETN descriptor 처리도 구현했으나 이 규칙의 실제 해당 표본 검증은 남아 있다. type evidence는 source/rule/public fields다.
+
+stock_type_policy=common_and_unknown은 common/unknown만 포함하고 확정된 ETF/ETN/warrant/other는 제외한다. all도 가능하다. 제외 종목의 raw/catalog/discovery는 보존하며 excluded_symbol_type을 기록한다.
+
+## 9. 로그·Daily Quality Summary
+
+초기 정상 준비: INFO kiwoom_universe_warming_up, traceback 없음.
+첫 정상 universe 후 갱신 허용시간 max(180초, refresh*3) 초과: WARNING kiwoom_universe_stale.
+실제 HTTP/인증/JSON/DB/worker 오류: ERROR. 불완전 history는 WARNING kiwoom_backfill_incomplete로 API 오류와 구분한다.
+
+ET 날짜별 export/YYYY-MM-DD/quality_summary.json:
+- session_date/test_version/schema_version, snapshot_count/unique_tickers/candidate_count
+- rvol 상태별 수와 available_count/pct, return_1m/5m 비율
+- horizon별 complete/missing/pending/outside_session 및 missing_reasons
+- market_data: ws_gap/stale/raw_dropped/subscription add/remove/tracking_slot_unavailable
+- backfill: historical complete/incomplete/error 시도 수
+- runtime: API/DB/worker/export 오류
+- candidate_sources: CHG/SPIKE/VOL/VALUE/multi_source
+- symbol_types: common/ETF/ETN/warrant/unknown/other(발생 시)/excluded
+- tracking: 마지막 batch의 protected/discovery/active/unavailable gauge
+
+snapshot/result는 SQLite query, 운영 수치는 명시적 logging extra로 전달되는 thread-safe counter를 ET 날짜별 DB에 누적한다. 로그 문자열 parsing에 의존하지 않는다. source 수는 종목별 일간 source 합집합, type은 마지막 관측, subscription은 ack된 종목 수다. backfill은 고유 cache day 수와 다르다. pct는 snapshot 0개면 NULL이다.
+
+300초마다 및 정상 종료 시 갱신한다. provider 정상 close/REMOVE가 끝난 후 최종 counter/CSV/JSON을 export한다. gauge는 마지막 batch 시점 값이므로 종료 후에도 당시 active 수를 표시한다. snapshot 없는 날도 counter/discovery가 있으면 export한다. DB/raw를 summary로 대체하지 않는다. 강제 종료 시 아직 flush하지 않은 counter는 유실 가능하다.
+
+## 10. Schema·경로·실행
+
+기본 연구 DB: data/stock_helper_market_kiwoom_v2.db (schema 3).
+기본 cache: data/market_radar_cache/kiwoom_v2.db (기존 OHLCV contract/schema 1 유지).
+새 컬럼: snapshot rvol_status/symbol_type_evidence, candidate tracking_protected_until/candidate_tracking_state/symbol_type/evidence, result missing_reason. 새 radar_discoveries와 quality_counters 테이블.
+schema v2 live DB를 ALTER하지 않는다. identity/config/schema가 다르면 거부한다. cache identity는 provider/mode/schema/bar_policy를 DDL 이전 검증한다. 비어 있지 않은데 contract metadata가 없는 cache도 변경 없이 거부한다. 기존 v1 cache 자동 복사/이관은 없다.
+
+~~~powershell
+& .\.venv-paddle\Scripts\python.exe -m market_radar
+& .\.venv-paddle\Scripts\python.exe -m market_radar --collect --max-ws-symbols 20 --data-dir data/kiwoom_week_v2
+& .\.venv-paddle\Scripts\python.exe tools/kiwoom_provider/run_validation.py
+& .\.venv-paddle\Scripts\python.exe tools/kiwoom_provider/audit.py
+& .\.venv-paddle\Scripts\python.exe tools/kiwoom_provider/probe_types.py
+& .\.venv-paddle\Scripts\python.exe tools/kiwoom_provider/smoke_v2.py --seconds 1200 --max-ws-symbols 20 --data-dir data/kiwoom_smoke_v2
+~~~
+
+CLI eligibility: --rvol-backfill-min-day-volume / --rvol-backfill-min-price / --disable-rvol-backfill.
+REST 일반 3회/초, 한국시간 09~10시 2회/초, 종목목록 4회/60초. timeout 5/10초, 최대 재시도 2회. WS ack 후 active 변경, 단절 시 가격 폐기·gap 기록·재등록. REST/cache thread 1, WS thread 1, RadarWorker 계산/연구 DB/export, Qt는 표시만 한다. stop은 Event로 요청하고 timeout 내 종료를 기다린다. optional requirements-kiwoom.txt를 사용하며 기존 Paddle/numpy/pandas 버전은 변경하지 않았다.
+
+## 11. 자동 검증 및 실제 smoke
+
+최종 전체 자동 검증: **133 통과 / 0 실패**. 기존 assert 스크립트 12, Radar 31, audit 19, provider 33, 신규 quality 33, probe 4, 실제 GPU OCR 초기화 1의 합계다. 재실행은 중복 집계하지 않았다. 근거: data/kiwoom_provider_validation/tests_summary.json 및 suite별 로그.
+
+신규 검증은 warm-up INFO/stale WARNING/실제 오류 ERROR, 불확실 분 누락·실제 zero-volume 봉 보존, eligibility·RVOL 상태, 보호 구독·20슬롯 고갈·재시작 복원·60분 결과 완료 후 release, 미등록 discovery, missing_reason, ETF/warrant/unit/common/unknown, 기존 순위 공식, 일별 summary 수치·ET 날짜·CSV, schema v2/미확인 cache 거부를 포함한다. 기존 OCR/Registry/UI/Toss/halt 회귀도 통과했다. 실제 화면의 모든 OCR 인식 정확도를 검증한 뜻은 아니다.
+실제 smoke_v2: **2026-09-29 19:11:10~19:31:12 UTC / 15:11~15:31 ET**, 약 1200초. production provider, 20슬롯, 새 data/kiwoom_smoke_v2 사용. benchmark/후보 선택 override 없이 실행했고 정상 종료했다. 실행 중 추가된 cache metadata 없는 DB 거부 guard는 새 cache 정상 경로를 바꾸지 않으며 offline 회귀로 별도 검증했다.
+
+| v2 실제 결과 | 수치 |
+|---|---:|
+| snapshot / unique ticker / candidate | 751 / 22 / 20 |
+| RVOL available / warming / incomplete_history | 40 / 112 / 599 |
+| RVOL non-null | 5.3262% |
+| return_1m / return_5m non-null | 91.4780% / 92.2770% |
+| +30s complete/missing | 20 / 0 |
+| +1m complete/missing | 19 / 1 |
+| +3m complete/missing | 20 / 0 |
+| +5m complete/missing | 19 / 1 |
+| +10m complete/missing | 20 / 0 |
+| +30m pending / +60m outside_session | 20 / 20 |
+| EOD/D+1/D+2/D+3 pending | 각각 20 |
+| historical backfill complete/incomplete/error 시도 | 60 / 352 / 0 |
+| cache unique day complete/incomplete | 60 / 225 |
+| ws_gap / stale / raw_dropped | 1 / 27 / 0 |
+| ack subscription add/remove 종목 수 (종료 포함) | 22 / 22 |
+| slot_unavailable 진입 이벤트 / 마지막 미배정 수 | 109 / 43 |
+| 마지막 protected / discovery / active | 20 / 79 / 20 |
+| 일간 발견 ETF/warrant 제외 | 14 / 9 (총 23) |
+| 제외 유형 snapshot | 0 |
+| 보호 이후 선택 슬롯 이탈 | 0 |
+| universe 밖 보호 종목이 계속 선택된 관측 | 60 |
+| API / DB / worker / export 오류 | 0 / 0 / 0 / 0 |
+| raw FE / REST / UNIVERSE | 27,977 / 2,436 / 20 |
+
+ws_gap 1회는 최초 구독 이전 연결 초기화 중 기록됐다. 단기 missing 2건은 MF +5m stale_price와 QSI +1m no_snapshot_within_tolerance다. 현재 시세를 채워 결과를 수정하지 않았다. 마지막 tracking gauge active=20은 마지막 batch 값이며 종료 REMOVE 20개를 포함한 최종 remove counter는 22다.
+
+v1 단기 missing은 15/99=15.15%, v2는 2/100=2%. RVOL available은 v1 8.28%, v2 5.33%다. 서로 다른 거래일·종목·신규 캐시이므로 통제된 성능 비교나 RVOL 개선으로 주장하지 않는다. 보호 추적과 필터의 실제 불변조건을 별도로 확인했다.
+
+정상 REMOVE/WS close/worker stop 및 최종 export 성공. CSV snapshots/candidates/events/results 행 수 751/20/201/220이 DB와 일치한다. quality summary의 count/비율도 DB와 일치하며 두 DB integrity_check=ok다. 증거: data/kiwoom_smoke_v2/smoke_summary.json, export/2026-09-29/quality_summary.json, data/kiwoom_v2_validation/smoke_checks.json.
+실제 public type probe는 9개 요청 표본 모두 확보했고 API 오류 없음. 주문/계좌 API는 사용하지 않았다.
+
+기존 v1 provider의 2026-09-28 150초 AAPL/SOAR 진단 smoke와 이번 첫 운영 baseline/새 v2 smoke는 서로 다른 evidence다. 과거 DB를 v2 결과로 변형하지 않았다.
+
+## 12. 남은 검증과 일주일 운영 조건
+
+- 무체결 분 규약, 공식 timezone/봉 라벨/24시 표기, FID290 enum 미확정. 차트/체결 증거로 확인하기 전 NULL 정책 유지.
+- isEtf=N 전체의 common 확정은 불가. unknown을 포함하는 연구 범위를 명시한다. 공식 name descriptor가 없는 warrant/ETN/기타 상품은 unknown에 남을 수 있다.
+- snapshot 30초 cadence의 작은 시각 흔들림으로 목표~30초 허용 구간 양쪽에 표본이 걸쳐 missing이 될 수 있다. 이번 실제 QSI +1m에서 목표 직전 2.6ms 및 허용 끝 직후 8.9ms 표본이 확인됐다. 기존 tolerance/결과 의미를 임의 확대하지 않았다.
+- 실제 60분 전 구독 보호/후 release는 시간 전진 offline 테스트와 구분한다. 20분 smoke로 실제 +60분 완료를 검증했다고 주장하지 않는다.
+- EOD/D+n은 provisional이며 future pending. 공식 확정 종가·기업행동 자동 보정·과거 complete cache 정정/분할 refresh는 미구현.
+- 200종목 부하/실제 재연결/돌발 휴장/1주 연속 수집/EXE 배포는 미검증. raw 보관기간/압축/자동 삭제 없음.
+- 일주일 수집은 새 data-dir, 단일 WS 세션, 작은 구독 수로 시작하고 daily summary/디스크를 확인한다. 장중 actual feed/로그/CSV 검증이 통과한 범위에서 데이터 품질 검증용으로 진행한다. 전략 수익성 검증 완료라는 뜻이 아니다.
+- 다음 장중 검증은 위 --collect 명령으로 ET 15:00 이전(가급적 개장부터)에 시작해 최소 65분 이상 유지한다. 첫 candidate의 +60m complete와 보호 해제를 확인한 뒤 Ctrl+C로 종료한다. smoke_v2의 20~30분 제한만으로 이 검증을 대체할 수 없다. 새 주간 폴더 data/kiwoom_week_v2를 사용하고 smoke/v1 evidence를 덮어쓰지 않는다.
+- 누락 RVOL을 0으로 표시하지 않고 available subset과 missing 원인을 분리해 분석한다. 마지막 포착일 D+3 이후까지 일봉 후속 수집, 원본 연구 DB와 cache 동시 보관, 클라우드는 export만 복사한다.
+
+## 13. 최종 Git/보존 확인
+
+작업 전 git status는 clean이었다. 기존 root Python 기능 파일은 변경하지 않았고 runtime data/.env는 Git 제외다. v1 evidence 전체 파일 SHA256 불변, 연구/cache integrity와 CSV/summary 대조, git diff --check를 통과했다. commit/push/staging하지 않았다. 최종 소스·문서·산출물 비밀값 검사 근거는 data/kiwoom_v2_validation/final_checks.json이다.
+
+<!-- FINAL_GIT_EVIDENCE -->
+
+git diff --stat (tracked files only; 6 new untracked files are listed in status):
 
 ```text
- .gitignore              |  1 +
- README.md               |  3 +++
- live_ui.py              | 16 ++++++++++++++++
- requirements-paddle.txt |  1 +
- requirements.txt        |  1 +
- 5 files changed, 22 insertions(+)
+ CODEX_HANDOFF.md                       | 479 +++++++++++++++------------------
+ README.md                              |   1 +
+ market_radar/README.md                 | 128 ++++-----
+ market_radar/__main__.py               |   8 +-
+ market_radar/calculations.py           |  16 ++
+ market_radar/config.py                 |  12 +-
+ market_radar/engine.py                 |  42 ++-
+ market_radar/provider.py               |   8 +
+ market_radar/providers/kiwoom.py       | 122 ++++++---
+ market_radar/providers/kiwoom_cache.py |   8 +
+ market_radar/providers/kiwoom_rest.py  |   7 +-
+ market_radar/providers/kiwoom_ws.py    |   8 +-
+ market_radar/runtime.py                |  51 +++-
+ market_radar/storage.py                |  38 ++-
+ tests/kiwoom_provider_test.py          |  12 +-
+ tests/market_radar_audit_test.py       |   6 +-
+ tools/kiwoom_provider/smoke.py         |   2 +-
+ 17 files changed, 549 insertions(+), 399 deletions(-)
 ```
 
-## 26. git status --short
+git status --short:
 
 ```text
- M .gitignore
+ M CODEX_HANDOFF.md
  M README.md
- M live_ui.py
- M requirements-paddle.txt
- M requirements.txt
-?? CODEX_HANDOFF.md
-?? KIWOOM_PROBE_REPORT.md
-?? KIWOOM_PROVIDER_V1_REPORT.md
-?? market_radar/
-?? tests/fixtures/
-?? tests/kiwoom_provider_test.py
-?? tests/market_radar_audit_test.py
-?? tests/market_radar_test.py
-?? tools/kiwoom_probe/
-?? tools/kiwoom_provider/
+ M market_radar/README.md
+ M market_radar/__main__.py
+ M market_radar/calculations.py
+ M market_radar/config.py
+ M market_radar/engine.py
+ M market_radar/provider.py
+ M market_radar/providers/kiwoom.py
+ M market_radar/providers/kiwoom_cache.py
+ M market_radar/providers/kiwoom_rest.py
+ M market_radar/providers/kiwoom_ws.py
+ M market_radar/runtime.py
+ M market_radar/storage.py
+ M tests/kiwoom_provider_test.py
+ M tests/market_radar_audit_test.py
+ M tools/kiwoom_provider/smoke.py
+?? market_radar/providers/kiwoom_types.py
+?? market_radar/quality.py
+?? tests/kiwoom_quality_test.py
+?? tools/kiwoom_provider/audit.py
+?? tools/kiwoom_provider/probe_types.py
+?? tools/kiwoom_provider/smoke_v2.py
 ```
 
-기존 변경을 되돌리지 않았다. runtime DB/캐시/로그/.env는 Git 제외다. **Commit/push/staging하지 않았다.**
+<!-- V2_1_WORKTREE -->
+## v2.1 final worktree
+
+Includes inherited uncommitted changes. Untracked files appear in status only; no staging, commits or pushes.
+
+git diff --stat:
+
+```text
+ CODEX_HANDOFF.md                       | 652 ++++++++++++++++++++-------------
+ README.md                              |   1 +
+ market_radar/README.md                 | 146 ++++----
+ market_radar/__main__.py               |  16 +-
+ market_radar/calculations.py           |  16 +
+ market_radar/config.py                 |  17 +-
+ market_radar/engine.py                 |  55 ++-
+ market_radar/provider.py               |   8 +
+ market_radar/providers/kiwoom.py       | 197 +++++++---
+ market_radar/providers/kiwoom_cache.py |   8 +
+ market_radar/providers/kiwoom_rest.py  | 121 ++++--
+ market_radar/providers/kiwoom_ws.py    |  13 +-
+ market_radar/runtime.py                |  96 ++++-
+ market_radar/storage.py                |  42 ++-
+ tests/kiwoom_provider_test.py          |  12 +-
+ tests/market_radar_audit_test.py       |   6 +-
+ tools/kiwoom_provider/smoke.py         |   2 +-
+ 17 files changed, 976 insertions(+), 432 deletions(-)
+```
+
+git status --short:
+
+```text
+ M CODEX_HANDOFF.md
+ M README.md
+ M market_radar/README.md
+ M market_radar/__main__.py
+ M market_radar/calculations.py
+ M market_radar/config.py
+ M market_radar/engine.py
+ M market_radar/provider.py
+ M market_radar/providers/kiwoom.py
+ M market_radar/providers/kiwoom_cache.py
+ M market_radar/providers/kiwoom_rest.py
+ M market_radar/providers/kiwoom_ws.py
+ M market_radar/runtime.py
+ M market_radar/storage.py
+ M tests/kiwoom_provider_test.py
+ M tests/market_radar_audit_test.py
+ M tools/kiwoom_provider/smoke.py
+?? market_radar/console.py
+?? market_radar/providers/kiwoom_failures.py
+?? market_radar/providers/kiwoom_types.py
+?? market_radar/quality.py
+?? tests/kiwoom_quality_test.py
+?? tests/kiwoom_stability_test.py
+?? tools/kiwoom_provider/audit.py
+?? tools/kiwoom_provider/probe_failures.py
+?? tools/kiwoom_provider/probe_types.py
+?? tools/kiwoom_provider/smoke_v2.py
+?? tools/kiwoom_provider/smoke_v2_1.py
+?? tools/kiwoom_provider/windows_ctrlc_smoke.py
+```

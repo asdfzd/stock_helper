@@ -1,103 +1,109 @@
-# Market Radar — Kiwoom Provider v1
+# Market Radar — Kiwoom research v2.1
 
-기존 캡처→clipboard ticker→자동입력→OCR→StockRegistry, 매입가·반등가·벽, Toss 현재가 및 halt monitor와 독립된 연구 수집 모듈이다. 주문·계좌·자동매매·투자 추천 기능은 없다.
-
-Kiwoom real 미국주식 REST/WebSocket provider를 연결했다. RVOL/return은 **완료된 1분봉 기준**, VWAP는 **NULL**, 과거 일봉으로 보완한 결과는 **provisional**이다. 미확정 데이터 규약을 확정한 뜻이 아니다. 근거는 `KIWOOM_PROBE_REPORT.md`, 최신 실행 결과는 `KIWOOM_PROVIDER_V1_REPORT.md`, 전체 인수인계는 `CODEX_HANDOFF.md`를 본다.
+기존 캡처·clipboard ticker·OCR·StockRegistry·매입가·반등가·벽·Toss·halt와 독립된 연구 수집 모듈이다. 주문/계좌/자동매매/추천 기능은 없다. 전체 상태와 실제 검증 수치는 루트 CODEX_HANDOFF.md를 기준으로 한다.
 
 ## 실행
 
-프로젝트 루트 PowerShell:
-
-```powershell
-& .\.venv-paddle\Scripts\python.exe -m pip install -r market_radar/requirements-kiwoom.txt
-# 독립 Radar UI, 실제 수집 시작 버튼을 누르면 연결
+~~~powershell
 & .\.venv-paddle\Scripts\python.exe -m market_radar
-# 기존 프로그램의 Market Radar 버튼으로 같은 창 열기
-& .\.venv-paddle\Scripts\python.exe live_ui.py
-# Headless, Ctrl+C로 정상 종료 및 export
-& .\.venv-paddle\Scripts\python.exe -m market_radar --collect
-# 소규모 별도 실험
-& .\.venv-paddle\Scripts\python.exe -m market_radar --collect --max-ws-symbols 20 --data-dir data/experiment_02
-# 명시적 합성 fixture replay, 실시간 아님
+& .\.venv-paddle\Scripts\python.exe -m market_radar --collect --max-ws-symbols 20 --data-dir data/kiwoom_week_v2_1
+# 합성 fixture replay, live와 별도 DB
 & .\.venv-paddle\Scripts\python.exe -m market_radar --replay tests/fixtures/market_radar_replay.jsonl --fast
-```
+~~~
 
-루트 `.env`의 `KIWOOM_MODE=real`, `APP_KEY`, `APP_SECRET`이 필요하다. 값은 코드·문서·로그에 넣지 않는다. `.env`, `data/`는 Git 제외이며 토큰은 메모리에만 있다. optional 의존성은 websockets 15.0.1 / exchange_calendars 4.13.2다. 기존 OCR requirements를 변경하지 않았다.
+루트 .env의 KIWOOM_MODE=real, APP_KEY, APP_SECRET을 connect 시 읽는다. 값을 출력/저장하지 않는다. 창을 여는 것만으로 수집하지 않으며 시작 버튼 또는 --collect가 필요하다. 로컬 collector lock으로 동시 실행을 막는다. 다른 PC/프로그램의 Kiwoom WS 세션은 별도로 확인한다. Ctrl+C/중지 버튼은 정상 종료 및 export를 요청한다.
 
-토큰별 세션 1개이므로 수집기 두 개를 동시에 켜지 않는다. 로컬 OS lock이 이 프로젝트의 중복 collector를 차단한다. 다른 PC·별도 프로그램은 이 lock 범위 밖이다. UI를 여는 것만으로 수집은 시작되지 않는다.
+## 데이터 정책
 
-## 설정과 파일
+- 네 source(당일 등락률 CHG, 5분 급등 SPIKE, 거래량 VOL, 거래대금 VALUE)를 합쳐 중복 제거한다. 일부 source 실패 시 기존 universe를 유지한다.
+- Current Leaders는 day_change_pct, Emerging은 완료 1분봉의 return_5m 내림차순이며 동률 ticker 순이다. 공식은 v1과 같다. 유효 실시간 가격을 받은 구독 후보 부분집합의 순위다.
+- RVOL은 개장부터 완료 분 cutoff까지 누적 volume / 과거 14거래일의 동일 경과분 평균이다. 30초 분할·보간·snapshot fallback을 하지 않는다.
+- 무체결 분 판정은 **MIXED_OR_UNCERTAIN**이다. timestamp 누락을 volume=0으로 바꾸지 않는다. OHLC/High/Low/Close/HOD/OR을 만들지 않는다. 실제 API가 준 유효 0-volume 봉은 사용할 수 있다.
+- 분봉 시간은 연구 가정 assumed_et_start_v1이다. 원문 cntr_tm을 보존하며 ET 분 시작으로 해석하고 2초 유예 후 완료 봉만 쓴다. 캐시에 진행 중으로 들어온 봉은 재조회 없이 완료 승격하지 않는다. 24시 이상 및 정규장 밖 자료는 raw만 보존한다.
+- return은 cutoff의 완료 close와 정확히 1/5분 전 close를 비교한다. OR1/OR5/HOD와 volume은 해당 구간 봉의 연속성이 있어야 한다.
+- VWAP는 NULL이다. 일봉 보완 EOD/D+n은 provisional, 미래는 pending이다. 무료 나스닥 토탈뷰를 전 거래소 통합 SIP로 간주하지 않는다.
 
-실제 UI/CLI는 `config.py:CONFIG`의 kiwoom / kiwoom_radar_v1을 사용한다. `RadarConfig()` 자체는 기존 fixture 호환용 unconfigured / market_radar_v1이다. snapshot 30초, RVOL 14일, 후보 refresh 60초, source별 1페이지, WS 최대 200, REST 일반 3회/초·한국시간 09~10시 2회/초, backfill worker 1개다. extended=false, exact_vwap_enabled=false, orderbook capture=false다.
+## RVOL eligibility와 상태
 
-| 파일 | 역할 |
-|---|---|
-| providers/kiwoom_contract.json | Probe revision에서 추출한 9개 read-only TR 계약 |
-| providers/kiwoom_rest.py | OAuth, allowlist, 중앙 limiter, timeout/retry, 비밀값 제거 |
-| providers/kiwoom_ws.py | LOGIN/REG/REMOVE/PING, FE/optional FT, ack 기반 상태, reconnect |
-| providers/kiwoom_cache.py | 일별 OHLCV·REST/FE/FT raw·catalog·일봉 SQLite cache |
-| providers/kiwoom_calendar.py | exchange_calendars:XNYS, DST/휴일/조기폐장 |
-| providers/kiwoom_lock.py | 로컬 단일 collector lock |
-| providers/kiwoom.py | universe·구독·증분 backfill·Observation 변환 |
-| models/calculations/engine/storage.py | 지표·event·결과·schema v2 |
-| runtime/ui/__main__.py | 수집 worker·두 TOP10 표·UI/headless/replay |
+| RadarConfig 설정 | 기본값 | 의미 |
+|---|---:|---|
+| rvol_backfill_enabled | true | 과거 RVOL 이력 조회 활성화 |
+| rvol_backfill_min_day_volume | 0 | usa20100 acc_trde_qty 최소값 |
+| rvol_backfill_min_price | 0 | usa20100 cur_prc 최소값 |
+| result_pre_target_grace_seconds | 0.25 | post-target 샘플이 없을 때 허용하는 목표 직전 초 |
+| rest_negative_ttl_seconds | 21600 | 확정 실패의 재검증 간격(6시간); ET 날짜 변경 시 초기화 |
+| result_tracking_hold_minutes | 60 | 최소 결과 추적 시간; 최대 intraday horizon보다 짧아도 보호 유지 |
 
-공식 고정 revision은 `953e5dbff123f437ab4d11a78a95191a685eb51f`다. 제품은 tools/probe를 import하지 않는다. REST는 usa20100, usa10099, usa20910, usa20930, usa20530, usa20540, usa06011, usa06012, usa20590만 허용한다.
+CLI: --result-pre-target-grace-seconds, --rvol-backfill-min-day-volume, --rvol-backfill-min-price, --disable-rvol-backfill. 양수 기준을 켰을 때 당일 quote가 없으면 eligibility 미달이다. 조건에 미달해도 Radar 후보·당일 분봉·결과 추적을 제거하지 않는다. 캐시가 있어도 not_eligible은 RVOL NULL이다.
 
-## Universe와 지표
+rvol_status는 available, warming, incomplete_history, not_eligible, zero_denominator, unknown이다. 과거/현재 구간 누락은 incomplete, 아직 이력을 채우는 중이면 warming이다. v1 표본은 하루 거래량이 높아도 과거 분봉이 불완전해 특정 양수 임계값의 근거가 부족했다. 기본 0을 유지한다.
 
-- 등락률/5분급등/거래량/거래대금의 합집합을 ticker로 중복 제거한다. source rank와 수신 시각을 각각 남기며 페이지를 원자적 snapshot으로 가정하지 않는다. 일부 source 오류 시 기존 universe를 유지하고 stale을 표시한다.
-- WS 슬롯은 source 중복 등장 수 → 등락률 → 5분급등 → 거래량 → 거래대금 → ticker 순으로 배정한다. 투자 점수가 아니다. 여유 슬롯은 pending 추적 종목에 사용한다. 부족한 추적 종목의 단기 결과는 missing일 수 있고 일봉 보완은 계속한다.
-- 종목유형 enum이 미확정이므로 suffix로 추정하지 않는다. `stock_type_policy=common_and_unknown`이지만 v1에서는 `type_unknown`을 보존하므로 워런트/ETF도 포함될 수 있다.
-- Current Leaders는 최신 Observation의 day_change_pct, Emerging은 자체 completed-bar return_5m로 재정렬한다. 동률 ticker, NULL은 해당 순위 제외. VWAP NULL은 제외 조건이 아니다. 범위는 유효 가격이 수신된 **구독 후보 부분집합**이다.
-- 봉 시간은 연구 가정 `assumed_et_start_v1`: raw cntr_tm을 ET 분 시작으로 해석하고 원문을 보존한다. 24시 이상과 정규장 밖 봉은 raw만 저장한다. 장구분 FID290은 해석하지 않는다.
-- 2초 유예 후 최신 완료 분 경계까지 계산한다. 캐시에 진행 봉으로 수신된 데이터는 시간 경과만으로 완료 승격하지 않고 다시 조회해야 한다.
-- return_1m/5m는 cutoff의 완료 close와 정확히 1/5분 전 close를 비교한다. 최신 FE 가격을 분자에 섞거나 30초 snapshot fallback으로 채우지 않는다.
-- RVOL은 오늘 개장~완료 분 cutoff 누적 volume / 과거 14 완료 거래일의 동일 경과분 평균이다. `rvol_basis=completed_1m`, bar/RVOL cutoff를 저장한다. 30초 중간 보간은 없다. cache 미완료·누락·과거 조기폐장 이후 cutoff는 NULL이다.
-- OR1/OR5는 연속된 개장 1/5분 봉 high/low, HOD는 개장~cutoff 전체 연속 봉 high다. 누락 시 HOD/누적 volume/RVOL NULL, coverage_complete=0. 이 coverage는 봉 연속성이지 전체 tick 보증이 아니다.
-- VWAP는 NULL이며 typical-price 근사 및 FE14 단위 추정은 없다. 기존 replay의 실제 notional VWAP 계산은 유지한다.
+## 결과 추적과 슬롯
 
-가격 수신 시각, REST 수신 시각, Observation 시각, bar/RVOL cutoff, 원본 timestamp를 구분한다. provider_latency_ms는 미확정이라 NULL, 수신 이후 경과시간은 price_age_ms다. 무료 나스닥 토탈뷰를 전 거래소 통합 SIP로 간주하지 않는다.
+FIRST_DETECTED는 두 표 TOP10 진입 시 유효 가격으로 기록한다. tracking_protected_until은 첫 포착 + max(60분, 설정 hold), 정규장 종료로 제한한 뒤 결과 tolerance 30초를 더한다. 보호 상태는 DB에 저장되어 재시작 때 복원된다.
 
-## 캐시·thread·재연결
+슬롯 순서는 기존 보호 중 구독 → 추가 보호 대상 → 현재 discovery → 기타 pending 추적이다. 보호 중에는 source/ranking 이탈만으로 REMOVE하지 않는다. 슬롯 수를 넘어 보호 대상이 생겨도 기존 보호 구독을 유지하고 미등록 종목의 사유를 기록한다. 결과 데이터 완전성을 위한 네트워크 배정이다.
 
-RadarWorker는 계산/연구 DB/CSV, REST/cache thread 1개는 후보·현재세션·history 페이지를 번갈아 처리하고 WS thread 1개는 실시간 수신을 관리한다. 라이브러리 내부 수신 thread가 추가될 수 있다. Qt에서는 네트워크·heavy SQLite 작업을 하지 않는다.
+20은 smoke/test 규모이며 전체 후보를 추적하는 주간 운영 권장값이 아니다. 기존 max_ws_symbols 설정과 CLI를 유지하며 200은 공식 상한이다. 50/100/200 중 운영값은 별도 capacity smoke로 결정한다.
 
-완료된 과거 거래일은 재다운로드하지 않고 다음 날 완료된 하루를 증분 추가한다. 무체결/결측 분을 0으로 생성하지 않는다. raw queue 초과 시 로그·raw_dropped/ws_gap_detected를 남긴다.
+슬롯이 차도 전체 discovery는 radar_discoveries 및 raw UNIVERSE에 남긴다. 신규 종목은 tracking_slot_unavailable, awaiting_subscription 등으로 구분한다. 유효 가격 없는 종목의 FIRST_DETECTED/결과 기준가를 만들지 않는다.
 
-REG refresh=1은 기존 등록 유지다. REMOVE/REG ack 뒤 active set을 변경한다. 단절 시 가격·active set을 비우고 최대 60초 backoff, 인증 재확인, 재연결·재등록한다. gap은 복원했다고 표시하지 않는다. stop은 Event로 요청하며 유한 네트워크 timeout과 최종 export를 기다릴 수 있다. UI에서 join하지 않는다.
+단기 결과는 target~target+30초의 가장 빠른 실제 snapshot을 우선한다. 해당 창이 끝날 때까지 post-target 샘플이 없으면 target-0.25초 이상~target 미만 중 가장 가까운 snapshot을 사용한다. 유예는 result_pre_target_grace_seconds로 설정하며 0이면 비활성이다. 30초 tolerance는 유지한다. sample_timestamp/sample_offset_seconds/sample_selection(post_target 또는 pre_target_grace)을 DB/CSV에 보존하며 보간하지 않는다.
 
-REST/OAuth는 공통 limiter를 지나며 종목리스트는 60초당 최대 4회다. HTTP connect/read timeout=5/10초, 재시도 최대 2회, backoff 2·4초다. rate limit/API 오류는 로그에 남기고 데이터를 추정하지 않는다.
+단기 결과의 complete/missing/pending/outside_session 의미는 유지한다. missing_reason은 목표~tolerance 구간에 보존된 batch metadata에서 확인한 stale_price, not_subscribed, ws_gap, tracking_slot_unavailable 또는 근거가 없을 때 no_snapshot_within_tolerance다. 장 밖 목표는 outside_session이다. 원인을 추정하여 채우지 않는다.
 
-## 저장과 결과
+## 공식 종목 유형 근거와 필터
 
-```text
+공식 usa10099에서 mkgb는 거래소명, upgb는 업종명, isEtf는 ETF 여부다. 별도 보통주/워런트 enum으로 해석하지 않는다.
+
+- isEtf=Y → ETF. 실제 HYG/TQQQ/SOXL 확인.
+- 공식 한국명 워런트 + 영문명 C/WTS 또는 WARRANT → warrant. 실제 ARBEW/WALDW/BZFDW/SHFSW의 일관된 명시적 상품명 근거다. 공식 enum이라고 주장하지 않는다.
+- 공식 한국명 유닛 + 영문명 UNIT(S) → other. v1 FVNNU 표본 확인.
+- 양 언어 공식명에 명시적 ETN 표기 → ETN. 실제 ETN 표본은 이번에 검증하지 않았다.
+- 비ETF이며 공식 영문명에 명시적 COMMON STOCK/ORDINARY SHARES, 상충하는 warrant/unit/preferred/right 표기가 없으면 common. 이 규칙은 합성 테스트로만 검증됐다.
+- 나머지는 unknown. AAPL/NVDA의 isEtf=N도 common 확정 근거가 아니므로 unknown으로 보존한다. ticker suffix는 사용하지 않는다.
+
+기본 stock_type_policy=common_and_unknown은 common/unknown을 포함하고 확정된 나머지는 제외한다. all로 변경 가능하다. 제외된 discovery는 excluded_symbol_type, 원본 public fields, source와 판정 규칙을 남긴다.
+
+## 파일·schema·운영
+
+~~~text
 data/
-  stock_helper_market_kiwoom_v1.db   # 연구 schema v2
-  market_radar_cache/kiwoom_v1.db    # 별도 cache schema v1
-  kiwoom_collector.lock
-  logs/YYYY-MM-DD.log
+  stock_helper_market_kiwoom_v2_1.db    # research schema 4, test_version kiwoom_radar_v2_1
+  market_radar_cache/kiwoom_v2.db       # unchanged OHLCV cache contract/schema 1
+  logs/YYYY-MM-DD.log                  # ET date, UTC log timestamps
   export/YYYY-MM-DD/{candidates,snapshots,events,results}.csv
   export/YYYY-MM-DD/metadata.json
-  replay/stock_helper_market.db     # 기존 replay schema v1
-```
+  export/YYYY-MM-DD/quality_summary.json
+~~~
 
-연구 DB는 기존 9개 테이블에 source/rank, previous_close, provider/exchange, metric cutoff/basis, timestamp/age/gap metadata를 추가했다. source/status를 close/result에도 남긴다. `storage.py:SCHEMA_V2`가 정확한 DDL이다. 기존 DB의 identity/schema가 다르면 ALTER하지 않고 거부한다.
+--data-dir을 지정하면 그 하위에 저장한다. 기존 v1/v2 연구 DB를 이관하거나 ALTER하지 않는다. 기존 운영 폴더 대신 새 v2.1 폴더를 사용한다. cache OHLCV schema 1/contract는 그대로다. cache를 재사용할 때는 provider/mode/schema/bar_policy 검증을 DDL 전에 통과해야 한다. 새 data-dir에서는 새 cache를 만든다.
 
-cache에는 minute_bars, cache_days, daily_bars, raw_records, symbol_catalog, cache_metadata가 있다. raw OHLCV/원문시각/REST 수신시각, FE 10/12/13/14/15/16/17/18/20/22/290/51020을 보존한다. 인증·헤더·토큰·계좌 raw는 없다. 일주일 뒤 재계산에는 연구 DB와 cache DB가 모두 필요하다.
+정상 초기 universe 준비는 INFO kiwoom_universe_warming_up, 첫 성공 후 갱신 시간이 초과하면 WARNING kiwoom_universe_stale다. 실제 REST/인증/JSON/DB/worker 장애는 ERROR다.
 
-Event는 FIRST_DETECTED, 두 순위 TOP10/5/3 진입, HOD_BREAK, legacy VWAP 전이다. 상태가 변할 때만 기록한다. Kiwoom VWAP는 NULL이므로 해당 전이는 발생하지 않는다.
+Quality summary는 300초 export와 정상 종료 때 갱신한다. snapshot/candidate/RVOL/return/result는 SQLite에서, API/DB/worker/export·historical backfill·WS/subscription·raw drop은 구조화된 ET 날짜별 counter에서 계산한다. counter는 동일 연구 DB에 누적되어 재시작에도 유지된다. 백필 count는 unique cache 일수가 아닌 완료/불완전/오류 시도 횟수, subscription count는 ack된 종목 수다. 날짜별 discovery source는 중복 없는 종목별 source 합집합, type은 마지막 확인값이다. 아직 snapshot이 없으면 비율은 NULL이다. tracking은 마지막 수집 batch의 gauge다. 정상 종료 REMOVE는 counter에 반영되며 gauge는 마지막 batch 시점 값이다.
 
-포착 후 +30초/+1/3/5/10/30/60분은 실제 snapshot으로 추적하고 누락은 missing, 세션 밖 목표는 outside_session이다. 미래 EOD/D+1/2/3는 pending/NULL. 다음 ET 날짜부터 usa06012 과거 일봉으로 보완한 값은 **provisional / kiwoom:usa06012**이며 공식 확정 종가로 승격하지 않는다. 15:59/16:00 분봉으로 대체하지 않는다. MFE/MAE는 sampled_prices다.
+SQLite와 raw cache가 원본이고 summary는 보조 자료다. CSV/JSON은 파일별 임시파일 교체 방식이며 전체 파일 묶음이 원자적이지는 않다. 갑작스러운 전원 차단 전 아직 DB로 flush하지 않은 counter는 소실될 수 있다.
 
-CSV는 300초 및 정상 종료 때 갱신하고 NULL은 빈 칸, UTF-8 BOM이다. 파일별 임시파일 후 교체하며 네 파일 전체가 원자적 묶음은 아니다. SQLite가 원본이다. DB 클라우드 동기화는 구현하지 않았고 export만 추후 복사한다.
+REST 일반 3회/초·한국시간 09~10시 2회/초, 종목리스트 4회/60초, backfill worker 1개, WS 최대 200개다. optional 의존성은 requirements-kiwoom.txt를 사용한다. 네트워크/cache/연구 DB/export는 Qt 밖에서 수행한다.
 
-## 검증
+## REST 실패와 종료
 
-```powershell
+HTTP 429/5xx, timeout/connection error 및 확인된 rate-limit/auth-expiry 코드만 제한된 재시도를 한다. 공식 종목 조회 불가(1901/1902/1903), 지원 불가, 잘못된 요청 및 성공한 빈 initial chart는 동일 ticker/TR/query/cursor/ET 날짜별 negative cache로 억제한다. TTL(6시간) 또는 날짜 변경 후 재조회하며 영구 종목 blacklist는 없다. 미확인 API/parse 오류는 unclassified로 남기고 60초 cooldown을 둔다. 실제 실패만 API counter에 반영하고 억제 호출은 별도 suppressed_count로 센다. 정상 빈 chart는 no_data이며 api_error에 더하지 않는다.
+
+백필 complete/incomplete/skipped/deterministic_unavailable/transient_error/unclassified_error를 구분하고 기존 error 필드를 유지한다. incomplete와 종료 취소는 API/worker 오류가 아니다. quality_summary v2에는 REST 오류 및 ticker/TR/HTTP/code 상위 10개, shutdown 요청·취소·소요시간, 결과 sample 선택 통계, slot_saturation_pct가 추가됐다. raw REST_ERROR에는 공개 필드와 비밀값이 제거된 메시지만 저장한다.
+
+Ctrl+C 수신 즉시 새 scheduling/REST retry/WS REG를 중단한다. 현재 bounded request가 반환되면 미완료 백필 jobs 취소, WS REMOVE/disconnect, raw cache flush/close, 연구 DB checkpoint, CSV/quality export를 수행한다. 추가 Ctrl+C는 같은 종료 상태를 사용한다. shutdown_requested부터 shutdown_complete/program_stop까지 로그로 확인한다. 정상 환경에서 15~20초 이내를 목표로 하며 강제 thread/process 종료는 쓰지 않는다.
+
+## 검증 도구
+
+~~~powershell
 & .\.venv-paddle\Scripts\python.exe tools/kiwoom_provider/run_validation.py
-# 별도 DB, 최대 2종목, 실제 read-only smoke
-& .\.venv-paddle\Scripts\python.exe tools/kiwoom_provider/smoke.py --seconds 150
-```
+& .\.venv-paddle\Scripts\python.exe tools/kiwoom_provider/audit.py
+& .\.venv-paddle\Scripts\python.exe tools/kiwoom_provider/probe_types.py
+& .\.venv-paddle\Scripts\python.exe tools/kiwoom_provider/smoke_v2_1.py --seconds 1200 --max-ws-symbols 20 --data-dir data/kiwoom_smoke_v2_1_new
+# Windows: 별도 숨김 콘솔에서 10분 수집 후 실제 CTRL_C_EVENT 전달
+& .\.venv-paddle\Scripts\python.exe tools/kiwoom_provider/windows_ctrlc_smoke.py --seconds 600 --data-dir data/kiwoom_smoke_v2_1_ctrlc_new
+~~~
 
-시작 직후 backfill 중 RVOL NULL은 정상이다. 일주일 운영 전 일부 종목의 raw 봉을 키움 차트와 대조하고 시간 가정·시세 권한·calendar를 확인한다. 매일 stale/gap/cache 오류, NULL 비율, DB 증가, CSV, pending/provisional 상태를 점검한다. 최신 실행 수치와 제한은 루트 provider 보고서 및 HANDOFF를 따른다.
+audit는 v1 evidence를 read-only SQLite로 열고 다른 폴더에 결과를 쓴다. probe는 인증 및 공식 시장 종목목록만 읽는다. smoke_v2_1은 정규장 여부를 확인하며 새 data-dir을 요구하고 provider의 구독 선택을 덮어쓰지 않는다. 일반 smoke의 timer 종료는 Ctrl+C 검증이 아니다. 직접 Ctrl+C를 누르거나 windows_ctrlc_smoke.py로 OS console event를 전달한다.

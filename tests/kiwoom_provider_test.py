@@ -128,7 +128,7 @@ class UniverseTests(unittest.TestCase):
         self.assertEqual(len(result), 1)
         self.assertEqual(result["AAA"]["sources"], ["day_change", "5m_spike"])
         self.assertEqual(result["AAA"]["source_received"]["5m_spike"], "two")
-        self.assertEqual(result["AAA"]["type"], "type_unknown")
+        self.assertEqual(result["AAA"]["type"], "unknown")
 
     def test_operational_slots_cap_and_priority(self):
         rows = [{"stk_cd": f"T{i:03}", "stex_tp": "ND"} for i in range(240)]
@@ -332,7 +332,7 @@ class PersistenceTests(unittest.TestCase):
 
     def test_schema_and_csv_new_columns(self):
         with tempfile.TemporaryDirectory() as tmp:
-            store=RadarStore(Path(tmp)/'new.db',{'provider':'kiwoom'})
+            store=RadarStore(Path(tmp)/'new.db',{'provider':'kiwoom','test_version':CONFIG.test_version})
             o=observation();engine=RadarEngine(store,CONFIG,'kiwoom','live')
             rows=engine.process(MarketBatch(o.asof_utc,(o,),(SESSION,)),o.asof_utc)
             self.assertEqual(rows[0]['rvol'],.5)
@@ -344,7 +344,7 @@ class PersistenceTests(unittest.TestCase):
             self.assertEqual(row['previous_close'],'100.0')
             self.assertEqual(row['exchange'],'ND')
             self.assertEqual(row['vwap'],'')
-            self.assertEqual(store.schema_version,2)
+            self.assertEqual(store.schema_version,4)
             store.close()
 
     def test_old_db_not_migrated(self):
@@ -352,12 +352,12 @@ class PersistenceTests(unittest.TestCase):
             path=Path(tmp)/'old.db'
             store=RadarStore(path,{'provider':'legacy'});store.close()
             before=hashlib.sha256(path.read_bytes()).hexdigest()
-            with self.assertRaises(ValueError):RadarStore(path,{'provider':'kiwoom'})
+            with self.assertRaises(ValueError):RadarStore(path,{'provider':'kiwoom','test_version':CONFIG.test_version})
             self.assertEqual(before,hashlib.sha256(path.read_bytes()).hexdigest())
 
     def test_daily_close_provisional_future_pending(self):
         with tempfile.TemporaryDirectory() as tmp:
-            store=RadarStore(Path(tmp)/'new.db',{'provider':'kiwoom'})
+            store=RadarStore(Path(tmp)/'new.db',{'provider':'kiwoom','test_version':CONFIG.test_version})
             engine=RadarEngine(store,CONFIG,'kiwoom','live');o=observation()
             cal=ExchangeCalendar();following=cal.sessions('2026-09-28','2026-10-02')
             engine.process(MarketBatch(o.asof_utc,(o,),following),o.asof_utc)
@@ -372,7 +372,7 @@ class PersistenceTests(unittest.TestCase):
 
     def test_no_snapshot_fallback_into_minute_basis(self):
         with tempfile.TemporaryDirectory() as tmp:
-            store=RadarStore(Path(tmp)/'new.db',{'provider':'kiwoom'});engine=RadarEngine(store,CONFIG,'kiwoom','live')
+            store=RadarStore(Path(tmp)/'new.db',{'provider':'kiwoom','test_version':CONFIG.test_version});engine=RadarEngine(store,CONFIG,'kiwoom','live')
             a=observation(minute=8);engine.process(MarketBatch(a.asof_utc,(a,),(SESSION,)),a.asof_utc)
             b=replace(observation(minute=9),bars=(),historical_volumes=())
             rows=engine.process(MarketBatch(b.asof_utc,(b,),(SESSION,)),b.asof_utc)

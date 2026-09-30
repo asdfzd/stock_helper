@@ -34,6 +34,22 @@ def calculate(o: Observation, config: RadarConfig) -> dict:
                    provider_latency_ms=o.metadata.get("provider_latency_ms"), price_age_ms=o.metadata.get("price_age_ms"),
                    ws_gap_detected=int(o.metadata.get("ws_gap_detected", False)),
                    bar_label_policy=o.metadata["bar_label_policy"])
+        if config.test_version in {"kiwoom_radar_v2", "kiwoom_radar_v2_1"}:
+            status = o.metadata.get("rvol_status", "unknown")
+            elapsed = int((cutoff-instant(o.session.open_utc)).total_seconds())
+            values = {h.session_date: h.volume for h in o.historical_volumes if h.elapsed_seconds == elapsed}
+            dates = o.history_dates[:config.rvol_lookback_days]
+            if status == "not_eligible":
+                row["rvol"] = None
+            elif row["rvol"] is not None:
+                status = "available"
+            elif len(dates) == config.rvol_lookback_days and all(d in values for d in dates) and sum(values[d] for d in dates) == 0:
+                status = "zero_denominator"
+            elif row["volume"] is None and elapsed > 0:
+                status = "incomplete_history"
+            elif status not in {"warming", "incomplete_history"}:
+                status = "incomplete_history"
+            row.update(rvol_status=status, symbol_type_evidence=json.dumps(o.metadata.get("symbol_type_evidence", {})))
         return row
     at, start = instant(o.asof_utc), instant(o.session.open_utc)
     cursor = start

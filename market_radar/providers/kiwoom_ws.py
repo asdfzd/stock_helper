@@ -4,6 +4,7 @@ import json
 import logging
 import threading
 import time
+from ..quality import event
 
 URL = "wss://api.kiwoom.com:10000/api/us/websocket"
 FE_FIELDS = set("10 12 13 14 15 16 17 18 20 22 290 51020".split())
@@ -27,7 +28,8 @@ class KiwoomWebSocket:
         if len(symbols) > self.config.max_ws_symbols or len(symbols) > 200:
             raise ValueError("WebSocket symbol limit exceeded")
         with self.lock:
-            self.desired = dict(symbols)
+            if not self.stop.is_set():
+                self.desired = dict(symbols)
 
     def snapshot(self):
         with self.lock:
@@ -80,7 +82,7 @@ class KiwoomWebSocket:
         removed = {k: v for k, v in active.items() if desired.get(k) != v}
         added = {k: v for k, v in desired.items() if active.get(k) != v}
         for name, group in (("REMOVE", removed), ("REG", added)):
-            if not group:
+            if not group or (name == "REG" and self.stop.is_set()):
                 continue
             ws.send(json.dumps(self.packet(name, group)))
             self._ack(ws, name)
@@ -91,7 +93,8 @@ class KiwoomWebSocket:
                         self.latest.pop(ticker, None)
                 else:
                     self.active.update(group)
-            self.logger.info("kiwoom_subscription_%s count=%s", "add" if name == "REG" else "remove", len(group))
+            self.logger.info("kiwoom_subscription_%s count=%s", "add" if name == "REG" else "remove", len(group),
+                             extra=event("subscription_add_count" if name == "REG" else "subscription_remove_count", len(group)))
 
     def start(self):
         self.thread = threading.Thread(target=self._run, name="kiwoom-ws", daemon=False)
@@ -128,12 +131,12 @@ class KiwoomWebSocket:
                     if self.active:
                         ws.send(json.dumps(self.packet("REMOVE", self.active)))
                         self._ack(ws, "REMOVE", timeout=3)
-                        self.logger.info("kiwoom_subscription_remove count=%s", len(self.active))
+                        self.logger.info("kiwoom_subscription_remove count=%s", len(self.active), extra=event("subscription_remove_count", len(self.active)))
             except Exception:
                 if not self.stop.is_set():
                     with self.lock:
                         self.gap = True
-                    self.logger.warning("kiwoom_data_gap websocket_disconnect")
+                    self.logger.warning("kiwoom_data_gap websocket_disconnect", extra=event("ws_gap_count"))
                     self.raw_sink("GAP", None, datetime.now(timezone.utc).isoformat(), {"reason": "ws_disconnect"})
                     attempts += 1
             finally:

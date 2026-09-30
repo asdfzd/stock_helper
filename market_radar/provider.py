@@ -12,6 +12,14 @@ class ProviderError(RuntimeError):
     pass
 
 
+class UniverseWarmingUp(ProviderError):
+    pass
+
+
+class UniverseStale(ProviderError):
+    pass
+
+
 class RateLimitError(ProviderError):
     def __init__(self, message="Provider rate limit", retry_after_seconds=60):
         super().__init__(message)

@@ -63,6 +63,14 @@ class KiwoomCache:
         self.lock = threading.RLock()
         self.db = sqlite3.connect(path, timeout=5, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
+        identity = json.dumps({"provider": "kiwoom", "mode": "real", "schema": 1, "bar_policy": POLICY}, sort_keys=True)
+        # Check the unchanged OHLCV contract before any DDL/journal mutation.
+        exists = self.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='cache_metadata'").fetchone()
+        prior = self.db.execute("SELECT value FROM cache_metadata WHERE key='identity'").fetchone() if exists else None
+        populated = self.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' LIMIT 1").fetchone()
+        if (populated and not exists) or (exists and (not prior or prior[0] != identity)):
+            self.db.close()
+            raise ValueError("Kiwoom cache identity mismatch")
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript("""
         CREATE TABLE IF NOT EXISTS cache_metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL);

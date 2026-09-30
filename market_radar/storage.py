@@ -66,13 +66,33 @@ SCHEMA_V2 = SCHEMA.replace("    UNIQUE(timestamp_utc,ticker));", """
     UNIQUE(candidate_id,horizon));""")
 
 
+SCHEMA_V3 = SCHEMA_V2.replace("    previous_close REAL,", "    rvol_status TEXT, symbol_type_evidence TEXT, previous_close REAL,").replace(
+    "    candidate_sources TEXT, provider TEXT, exchange TEXT,", """
+    tracking_protected_until TEXT, candidate_tracking_state TEXT,
+    symbol_type TEXT, symbol_type_evidence TEXT,
+    candidate_sources TEXT, provider TEXT, exchange TEXT,""").replace(
+    "    result_source TEXT, close_status TEXT,", "    missing_reason TEXT, result_source TEXT, close_status TEXT,") + """
+CREATE TABLE IF NOT EXISTS radar_discoveries(
+    session_date TEXT, ticker TEXT, first_seen_utc TEXT, last_seen_utc TEXT,
+    symbol_type TEXT, symbol_type_evidence TEXT, excluded_symbol_type INTEGER,
+    candidate_sources TEXT, candidate_tracking_state TEXT,
+    PRIMARY KEY(session_date,ticker));
+CREATE TABLE IF NOT EXISTS quality_counters(
+    session_date TEXT, name TEXT, count INTEGER NOT NULL, PRIMARY KEY(session_date,name));
+"""
+
+
+SCHEMA_V4 = SCHEMA_V3.replace("    missing_reason TEXT,",
+    "    sample_timestamp TEXT, sample_offset_seconds REAL, sample_selection TEXT, missing_reason TEXT,")
+
+
 class RadarStore:
     """One connection owned by the collecting thread, WAL for external readers."""
     def __init__(self, path: Path, identity: dict):
         path.parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(path, timeout=5)
         self.db.row_factory = sqlite3.Row
-        self.schema_version = 2 if identity.get("provider") == "kiwoom" else 1
+        self.schema_version = (4 if identity.get("test_version") == "kiwoom_radar_v2_1" else 3 if identity.get("test_version") == "kiwoom_radar_v2" else 2) if identity.get("provider") == "kiwoom" else 1
         try:
             encoded = json.dumps(identity, sort_keys=True)
             exists = self.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='radar_metadata'").fetchone()
@@ -83,7 +103,7 @@ class RadarStore:
             if exists and (not version or version[0] != str(self.schema_version)):
                 raise ValueError("DB schema mismatch: use a new experimental database")
             self.db.execute("PRAGMA journal_mode=WAL")
-            self.db.executescript(SCHEMA_V2 if self.schema_version == 2 else SCHEMA)
+            self.db.executescript({1: SCHEMA, 2: SCHEMA_V2, 3: SCHEMA_V3, 4: SCHEMA_V4}[self.schema_version])
             with self.db:
                 self.db.execute("INSERT OR IGNORE INTO radar_metadata VALUES('identity',?)", (encoded,))
                 self.db.execute("INSERT OR IGNORE INTO radar_metadata VALUES('schema_version',?)", (str(self.schema_version),))
@@ -102,6 +122,13 @@ class RadarStore:
         return tuple(r[0] for r in self.db.execute(
             "SELECT DISTINCT c.ticker FROM radar_candidates c JOIN radar_results r ON c.id=r.candidate_id "
             "WHERE r.status IN ('pending','provisional') ORDER BY c.ticker"))
+
+    def protected_tracking(self, now):
+        if self.schema_version < 3:
+            return {}
+        return {r["ticker"]: dict(r) for r in self.db.execute(
+            "SELECT ticker,exchange,tracking_protected_until FROM radar_candidates "
+            "WHERE tracking_protected_until>=? ORDER BY first_detected_utc,ticker", (now,))}
 
     def export_day(self, day: str, root: Path) -> Path:
         # Validate path component before creating a directory.
@@ -130,11 +157,18 @@ class RadarStore:
         temporary = folder / "metadata.json.tmp"
         temporary.write_text(identity, encoding="utf-8")
         os.replace(temporary, folder / "metadata.json")
+        if self.schema_version >= 3:
+            from .quality import daily_summary
+            temporary = folder / "quality_summary.json.tmp"
+            temporary.write_text(json.dumps(daily_summary(self, day), ensure_ascii=False, indent=2), encoding="utf-8")
+            os.replace(temporary, folder / "quality_summary.json")
         return folder
 
     def export_all(self, root: Path) -> list[Path]:
-        days = [r[0] for r in self.db.execute(
-            "SELECT DISTINCT session_date FROM radar_snapshots UNION SELECT DISTINCT session_date FROM radar_candidates ORDER BY 1")]
+        query = "SELECT DISTINCT session_date FROM radar_snapshots UNION SELECT DISTINCT session_date FROM radar_candidates"
+        if self.schema_version >= 3:
+            query += " UNION SELECT session_date FROM radar_discoveries UNION SELECT session_date FROM quality_counters"
+        days = [r[0] for r in self.db.execute(query + " ORDER BY 1")]
         return [self.export_day(day, root) for day in days]
 
     def close(self):

@@ -55,7 +55,7 @@ def main():
         snapshots=db.execute('SELECT COUNT(*) FROM radar_snapshots').fetchone()[0]
         metrics=db.execute('SELECT COUNT(rvol),COUNT(return_5m),COUNT(vwap) FROM radar_snapshots').fetchone()
         symbols=[r[0] for r in db.execute('SELECT DISTINCT ticker FROM radar_snapshots')]
-    cache_path=folder/'market_radar_cache'/'kiwoom_v1.db'
+    cache_path=folder/'market_radar_cache'/'kiwoom_v2.db'
     with sqlite3.connect(cache_path) as db:
         days=db.execute('SELECT ticker,COUNT(*) FROM cache_days WHERE complete=1 GROUP BY ticker').fetchall()
         raw=db.execute('SELECT kind,COUNT(*) FROM raw_records GROUP BY kind').fetchall()

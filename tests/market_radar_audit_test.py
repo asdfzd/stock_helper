@@ -204,11 +204,11 @@ class AuditRuntimeTests(unittest.TestCase):
     def test_config_provider_and_gitignore(self):
         self.assertEqual(CONFIG.snapshot_seconds, 30)
         self.assertEqual(CONFIG.rvol_lookback_days, 14)
-        self.assertEqual(CONFIG.test_version, "kiwoom_radar_v1")
-        self.assertEqual(CONFIG.db_path, ROOT / "data/stock_helper_market_kiwoom_v1.db")
+        self.assertEqual(CONFIG.test_version, "kiwoom_radar_v2_1")
+        self.assertEqual(CONFIG.db_path, ROOT / "data/stock_helper_market_kiwoom_v2_1.db")
         self.assertEqual(create_live_provider().name, "kiwoom")
         self.assertIsInstance(create_live_provider(RadarConfig()), UnconfiguredProvider)
-        result = subprocess.run(["git", "check-ignore", "data/stock_helper_market_kiwoom_v1.db", ".env"], cwd=ROOT, capture_output=True)
+        result = subprocess.run(["git", "check-ignore", "data/stock_helper_market_kiwoom_v2.db", ".env"], cwd=ROOT, capture_output=True)
         self.assertEqual(result.returncode, 0)
 
     def test_provider_db_calculation_export_thread_ownership(self):

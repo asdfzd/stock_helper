@@ -12,6 +12,8 @@ class RadarConfig:
     rvol_lookback_days: int = 14
     max_data_delay_seconds: float = 90.0
     result_tolerance_seconds: float = 30.0
+    result_pre_target_grace_seconds: float = 0.25
+    rest_negative_ttl_seconds: float = 21600.0
     export_seconds: float = 300.0
     session: str = "regular"
     data_dir: Path = APP_ROOT / "data"
@@ -31,6 +33,10 @@ class RadarConfig:
     rest_retries: int = 2
     reconnect_max_seconds: float = 60.0
     raw_queue_size: int = 20000
+    rvol_backfill_enabled: bool = True
+    rvol_backfill_min_day_volume: float = 0
+    rvol_backfill_min_price: float = 0
+    result_tracking_hold_minutes: float = 60
 
     def __post_init__(self):
         if min(self.snapshot_seconds, self.max_data_delay_seconds,
@@ -49,12 +55,19 @@ class RadarConfig:
         if min(self.candidate_refresh_seconds, self.candidate_pages, self.max_chart_pages,
                self.reconnect_max_seconds, self.raw_queue_size) <= 0 or not 0 <= self.rest_retries <= 3:
             raise ValueError("Invalid provider budget")
+        if not 0 < self.rest_negative_ttl_seconds < float("inf"):
+            raise ValueError("Negative cache TTL must be positive")
         if self.bar_finalization_seconds < 0:
             raise ValueError("Invalid bar finalization delay")
+        from math import isfinite
+        if any(not isfinite(v) or v < 0 for v in (self.rvol_backfill_min_day_volume,
+                self.rvol_backfill_min_price, self.result_tracking_hold_minutes,
+                self.result_pre_target_grace_seconds)):
+            raise ValueError("Invalid backfill/tracking policy")
 
     @property
     def db_path(self) -> Path:
-        return self.data_dir / ("stock_helper_market_kiwoom_v1.db" if self.provider == "kiwoom" else "stock_helper_market.db")
+        return self.data_dir / (("stock_helper_market_kiwoom_v2_1.db" if self.test_version == "kiwoom_radar_v2_1" else "stock_helper_market_kiwoom_v2.db") if self.provider == "kiwoom" else "stock_helper_market.db")
 
 
-CONFIG = RadarConfig(provider="kiwoom", test_version="kiwoom_radar_v1")
+CONFIG = RadarConfig(provider="kiwoom", test_version="kiwoom_radar_v2_1")
