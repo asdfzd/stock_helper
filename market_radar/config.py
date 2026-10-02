@@ -3,6 +3,8 @@ from pathlib import Path
 
 from runtime_paths import APP_ROOT
 
+DEFAULT_SHARED_CACHE_PATH = APP_ROOT / "data" / "market_radar_cache" / "kiwoom_v2.db"
+
 
 @dataclass(frozen=True)
 class RadarConfig:
@@ -17,6 +19,7 @@ class RadarConfig:
     export_seconds: float = 300.0
     session: str = "regular"
     data_dir: Path = APP_ROOT / "data"
+    historical_cache_path: Path | None = None
     max_ws_symbols: int = 200
     candidate_refresh_seconds: float = 60.0
     candidate_pages: int = 1
@@ -64,6 +67,12 @@ class RadarConfig:
                 self.rvol_backfill_min_price, self.result_tracking_hold_minutes,
                 self.result_pre_target_grace_seconds)):
             raise ValueError("Invalid backfill/tracking policy")
+
+    @property
+    def cache_path(self) -> Path:
+        # None preserves the original CLI --data-dir/cache relationship.
+        return (Path(self.historical_cache_path) if self.historical_cache_path is not None
+                else self.data_dir / "market_radar_cache" / "kiwoom_v2.db")
 
     @property
     def db_path(self) -> Path:

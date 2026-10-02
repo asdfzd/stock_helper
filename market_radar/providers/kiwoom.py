@@ -152,7 +152,7 @@ class KiwoomProvider:
         self.collector_lock = CollectorLock()
         self.collector_lock.acquire()
         self.calendar = self.calendar or ExchangeCalendar()
-        self.cache = KiwoomCache(self.config.data_dir / "market_radar_cache" / "kiwoom_v2.db")
+        self.cache = KiwoomCache(self.config.cache_path)
         self.catalog = self.cache.catalog()
         self.rest = self.rest_factory(self.config, self.stop_event, self.logger, self._raw)
         self.rest.token()
@@ -418,6 +418,14 @@ class KiwoomProvider:
                 "slot_saturation_pct": 100*len(active)/self.config.max_ws_symbols,
                 "tracking_slot_unavailable_count": len(self.slot_unavailable)},
              "bar_policy": POLICY, "calendar_source": self.calendar.source})
+
+    def connection_status(self):
+        """Acknowledged WS state only; no IO or historical gauge mutation."""
+        if self._closed or self.ws is None:
+            return {"connected": False, "active_ws": 0}
+        with self.ws.lock:
+            connected = self.ws.connected
+            return {"connected": connected, "active_ws": len(self.ws.active) if connected else 0}
 
     def close(self):
         if self._closed:

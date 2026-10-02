@@ -54,6 +54,7 @@ class RadarWorker:
         self.shutdown_started = None
         self.shutdown_requested_utc = None
         self.shutdown_elapsed_ms = None
+        self.phase = "STOPPED"
 
     @property
     def running(self):
@@ -64,6 +65,7 @@ class RadarWorker:
             return
         self.stop_event.clear()
         self.error = None
+        self.phase = "STARTING"
         self.thread = threading.Thread(target=self._run, name="market-radar", daemon=False)
         self.thread.start()
 
@@ -76,6 +78,7 @@ class RadarWorker:
             self.logger.info('shutdown_requested reason=%s timestamp=%s elapsed_ms=%.3f', reason,
                 utc(datetime.now(timezone.utc)), self._shutdown_elapsed(), extra=event('shutdown_requested_count'))
         self.stop_event.set()  # UI never waits for a network request or export.
+        self.phase = "STOPPING"
         if hasattr(self.provider, "request_stop"):
             self.provider.request_stop()
         if first and self.logger:
@@ -138,6 +141,7 @@ class RadarWorker:
                                 rest_negative_ttl_seconds=self.config.rest_negative_ttl_seconds)
             store = RadarStore(self.config.db_path, identity)
             engine = RadarEngine(store, self.config, self.provider.name, self.provider.mode)
+            self.phase = "RUNNING"
             next_export = time.monotonic() + self.config.export_seconds
             while not self.stop_event.is_set():
                 started = time.monotonic()
@@ -248,4 +252,5 @@ class RadarWorker:
                 self.error = f"{self.failed_batches}개 batch 검증/DB 저장 실패: runtime 로그 확인 필요"
                 final_status = self.error
             self.publish(final_status)
+            self.phase = "ERROR" if self.error else "STOPPED"
             handler.close()

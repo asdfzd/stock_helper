@@ -958,6 +958,24 @@ class LiveStockWindow(QMainWindow):
         self.tracking_button.setChecked(index == 1)
         self.log_button.setChecked(index in {2, 3})
 
+    @Slot(str)
+    def _on_radar_ticker_selected(self, ticker: str) -> None:
+        """Select an existing analysis card, or prepare the normal clipboard workflow."""
+        import re
+        symbol = ticker.strip().upper()
+        if not re.fullmatch(r"[A-Z0-9][A-Z0-9.\-]{0,15}", symbol):
+            return
+        card = self.cards_view.cards.get(symbol)
+        if card is not None:
+            self._show_page(0)
+            self.cards_view.ensureWidgetVisible(card)
+            self.status_label.setText(f"Market Radar 선택: {symbol} · 기존 분석 카드")
+        else:
+            QApplication.clipboard().setText(symbol)
+            self.status_label.setText(f"Market Radar 선택: {symbol} · 클립보드 준비 완료 · 기존 캡처 흐름으로 분석하세요.")
+        self.raise_()
+        self.activateWindow()
+
     @Slot()
     def _show_log_menu(self) -> None:
         position = self.log_button.mapToGlobal(QPoint(self.log_button.width() - 4, 0))

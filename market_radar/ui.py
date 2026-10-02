@@ -1,127 +1,435 @@
-from __future__ import annotations
-
-import queue
-import json
+"""Market Radar dashboard; IO runs on collector/service threads."""
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
+import json
+import queue
+import time
 
-from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import (
-    QFileDialog, QHBoxLayout, QLabel, QPushButton, QTableWidget,
-    QTableWidgetItem, QVBoxLayout, QWidget, QAbstractItemView,
-)
+from PySide6.QtCore import QSettings, QTimer, QUrl, Signal, Qt
+from PySide6.QtGui import QDesktopServices
+from PySide6.QtWidgets import (QApplication, QDoubleSpinBox, QFileDialog, QHBoxLayout,
+    QLabel, QLineEdit, QPushButton, QSpinBox, QSplitter, QTabWidget, QTextEdit, QVBoxLayout, QWidget)
 
-from .config import CONFIG
-from .provider import JsonlReplayProvider, create_live_provider
-from .runtime import RadarWorker
+from . import __version__
+from .config import CONFIG, DEFAULT_SHARED_CACHE_PATH
+from .controller import CollectorController
+from .dashboard_widgets import DataTable, LIVE_COLUMNS, HISTORY_COLUMNS, health_rows, live_rows, display
+from .models import ET
+from .provider import JsonlReplayProvider
+from .research.importer import import_session, live_health
+from .research.master_db import DEFAULT_MASTER_PATH, MasterDB
+from .research.review_export import create_review_zip
 
-COLUMNS = [
-    ("ticker", "Ticker"), ("price", "가격"), ("day_change_pct", "당일 %"),
-    ("volume", "거래량"), ("rvol", "RVOL"), ("return_1m", "1분 %"),
-    ("return_5m", "5분 %"), ("vwap", "VWAP"), ("price_vs_vwap_pct", "VWAP 거리 %"),
-    ("above_vwap", "VWAP 위/이하"), ("opening_1m_high", "OR1 High"),
-    ("opening_1m_low", "OR1 Low"), ("opening_5m_high", "OR5 High"),
-    ("opening_5m_low", "OR5 Low"), ("hod", "HOD"), ("hod_distance_pct", "HOD 거리 %"),
-    ("candidate_sources", "Sources"), ("bar_cutoff_et", "봉 기준 ET"),
-]
+COLUMNS = LIVE_COLUMNS
 
 
 class RadarPanel(QWidget):
-    def __init__(self, parent=None, config=None):
+    radar_ticker_selected = Signal(str)
+
+    def __init__(self, parent=None, config=None, *, master_path=DEFAULT_MASTER_PATH, settings=None):
         super().__init__(parent)
-        self.setWindowTitle("Market Radar · 연구 데이터 수집")
-        self.resize(1250, 700)
-        self.worker = None
         self.config = config
+        base = config or CONFIG
+        self.master = MasterDB(master_path)
+        self.controller = CollectorController(master_path)
+        self.settings = settings or QSettings("StockHelper", "MarketRadarDashboard")
+        self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="radar-research")
+        self.jobs = {}
+        self._health_at = 0
+        self._summary = {}
+        self._tracking = {}
+        self._selected_session = None
+        self._current_session = None
+        self._selection_generation = 0
+        self._history_offset = 0
+        self._closing = self.closed = False
+        self.setWindowTitle(f"Market Radar Dashboard · v{__version__}")
+        self.resize(1400, 850)
         layout = QVBoxLayout(self)
-        self.mode = QLabel("Kiwoom · 미연결 (시작 전) · 완료 1분 기준 RVOL · VWAP 미확정")
+        self.mode = QLabel(f"Market Radar v{__version__} · 미연결 · Collector v2.1 · research schema 4 · master schema 1")
         layout.addWidget(self.mode)
-        self.status = QLabel("수집 시작 시 .env의 Kiwoom real 인증으로 연결합니다. 주문 기능 없음.")
+        self.status = QLabel("STOPPED · Start Collection을 눌러 수집을 시작하세요.")
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
+        self.run_status = QLabel()
+        self.run_status.setWordWrap(True)
+        layout.addWidget(self.run_status)
+        self.cache_label = QLabel()
+        layout.addWidget(self.cache_label)
+        self.shutdown_label = QLabel()
+        layout.addWidget(self.shutdown_label)
+        controls = QHBoxLayout()
+        self.max_ws = QSpinBox()
+        self.max_ws.setRange(1, 200)
+        self.max_ws.setValue(base.max_ws_symbols if config else int(self.settings.value("max_ws", base.max_ws_symbols)))
+        self.data_root = QLineEdit(str(base.data_dir if config else self.settings.value("data_root", str(base.data_dir))))
+        self.grace = QDoubleSpinBox()
+        self.grace.setDecimals(3)
+        self.grace.setRange(0, 3600)
+        self.grace.setValue(base.result_pre_target_grace_seconds)
+        for label, widget in (("Max WS", self.max_ws), ("Data root", self.data_root), ("Pre-target grace (s)", self.grace)):
+            controls.addWidget(QLabel(label))
+            controls.addWidget(widget)
+        self.add_button(controls, "Browse", self.browse_root)
+        self.start_button = self.add_button(controls, "Start Collection", lambda: self.start())
+        self.stop_button = self.add_button(controls, "Stop Collection", self.stop)
+        layout.addLayout(controls)
         buttons = QHBoxLayout()
-        self.start_button = QPushButton("실제 수집 시작")
-        self.replay_button = QPushButton("기록 JSONL replay 열기")
-        self.stop_button = QPushButton("수집 중지")
-        buttons.addWidget(self.start_button)
-        buttons.addWidget(self.replay_button)
-        buttons.addWidget(self.stop_button)
+        self.replay_button = self.add_button(buttons, "Open Replay", self.open_replay)
+        for label, action in (("Import Existing Session", self.import_existing), ("Refresh", self.refresh),
+                ("Create Review ZIP", self.review), ("Open Session Folder", lambda: self.open_folder("data_dir")),
+                ("Open Export Folder", lambda: self.open_folder("export_path")),
+                ("Open Review ZIP Folder", lambda: self.open_folder("reviews"))):
+            self.add_button(buttons, label, action)
         layout.addLayout(buttons)
+        self.tabs = QTabWidget()
+        layout.addWidget(self.tabs)
+        live = QWidget()
+        live_layout = QHBoxLayout(live)
+        split = QSplitter(Qt.Orientation.Vertical)
         self.tables = []
-        for title in ("Current Leaders TOP 10 · 당일 등락률순", "Emerging Candidates TOP 10 · 최근 5분 수익률순"):
-            layout.addWidget(QLabel(title))
-            table = QTableWidget(0, len(COLUMNS))
-            table.setHorizontalHeaderLabels([label for _, label in COLUMNS])
-            table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-            layout.addWidget(table)
+        for title in ("Current Leaders · Day % descending", "Emerging Candidates · completed 1m return_5m descending"):
+            box = QWidget()
+            box_layout = QVBoxLayout(box)
+            box_layout.addWidget(QLabel(title))
+            table = DataTable(LIVE_COLUMNS)
+            table.cellDoubleClicked.connect(lambda row, col, t=table: self.select_ticker(t, row))
+            box_layout.addWidget(table)
+            split.addWidget(box)
             self.tables.append(table)
-        layout.addWidget(QLabel("— = unavailable · 수익률 기준시점이 없으면 NULL · HOD 거리=(가격/HOD−1)×100 · 범위는 공급원 universe"))
-        self.start_button.clicked.connect(lambda: self.start(create_live_provider(self.config or CONFIG)))
-        self.replay_button.clicked.connect(self.open_replay)
-        self.stop_button.clicked.connect(self.stop)
+        live_layout.addWidget(split, 4)
+        health_box = QWidget()
+        health_layout = QVBoxLayout(health_box)
+        self.health_label = QLabel("System Health · 운영/데이터 품질")
+        health_layout.addWidget(self.health_label)
+        self.health = DataTable((("metric", "Metric"), ("value", "Value")))
+        self.health.setColumnWidth(0, 185)
+        self.health.render_rows(health_rows({}, base.max_ws_symbols))
+        health_layout.addWidget(self.health)
+        live_layout.addWidget(health_box, 2)
+        self.tabs.addTab(live, "Live Radar")
+        history_box = QWidget()
+        history_layout = QVBoxLayout(history_box)
+        paging = QHBoxLayout()
+        self.page_label = QLabel("Sessions · 200 rows/page")
+        paging.addWidget(self.page_label)
+        for label, delta in (("Previous", -200), ("Next", 200)):
+            self.add_button(paging, label, lambda checked=False, n=delta: self.history_page(n))
+        history_layout.addLayout(paging)
+        self.history = DataTable(HISTORY_COLUMNS)
+        for i, width in enumerate((100, 70, 85, 85, 115, 150, 90, 75, 115)):
+            self.history.setColumnWidth(i, width)
+        self.history.itemSelectionChanged.connect(self.session_selected)
+        history_layout.addWidget(self.history)
+        self.details_tabs = QTabWidget()
+        self.candidates, self.results = DataTable(), DataTable()
+        self.candidates.cellDoubleClicked.connect(lambda row, col: self.select_ticker(self.candidates, row))
+        self.quality_text, self.source_text = QTextEdit(), QTextEdit()
+        self.quality_text.setReadOnly(True)
+        self.source_text.setReadOnly(True)
+        for widget, label in ((self.candidates, "Candidates"), (self.results, "Results"),
+                              (self.quality_text, "Quality"), (self.source_text, "Source files")):
+            self.details_tabs.addTab(widget, label)
+        history_layout.addWidget(self.details_tabs)
+        self.tabs.addTab(history_box, "Session History")
+        ticker_box = QWidget()
+        ticker_layout = QVBoxLayout(ticker_box)
+        ticker_controls = QHBoxLayout()
+        self.ticker = QLineEdit()
+        self.ticker.setPlaceholderText("Ticker · newest 1000 horizon rows")
+        self.ticker.returnPressed.connect(self.search_ticker)
+        ticker_controls.addWidget(self.ticker)
+        self.add_button(ticker_controls, "Candidate History", self.search_ticker)
+        self.add_button(ticker_controls, "Open in Stock Helper", self.analyze_ticker)
+        ticker_layout.addLayout(ticker_controls)
+        self.ticker_table = DataTable()
+        ticker_layout.addWidget(self.ticker_table)
+        self.tabs.addTab(ticker_box, "Candidate History")
+        layout.addWidget(QLabel("- = unavailable · 더블클릭: 종목 선택 · 새 수집은 data root 아래 별도 폴더 · 폴더/ZIP은 선택 세션 기준"))
+        geometry = self.settings.value("geometry")
+        if geometry:
+            self.restoreGeometry(geometry)
+        for i, table in enumerate([*self.tables, self.history]):
+            key = f"columns_{i}" if i < 2 else "history_columns_v2_2_1"
+            state = self.settings.value(key)
+            if state:
+                table.horizontalHeader().restoreState(state)
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.poll)
         self.timer.start(250)
+        QApplication.instance().aboutToQuit.connect(self.stop)
+        self.refresh()
+        self.poll()
 
-    def open_replay(self):
-        path, _ = QFileDialog.getOpenFileName(self, "기록 데이터 replay (실시간 아님)", "", "JSONL (*.jsonl)")
+    @staticmethod
+    def add_button(layout, label, action):
+        button = QPushButton(label)
+        button.clicked.connect(action)
+        layout.addWidget(button)
+        return button
+
+    @property
+    def worker(self):
+        return self.controller if self.controller.thread is not None else None
+
+    def submit(self, key, function, callback):
+        if key not in self.jobs and not self.closed:
+            self.jobs[key] = (self.executor.submit(function), callback)
+
+    def browse_root(self):
+        path = QFileDialog.getExistingDirectory(self, "Data root", self.data_root.text())
         if path:
-            self.start(JsonlReplayProvider(Path(path)))
+            self.data_root.setText(path)
 
-    def start(self, provider):
-        if self.worker and self.worker.running:
-            return
-        for table in self.tables:
-            table.setRowCount(0)
-        self.mode.setText("REPLAY · 기록/테스트 데이터 · 실시간 아님 · 별도 replay DB" if provider.mode == "replay"
-                          else f"LIVE provider: {provider.name} · 정규장" +
-                          (" · RVOL/return: 완료 1분 · VWAP 미확정" if provider.name == "kiwoom" else ""))
-        self.worker = RadarWorker(provider, self.config or CONFIG)
-        self.worker.start()
-        self.start_button.setEnabled(False)
-        self.replay_button.setEnabled(False)
-
-    def stop(self):
-        if self.worker:
-            self.worker.stop()
-            self.status.setText("중지 요청 · 작업 및 CSV export 종료 대기")
-
-    def poll(self):
-        if not self.worker:
+    def start(self, provider=None, *, fresh_directory=None):
+        if self.controller.busy:
             return
         try:
-            message = self.worker.messages.get_nowait()
-        except queue.Empty:
-            message = None
-        if message:
-            self.status.setText(message["status"])
-            if message["rows"] is not None:
-                self.render(message["rows"])
-        self.start_button.setEnabled(not self.worker.running)
-        self.replay_button.setEnabled(not self.worker.running)
+            base = self.config or CONFIG
+            config = base if provider and fresh_directory is None else replace(base, max_ws_symbols=self.max_ws.value(),
+                data_dir=Path(self.data_root.text()).expanduser().resolve(), result_pre_target_grace_seconds=self.grace.value())
+            self.controller.start(config, provider, fresh_directory=(provider is None if fresh_directory is None else fresh_directory))
+            for table in self.tables:
+                table.render_rows([])
+            self._summary = {}
+            self._tracking = {}
+            self._current_session = None
+            self.shutdown_label.clear()
+            self._selected_session = None
+            self.history.clearSelection()
+            self.status.setText("STARTING · 연결 및 session DB 준비 중")
+            self.mode.setText(("REPLAY · 기록/테스트 데이터" if provider else "LIVE · Kiwoom") + f" · {config.test_version}")
+            self.poll()
+        except (ValueError, OSError):
+            self.status.setText("설정 오류: 경로와 수집 설정을 확인하세요.")
+
+    def open_replay(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Replay", "", "JSONL (*.jsonl)")
+        if path:
+            self.start(JsonlReplayProvider(Path(path)), fresh_directory=True)
+
+    def stop(self):
+        self.controller.stop()
+
+    def refresh(self):
+        offset = self._history_offset
+        self.submit("history", lambda: self.master.sessions(offset=offset), self.render_history)
+        self._health_at = 0
+
+    def history_page(self, delta):
+        if "history" not in self.jobs:
+            self._history_offset = max(0, self._history_offset + delta)
+            self.refresh()
+
+    def render_history(self, rows):
+        selected = self._selected_session.get("id") if self._selected_session else None
+        self.history.blockSignals(True)
+        self.history.render_rows(rows)
+        self.history.blockSignals(False)
+        self.page_label.setText(f"Sessions {self._history_offset + 1}–{self._history_offset + len(rows)} · 200 rows/page")
+        if selected:
+            for i, row in enumerate(rows):
+                if row["id"] == selected:
+                    self.history.selectRow(i)
+                    break
+
+    def session_selected(self):
+        row = self.history.currentRow()
+        if row < 0 or not self.history.selectedItems():
+            self._selected_session = None
+            return
+        session = self.history.rows[row]
+        self._selected_session = session
+        self._selection_generation += 1
+        generation = self._selection_generation
+        self.submit(f"details_{generation}", lambda: self.master.details(session["id"]),
+            lambda value: self.render_details(value) if generation == self._selection_generation else None)
+
+    def render_details(self, data):
+        self.candidates.render_rows(data["candidates"], automatic_columns=True)
+        self.results.render_rows(data["results"], automatic_columns=True)
+        quality = data["quality"]
+        for row in quality:
+            row["summary_json"] = json.loads(row["summary_json"])
+        self.quality_text.setPlainText(json.dumps(quality, ensure_ascii=False, indent=2))
+        self.source_text.setPlainText(json.dumps(data["session"], ensure_ascii=False, indent=2))
+
+    def select_ticker(self, table, row):
+        ticker = table.rows[row].get("ticker")
+        if ticker:
+            self.ticker.setText(ticker)
+            self.search_ticker()
+            self.radar_ticker_selected.emit(ticker)
+
+    def analyze_ticker(self):
+        ticker = self.ticker.text().strip().upper()
+        if ticker:
+            self.radar_ticker_selected.emit(ticker)
+
+    def search_ticker(self):
+        ticker = self.ticker.text().strip().upper()
+        if ticker:
+            self.submit("ticker_" + ticker, lambda: self.master.ticker_history(ticker),
+                lambda rows: self.ticker_table.render_rows(rows, automatic_columns=True) if self.ticker.text().strip().upper() == ticker else None)
+            self.tabs.setCurrentIndex(2)
+
+    def import_existing(self):
+        path = QFileDialog.getExistingDirectory(self, "Import Existing Session · read-only", self.data_root.text())
+        if path:
+            self.status.setText("Master DB import 중…")
+            self.submit("import", lambda: import_session(path, self.master.path), self.import_done)
+
+    def import_done(self, rows):
+        self.status.setText(f"Master 등록/갱신 완료 · {len(rows)} session/day")
+        if rows and self.controller.worker:
+            sid = rows[-1]["id"]
+            self.submit("current_session", lambda: self.master.details(sid), self.remember_current_session)
+        self.refresh()
+
+    def remember_current_session(self, data):
+        if self.controller.worker and Path(data["session"]["source_db_path"]) == self.controller.worker.config.db_path.resolve():
+            self._current_session = data["session"]
+
+    def target_session(self):
+        if self._selected_session:
+            return dict(self._selected_session)
+        if self._current_session and not self.controller.busy:
+            return dict(self._current_session)
+        worker = self.controller.worker
+        if not worker:
+            raise ValueError("Session History에서 세션을 선택하세요.")
+        day = self._summary.get("session_date") or datetime.now(ET).date().isoformat()
+        return dict(data_dir=str(worker.config.data_dir), export_path=str(worker.config.data_dir / "export" / day),
+            log_path=str(worker.config.data_dir / "logs" / f"{day}.log"), session_date_et=day,
+            run_id=self.controller.lifecycle["run_id"], test_version=worker.config.test_version,
+            research_schema_version=4 if worker.provider.name == "kiwoom" else 1,
+            max_ws_symbols=worker.config.max_ws_symbols, clean_shutdown=self.controller.lifecycle.get("clean_shutdown"))
+
+    def review(self):
+        try:
+            session = self.target_session()
+        except ValueError as exc:
+            self.status.setText(str(exc))
+            return
+        self.status.setText("Review ZIP 생성/민감정보 검사 중…")
+        self.submit("zip", lambda: create_review_zip(session), lambda path: self.status.setText(f"Review ZIP 완료: {path}"))
+
+    def open_folder(self, key):
+        try:
+            session = self.target_session()
+            path = Path(session["data_dir"]) / "reviews" if key == "reviews" else Path(session[key])
+            if not path.is_dir() or not QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))):
+                self.status.setText("폴더가 아직 없거나 열 수 없습니다.")
+        except (ValueError, KeyError):
+            self.status.setText("Session History에서 세션을 선택하세요.")
 
     def render(self, rows):
-        for table, rank_key in zip(self.tables, ("current_leader_rank", "emerging_rank")):
-            selected = sorted((r for r in rows if r[rank_key] is not None and r[rank_key] <= 10), key=lambda r: r[rank_key])
-            table.setRowCount(len(selected))
-            for i, row in enumerate(selected):
-                for j, (key, _) in enumerate(COLUMNS):
-                    value = row.get(key)
-                    if key == "candidate_sources" and value:
-                        labels = {"day_change": "CHG", "5m_spike": "SPIKE", "volume": "VOL", "value": "VALUE"}
-                        value = "+".join(labels.get(s, s) for s in json.loads(value))
-                    text = "—" if value is None else ("위" if value else "이하") if key == "above_vwap" else f"{value:.4f}" if isinstance(value, float) else str(value)
-                    table.setItem(i, j, QTableWidgetItem(text))
+        rows = [dict(row, candidate_tracking_state=self._tracking.get(row["ticker"], row.get("candidate_tracking_state"))) for row in rows]
+        for table, key in zip(self.tables, ("current_leader_rank", "emerging_rank")):
+            table.render_rows(live_rows(rows, key))
+
+    def render_health(self, data):
+        self._summary = data["summary"]
+        self._tracking = {row["ticker"]: row.get("candidate_tracking_state") for row in data.get("rows", [])}
+        if data.get("rows"):
+            self.render(data["rows"])
+        self.health_label.setText(f"System Health · {data['day']} ET · {datetime.now().strftime('%H:%M:%S')}")
+        # Current connection is sampled separately; persisted gauges remain unchanged.
+
+    def poll(self):
+        worker = self.controller.worker
+        if worker:
+            try:
+                message = worker.messages.get_nowait()
+                status = message["status"]
+                if worker.error:
+                    status = ("다른 Kiwoom collector가 실행 중입니다. CLI/UI 수집 종료 후 다시 시작하세요."
+                              if "Another local Kiwoom collector" in worker.error else "Collector 오류 · 로컬 session 로그 확인")
+                self.status.setText(status)
+                if message["rows"] is not None:
+                    self.render(message["rows"])
+            except queue.Empty:
+                pass
+            if not self._closing and time.monotonic() >= self._health_at and worker.phase != "STARTING":
+                self._health_at = time.monotonic() + 5
+                path = worker.config.db_path
+                latest = worker.phase in {"STOPPED", "ERROR"}
+                self.submit("health", lambda: live_health(path, latest_session=latest),
+                    lambda data: self.render_health(data) if self.controller.worker is worker else None)
+        while not self.controller.events.empty():
+            kind, value = self.controller.events.get_nowait()
+            if kind == "imported":
+                self.import_done(value)
+            elif kind == "collector_finished" and worker and worker.error:
+                pass
+            else:
+                self.status.setText(str(value))
+        for key, (future, callback) in list(self.jobs.items()):
+            if future.done():
+                del self.jobs[key]
+                try:
+                    callback(future.result())
+                except Exception as exc:
+                    if key == "health":
+                        self.health_label.setText("System Health · 갱신 대기/읽기 오류 · 마지막 표시값")
+                    else:
+                        self.status.setText(f"{key} 작업 실패 ({type(exc).__name__}) · 원본/권한/민감정보를 확인하고 재시도하세요.")
+        busy = self.controller.busy
+        self.start_button.setEnabled(not busy)
+        self.replay_button.setEnabled(not busy)
+        self.stop_button.setEnabled(busy and self.controller.state in ("STARTING", "RUNNING"))
+        for widget in (self.max_ws, self.data_root, self.grace):
+            widget.setEnabled(not busy)
+        elapsed = time.monotonic() - self.controller.started_monotonic if busy and self.controller.started_monotonic else None
+        tracking = self._summary.get("tracking", {})
+        config = worker.config if worker else (self.config or CONFIG)
+        config = self.controller.config if not worker and self.controller.config else config
+        values = health_rows(self._summary, config.max_ws_symbols, state=self.controller.state, connection=self.controller.connection)
+        self.health.render_rows(values)
+        current = {r["metric"]: r["value"] for r in values}
+        self.run_status.setText(f"{self.controller.state} · {config.test_version} · {datetime.now(ET).date()} ET · "
+            f"elapsed {display(elapsed)} s · Max WS {config.max_ws_symbols} · Current Active WS {display(current['Current Active WS'])} · "
+            f"Current Connected {display(current['Current Connected'])} · "
+            f"Last Active {display(tracking.get('active_subscription_count'))} · Last Saturation {display(tracking.get('slot_saturation_pct'))}% · {config.data_dir}")
+        cache_path = config.cache_path if self.controller.config or config.historical_cache_path else DEFAULT_SHARED_CACHE_PATH
+        replay = worker is not None and worker.provider.mode == "replay"
+        self.cache_label.setText("Historical Cache: not used (REPLAY)" if replay else f"Historical Cache: {cache_path.parent.name}/{cache_path.name} · 전체 경로: tooltip")
+        self.cache_label.setToolTip("" if replay else str(cache_path.resolve()))
+        if self.controller.state == "STOPPED" and self.controller.lifecycle.get("clean_shutdown"):
+            self.shutdown_label.setText(f"Stopped cleanly · shutdown {display(self.controller.lifecycle.get('shutdown_elapsed_ms'))} ms (final CSV/첫 quality export까지)")
+        if self._closing and not busy and not self.jobs:
+            self._closing = False
+            self.close()
 
     def closeEvent(self, event):
         self.stop()
+        self.settings.setValue("max_ws", self.max_ws.value())
+        self.settings.setValue("data_root", self.data_root.text())
+        self.settings.setValue("geometry", self.saveGeometry())
+        for i, table in enumerate([*self.tables, self.history]):
+            key = f"columns_{i}" if i < 2 else "history_columns_v2_2_1"
+            self.settings.setValue(key, table.horizontalHeader().saveState())
+        if self.controller.busy:
+            self._closing = True
+            self.status.setText("STOPPING · 정상 종료/export/Master 작업 완료 후 닫습니다.")
+            event.ignore()
+            return
+        self.timer.stop()
+        self.closed = True
+        self.executor.shutdown(wait=False)
         super().closeEvent(event)
 
 
 def show_radar(owner):
-    # Import/create only when requested; OCR startup does not initialize Radar.
     panel = getattr(owner, "_market_radar_panel", None)
-    if panel is None:
+    if panel is None or panel.closed:
+        if panel is not None:
+            panel.deleteLater()
         panel = RadarPanel()
+        if hasattr(owner, "_on_radar_ticker_selected"):
+            panel.radar_ticker_selected.connect(owner._on_radar_ticker_selected)
         owner._market_radar_panel = panel
     panel.show()
     panel.raise_()

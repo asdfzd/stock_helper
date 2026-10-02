@@ -372,7 +372,9 @@ class RuntimeTests(unittest.TestCase):
                 raise StopIteration
         app = QApplication.instance() or QApplication([])
         with tempfile.TemporaryDirectory() as directory:
-            panel = RadarPanel()
+            from PySide6.QtCore import QSettings
+            panel = RadarPanel(master_path=Path(directory)/"master.db",
+                settings=QSettings(str(Path(directory)/"ui.ini"), QSettings.Format.IniFormat))
             ticks = []
             timer = QTimer()
             timer.timeout.connect(lambda: ticks.append(1))

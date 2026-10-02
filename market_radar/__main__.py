@@ -16,6 +16,8 @@ def main():
     parser.add_argument("--fast", action="store_true", help="Replay without wall-clock delays")
     parser.add_argument("--collect", action="store_true", help="Headless collection; requires configured provider")
     parser.add_argument("--data-dir", type=Path, default=CONFIG.data_dir)
+    parser.add_argument("--cache-path", type=Path, default=None,
+                        help="Explicit historical SQLite cache; omitted CLI default stays under --data-dir")
     parser.add_argument("--provider", choices=("kiwoom", "unconfigured"), default=CONFIG.provider)
     parser.add_argument("--max-ws-symbols", type=int, default=CONFIG.max_ws_symbols)
     parser.add_argument("--rvol-backfill-min-day-volume", type=float, default=CONFIG.rvol_backfill_min_day_volume)
@@ -23,7 +25,8 @@ def main():
     parser.add_argument("--result-pre-target-grace-seconds", type=float, default=CONFIG.result_pre_target_grace_seconds)
     parser.add_argument("--disable-rvol-backfill", action="store_true")
     args = parser.parse_args()
-    config = replace(CONFIG, data_dir=args.data_dir, provider=args.provider, max_ws_symbols=args.max_ws_symbols,
+    config = replace(CONFIG, data_dir=args.data_dir, historical_cache_path=args.cache_path,
+                     provider=args.provider, max_ws_symbols=args.max_ws_symbols,
                      rvol_backfill_min_day_volume=args.rvol_backfill_min_day_volume,
                      rvol_backfill_min_price=args.rvol_backfill_min_price,
                      rvol_backfill_enabled=not args.disable_rvol_backfill,
