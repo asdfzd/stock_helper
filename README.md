@@ -33,7 +33,7 @@
 
 | 구분 | 현재 값 |
 |---|---|
-| Market Radar 앱 버전 | **v2.2.1** (Dashboard / persistent cache) |
+| Market Radar 앱 버전 | **v2.2.2** (Dashboard / regular-session scheduling) |
 | Collector 연구 버전 | **v2.1** |
 | test_version | `kiwoom_radar_v2_1` |
 | Research schema | **4** |
@@ -47,11 +47,14 @@
 - graceful Ctrl+C shutdown과 최종 export
 - REST deterministic failure suppression 및 결과 샘플 감사 정보
 - Dashboard Start/Stop, System Health, Session History, 종목별 결과 조회
+- Manual / Regular Session / Capacity Test: XNYS 개장 준비·자동 시작·graceful 종료와 protocol 기록
 - 읽기 전용 과거 세션 import, 별도 Master Research DB, 검수용 Review ZIP
 
 20/50에 이어 실제 100-slot 세션도 saturation 100%에 도달했습니다. 다음 사용자 capacity 검증은 **150 slots**입니다. 기존 CONFIG/저장된 설정은 유지하며 150/200을 최적값으로 자동 선택하지 않습니다. 200은 공식 상한입니다. 기존 테스트·실제 검증의 범위와 제한은 [현재 개발 상태](CODEX_HANDOFF.md), 버전별 근거는 [CHANGELOG](CHANGELOG.md)를 참고하세요.
 
 ## 문서 안내
+
+다음 150-slot 테스트는 Dashboard에서 **Capacity Test / Max WS 150**을 선택하고 **공식 개장 전에 Start Collection**으로 arm합니다. 개장 후 자동 시작하고 open+65분에 자동 종료합니다. 기존 20/50/100은 saturation 증거이며 새로운 표준 통제 비교로 소급 지정하지 않습니다. Regular Session은 공식 close(조기폐장 포함)에 종료하며 장중 시작은 비준수로 기록합니다. 자세한 실행 기준은 [TEST_PROTOCOL](TEST_PROTOCOL.md)을 따릅니다.
 
 - [Market Radar 기술 문서](market_radar/README.md): provider·지표·추적·품질·CLI·제한
 - [CHANGELOG.md](CHANGELOG.md): 영구 버전별 개발·검증 이력

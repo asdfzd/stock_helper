@@ -97,6 +97,7 @@ def daily_summary(store, day):
         sources.update(mapping[s] for s in values if s in mapping)
         sources["multi_source"] += len(values) > 1
     identity = json.loads(db.execute("SELECT value FROM radar_metadata WHERE key='identity'").fetchone()[0])
+    protocol = db.execute("SELECT value FROM radar_metadata WHERE key='collection_protocol'").fetchone()
     from datetime import timedelta
     from .models import utc
     start = datetime.fromisoformat(day).replace(tzinfo=ET)
@@ -142,6 +143,7 @@ def daily_summary(store, day):
         "result_sampling": {"pre_target_grace_used_count": sampling.get('pre_target_grace', 0),
                             "post_target_count": sampling.get('post_target', 0)},
         "quality_summary_version": 2 if store.schema_version >= 4 else 1,
+        **({"collection_protocol": json.loads(protocol[0])} if protocol else {}),
         "candidate_sources": dict(sources), "symbol_types": dict(types),
         "count_basis": {"sources_types": "unique daily discoveries; source union, latest official type",
             "market_data": "event counts; subscriptions count acknowledged symbols", "rvol_returns": "snapshot rows",

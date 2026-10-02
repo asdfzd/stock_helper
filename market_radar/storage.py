@@ -154,6 +154,9 @@ class RadarStore:
                 writer.writerows(cursor)
             os.replace(temporary, folder / f"{name}.csv")
         identity = self.db.execute("SELECT value FROM radar_metadata WHERE key='identity'").fetchone()[0]
+        protocol = self.db.execute("SELECT value FROM radar_metadata WHERE key='collection_protocol'").fetchone()
+        if protocol:
+            identity = json.dumps(dict(json.loads(identity), collection_protocol=json.loads(protocol[0])))
         temporary = folder / "metadata.json.tmp"
         temporary.write_text(identity, encoding="utf-8")
         os.replace(temporary, folder / "metadata.json")
@@ -169,6 +172,9 @@ class RadarStore:
         if self.schema_version >= 3:
             query += " UNION SELECT session_date FROM radar_discoveries UNION SELECT session_date FROM quality_counters"
         days = [r[0] for r in self.db.execute(query + " ORDER BY 1")]
+        protocol = self.db.execute("SELECT value FROM radar_metadata WHERE key='collection_protocol'").fetchone()
+        if protocol:
+            days = sorted(set(days) | {json.loads(protocol[0])["session_date_et"]})
         return [self.export_day(day, root) for day in days]
 
     def close(self):

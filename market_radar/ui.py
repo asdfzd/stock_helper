@@ -1,7 +1,7 @@
 """Market Radar dashboard; IO runs on collector/service threads."""
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 import json
 import queue
@@ -10,13 +10,14 @@ import time
 from PySide6.QtCore import QSettings, QTimer, QUrl, Signal, Qt
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (QApplication, QDoubleSpinBox, QFileDialog, QHBoxLayout,
-    QLabel, QLineEdit, QPushButton, QSpinBox, QSplitter, QTabWidget, QTextEdit, QVBoxLayout, QWidget)
+    QLabel, QLineEdit, QPushButton, QSpinBox, QSplitter, QTabWidget, QTextEdit, QVBoxLayout, QWidget, QComboBox)
 
 from . import __version__
 from .config import CONFIG, DEFAULT_SHARED_CACHE_PATH
 from .controller import CollectorController
 from .dashboard_widgets import DataTable, LIVE_COLUMNS, HISTORY_COLUMNS, health_rows, live_rows, display
-from .models import ET
+from .models import ET, instant
+from .scheduling import MODES
 from .provider import JsonlReplayProvider
 from .research.importer import import_session, live_health
 from .research.master_db import DEFAULT_MASTER_PATH, MasterDB
@@ -60,7 +61,15 @@ class RadarPanel(QWidget):
         layout.addWidget(self.cache_label)
         self.shutdown_label = QLabel()
         layout.addWidget(self.shutdown_label)
+        self.schedule_label = QLabel("Session: STOPPED · Manual")
+        self.schedule_label.setWordWrap(True)
+        layout.addWidget(self.schedule_label)
         controls = QHBoxLayout()
+        self.collection_mode = QComboBox()
+        self.collection_mode.addItems(MODES)
+        self.collection_mode.setCurrentText(base.collection_mode)
+        controls.addWidget(QLabel("Collection Mode"))
+        controls.addWidget(self.collection_mode)
         self.max_ws = QSpinBox()
         self.max_ws.setRange(1, 200)
         self.max_ws.setValue(base.max_ws_symbols if config else int(self.settings.value("max_ws", base.max_ws_symbols)))
@@ -152,7 +161,7 @@ class RadarPanel(QWidget):
         if geometry:
             self.restoreGeometry(geometry)
         for i, table in enumerate([*self.tables, self.history]):
-            key = f"columns_{i}" if i < 2 else "history_columns_v2_2_1"
+            key = f"columns_{i}" if i < 2 else "history_columns_v2_2_2"
             state = self.settings.value(key)
             if state:
                 table.horizontalHeader().restoreState(state)
@@ -189,7 +198,8 @@ class RadarPanel(QWidget):
         try:
             base = self.config or CONFIG
             config = base if provider and fresh_directory is None else replace(base, max_ws_symbols=self.max_ws.value(),
-                data_dir=Path(self.data_root.text()).expanduser().resolve(), result_pre_target_grace_seconds=self.grace.value())
+                data_dir=Path(self.data_root.text()).expanduser().resolve(), result_pre_target_grace_seconds=self.grace.value(),
+                collection_mode=self.collection_mode.currentText() if provider is None else "Manual")
             self.controller.start(config, provider, fresh_directory=(provider is None if fresh_directory is None else fresh_directory))
             for table in self.tables:
                 table.render_rows([])
@@ -202,7 +212,9 @@ class RadarPanel(QWidget):
             self.status.setText("STARTING · 연결 및 session DB 준비 중")
             self.mode.setText(("REPLAY · 기록/테스트 데이터" if provider else "LIVE · Kiwoom") + f" · {config.test_version}")
             self.poll()
-        except (ValueError, OSError):
+        except ValueError as exc:
+            self.status.setText(str(exc))
+        except OSError:
             self.status.setText("설정 오류: 경로와 수집 설정을 확인하세요.")
 
     def open_replay(self):
@@ -380,7 +392,7 @@ class RadarPanel(QWidget):
         self.start_button.setEnabled(not busy)
         self.replay_button.setEnabled(not busy)
         self.stop_button.setEnabled(busy and self.controller.state in ("STARTING", "RUNNING"))
-        for widget in (self.max_ws, self.data_root, self.grace):
+        for widget in (self.max_ws, self.data_root, self.grace, self.collection_mode):
             widget.setEnabled(not busy)
         elapsed = time.monotonic() - self.controller.started_monotonic if busy and self.controller.started_monotonic else None
         tracking = self._summary.get("tracking", {})
@@ -397,6 +409,18 @@ class RadarPanel(QWidget):
         replay = worker is not None and worker.provider.mode == "replay"
         self.cache_label.setText("Historical Cache: not used (REPLAY)" if replay else f"Historical Cache: {cache_path.parent.name}/{cache_path.name} · 전체 경로: tooltip")
         self.cache_label.setToolTip("" if replay else str(cache_path.resolve()))
+        schedule = self.controller.schedule
+        if schedule:
+            p = schedule.snapshot()
+            target = p["scheduled_stop"] if p["actual_start"] else p["scheduled_start"]
+            remaining = max(0, (instant(target) - schedule.clock.now()).total_seconds()) if target else None
+            countdown = str(timedelta(seconds=int(remaining))) if remaining is not None else "-"
+            protocol_status = ("COMPLIANT" if p["protocol_compliant"] else
+                               "IN PROGRESS" if p["protocol_reason"] == "in_progress" else "NON-COMPLIANT")
+            self.schedule_label.setText(f"{p['collection_mode']} · Session {self.controller.session_phase} · Collector {self.controller.state} · "
+                f"XNYS {p['session_date_et']} · Open {p['scheduled_open_et']} · Close {p['scheduled_close_et']} · Countdown {countdown}\n"
+                f"Scheduled UTC {p['scheduled_start']} → {p['scheduled_stop']} · Actual {p['actual_start']} → {p['actual_stop']} · "
+                f"Start delay {display(p['start_delay_ms'])} ms · Protocol {protocol_status} ({p['protocol_reason']})")
         if self.controller.state == "STOPPED" and self.controller.lifecycle.get("clean_shutdown"):
             self.shutdown_label.setText(f"Stopped cleanly · shutdown {display(self.controller.lifecycle.get('shutdown_elapsed_ms'))} ms (final CSV/첫 quality export까지)")
         if self._closing and not busy and not self.jobs:
@@ -409,7 +433,7 @@ class RadarPanel(QWidget):
         self.settings.setValue("data_root", self.data_root.text())
         self.settings.setValue("geometry", self.saveGeometry())
         for i, table in enumerate([*self.tables, self.history]):
-            key = f"columns_{i}" if i < 2 else "history_columns_v2_2_1"
+            key = f"columns_{i}" if i < 2 else "history_columns_v2_2_2"
             self.settings.setValue(key, table.horizontalHeader().saveState())
         if self.controller.busy:
             self._closing = True

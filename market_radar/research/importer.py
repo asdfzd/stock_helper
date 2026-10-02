@@ -32,7 +32,11 @@ def source_days(db, version):
     query = "SELECT session_date FROM radar_snapshots UNION SELECT session_date FROM radar_candidates"
     if version >= 3:
         query += " UNION SELECT session_date FROM radar_discoveries UNION SELECT session_date FROM quality_counters"
-    return [r[0] for r in db.execute(query + " ORDER BY 1")]
+    days = {r[0] for r in db.execute(query + " ORDER BY 1")}
+    protocol = db.execute("SELECT value FROM radar_metadata WHERE key='collection_protocol'").fetchone()
+    if protocol:
+        days.add(json.loads(protocol[0])["session_date_et"])
+    return sorted(days)
 
 
 def summarize(db, version, day):
@@ -79,6 +83,8 @@ def import_session(source, master_path, *, lifecycle=None):
                 run_id = hashlib.sha256((origin + "|" + day).encode()).hexdigest()[:32]
                 prior = dst.execute("SELECT id FROM sessions WHERE run_id=?", (run_id,)).fetchone()
                 q = summarize(src, version, day)
+                if lifecycle.get("collection_protocol"):
+                    q["collection_protocol"] = lifecycle["collection_protocol"]
                 observed = src.execute("SELECT MIN(timestamp_utc),MAX(timestamp_utc) FROM radar_snapshots WHERE session_date=?", (day,)).fetchone()
                 start, stop = lifecycle.get("started_at") or observed[0], lifecycle.get("stopped_at") or observed[1]
                 duration = (instant(stop)-instant(start)).total_seconds() if start and stop else None

@@ -74,6 +74,37 @@ class KiwoomProvider:
         self._closed = False
         self.shutdown_started = None
         self.cancelled_backfill_tasks = 0
+        self.collection_schedule = None
+        self._prepare_cursor = 0
+        self._prepare_catalog = 0
+
+    def _regular_allowed(self):
+        return self.collection_schedule is None or self.collection_schedule.allows_research()
+
+    def _preopen_step(self, now):
+        """One serialized preparation request at a time; no candidate queries or WS REG."""
+        schedule = self.collection_schedule
+        # Reserve the last 15 seconds for open; an in-flight slow request may still delay discovery.
+        if schedule.open is None or (schedule.open - now).total_seconds() <= 15:
+            return
+        if self._prepare_catalog < 3:
+            exchange = ("ND", "NY", "NA")[self._prepare_catalog]
+            payload, _, received = self.rest.request("usa10099", {"stex_tp": exchange})
+            self.cache.put_catalog(payload.get("list", []), received)
+            self.catalog = self.cache.catalog()
+            self._prepare_catalog += 1
+            return
+        symbols = sorted(self.catalog.items())
+        if not symbols or not self.config.rvol_backfill_enabled:
+            return
+        ticker, row = symbols[self._prepare_cursor % len(symbols)]
+        self._prepare_cursor += 1
+        if not self.backfill_eligible(ticker):
+            return
+        for prior in self.calendar.history(schedule.data["session_date_et"], self.config.rvol_lookback_days):
+            if not self.cache.is_complete(ticker, row["exchange"], prior.date):
+                self._chart_step(ticker, row["exchange"], prior, True, now)
+                break
 
     def set_result_tracking(self, protected):
         with self.lock:
@@ -167,6 +198,11 @@ class KiwoomProvider:
 
     def _refresh_universe(self):
         self._check_stop()
+        if not self._regular_allowed():
+            return
+        if self.collection_schedule:
+            with self.collection_schedule.lock:
+                self.collection_schedule.data.setdefault("first_candidate_refresh_utc", utc(datetime.now(timezone.utc)))
         pages = []
         for source, api_id in SOURCES.items():
             self._check_stop()
@@ -178,6 +214,8 @@ class KiwoomProvider:
             cursor, offset = None, 0
             for _ in range(self.config.candidate_pages):
                 self._check_stop()
+                if not self._regular_allowed():
+                    return
                 payload, next_cursor, received = self.rest.request(api_id, body, cursor)
                 rows = payload.get("result_list", [])
                 pages.append((source, rows, received, offset))
@@ -186,6 +224,8 @@ class KiwoomProvider:
                     break
                 cursor = next_cursor
         candidates = merge_candidates(pages, self.catalog, self.config.stock_type_policy)
+        if not self._regular_allowed():
+            return
         with self.lock:
             self.candidates = candidates  # all 4 sources succeeded; partial failure never replaces universe
             self.universe_at = datetime.now(timezone.utc)
@@ -256,7 +296,13 @@ class KiwoomProvider:
             try:
                 now = datetime.now(timezone.utc)
                 day = now.astimezone(ET).date().isoformat()
-                if time.monotonic() >= catalog_at:
+                if not self._regular_allowed():
+                    self._preopen_step(now)
+                    self._flush_raw()
+                    self.stop_event.wait(.05)
+                    continue
+                # The first scheduled action after the gate opens is a fresh regular universe.
+                if time.monotonic() >= catalog_at and not (self.collection_schedule and self.universe_at is None):
                     for exchange in ("ND", "NY", "NA"):
                         self._check_stop()
                         payload, _, received = self.rest.request("usa10099", {"stex_tp": exchange})
@@ -265,6 +311,8 @@ class KiwoomProvider:
                     catalog_at = time.monotonic()+86400
                 self._check_stop()
                 if time.monotonic() >= refresh_at:
+                    if not self._regular_allowed():
+                        continue
                     self._refresh_universe()
                     refresh_at = time.monotonic()+self.config.candidate_refresh_seconds
                 with self.lock:
@@ -331,6 +379,8 @@ class KiwoomProvider:
                 self.stop_event.wait(5)
 
     def fetch(self, tracked_tickers=()):
+        if not self._regular_allowed():
+            raise UniverseWarmingUp("Waiting for regular session")
         now = datetime.now(timezone.utc)
         stamp, day = utc(now), now.astimezone(ET).date().isoformat()
         with self.lock:

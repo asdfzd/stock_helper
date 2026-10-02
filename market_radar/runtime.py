@@ -36,7 +36,7 @@ class DailyLogHandler(logging.Handler):
 
 class RadarWorker:
     """All provider IO, calculations, SQLite and CSV operations stay off Qt."""
-    def __init__(self, provider: MarketDataProvider, config: RadarConfig, *, fast_replay=False):
+    def __init__(self, provider: MarketDataProvider, config: RadarConfig, *, fast_replay=False, schedule=None):
         if provider.mode not in {"live", "replay"}:
             raise ValueError("Provider must identify live/replay mode")
         self.provider = provider
@@ -55,6 +55,17 @@ class RadarWorker:
         self.shutdown_requested_utc = None
         self.shutdown_elapsed_ms = None
         self.phase = "STOPPED"
+        self.schedule = schedule
+
+    def _persist_protocol(self, store):
+        if self.schedule:
+            import json
+            store.db.execute("INSERT OR REPLACE INTO radar_metadata VALUES('collection_protocol',?)",
+                             (json.dumps(self.schedule.snapshot()),))
+            store.db.commit()
+
+    def _now(self):
+        return self.schedule.clock.now() if self.schedule else datetime.now(timezone.utc)
 
     @property
     def running(self):
@@ -70,6 +81,8 @@ class RadarWorker:
         self.thread.start()
 
     def stop(self, reason='stop'):
+        if self.schedule:
+            self.schedule.stop(reason)
         first = not self.stop_event.is_set()
         if first:
             self.shutdown_started = time.monotonic()
@@ -140,17 +153,28 @@ class RadarWorker:
                 identity.update(result_pre_target_grace_seconds=self.config.result_pre_target_grace_seconds,
                                 rest_negative_ttl_seconds=self.config.rest_negative_ttl_seconds)
             store = RadarStore(self.config.db_path, identity)
+            self._persist_protocol(store)
             engine = RadarEngine(store, self.config, self.provider.name, self.provider.mode)
             self.phase = "RUNNING"
             next_export = time.monotonic() + self.config.export_seconds
             while not self.stop_event.is_set():
+                if self.schedule and not self.schedule.allows_research():
+                    self.stop_event.wait(.05)
+                    continue
                 started = time.monotonic()
                 wait = self.config.snapshot_seconds
                 try:
                     if hasattr(self.provider, "set_result_tracking"):
-                        self.provider.set_result_tracking(store.protected_tracking(utc(datetime.now(timezone.utc))))
+                        self.provider.set_result_tracking(store.protected_tracking(utc(self._now())))
                     batch = self.provider.fetch(store.tracked_tickers())
-                    now = datetime.now(timezone.utc)
+                    if self.schedule and not self.schedule.allows_research(batch.timestamp_utc):
+                        continue
+                    if self.schedule:
+                        with self.schedule.lock:
+                            if self.schedule.data["first_regular_batch_utc"] is None:
+                                self.schedule.data["first_regular_batch_utc"] = batch.timestamp_utc
+                        self._persist_protocol(store)
+                    now = self._now()
                     delay = (now - instant(batch.timestamp_utc)).total_seconds()
                     if self.provider.mode == "live" and (delay > self.config.max_data_delay_seconds or delay < -5):
                         logger.warning("data_delay seconds=%.1f batch=%s", delay, batch.timestamp_utc)
@@ -219,6 +243,7 @@ class RadarWorker:
                 self.error = final_status = "Provider 종료 실패: runtime 로그 확인 필요"
             if store:
                 try:
+                    self._persist_protocol(store)
                     logger.info('shutdown_export_start elapsed_ms=%.3f', self._shutdown_elapsed())
                     store.db.commit()
                     store.db.execute('PRAGMA wal_checkpoint(PASSIVE)')

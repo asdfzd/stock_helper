@@ -4,6 +4,32 @@
 
 날짜는 확인된 Git commit 날짜와 실제 검증 시각을 구분한다. 별도 릴리스 날짜·commit이 확인되지 않은 단계는 임의로 채우지 않는다. 프로그램 버전과 research schema 버전은 별개다. 아래 Known limitations는 각 버전 당시의 상태이며 이후 해결 여부는 다음 버전을 참조한다. 로컬 data 경로는 증거 위치이며 Git에 포함하지 않는다. 공용 tests_summary.json은 후속 실행으로 갱신되므로 과거 테스트 수는 당시 commit의 문서 기록을 근거로 한다.
 
+## Market Radar v2.2.2 — XNYS scheduled collection
+
+개발: 2026-10-03 KST, 이번 변경 미커밋. 기반 HEAD `faedfa2`에 이전 Dashboard/shared storage 작업이 보존되어 있다. **앱 v2.2.2 / Collector v2.1 / kiwoom_radar_v2_1 / research schema 4 / Master schema 1**. ranking/RVOL/NULL/보호 추적/주문·계좌 범위는 변경하지 않았다.
+
+### Changed
+
+- Manual / Regular Session / Capacity Test 선택, 별도 ARMED/PREPARING/PREOPEN_WAIT/REGULAR_LIVE/FINALIZING/STOPPED/ERROR session state를 추가했다. collector state는 별도로 표시한다.
+- 기존 XNYS ExchangeCalendar로 휴일/주말/DST/조기폐장을 처리한다. preopen_prepare_minutes 기본 30, 공식 open에 gate 개방, Capacity open+65분/Regular 공식 close에 자동 graceful stop한다.
+- 개장 전 auth/WS LOGIN/catalog/type/과거 backfill을 허용하고 provider source refresh/배정 및 worker 연구 저장을 차단한다. 개장 후 새 universe부터 시작하며 actual gate/source refresh/first batch 시각을 구분한다. incomplete cache는 시작을 지연시키지 않는다.
+- Capacity 장중 arm 거부, Regular late 시작 허용+비준수, 사용자 stop/clock jump/resume/연결 지연/종료 지연 사유를 기록한다. 운영 tolerance와 판단 기준을 TEST_PROTOCOL.md에 고정했다. 마지막 15초 새 준비 요청 보류는 진행 요청 완료를 보장하지 않으므로 실제 source refresh 지연도 공개한다.
+- collection_protocol을 lifecycle/research metadata/quality/export metadata/ZIP manifest에 저장한다. Master quality.summary_json과 기존 schema 1을 사용하며 legacy unknown을 유지하고 ALTER하지 않는다. FINALIZING은 최종 export와 Master import까지 유지한다. import 오류는 수집 성공 여부와 별도로 표시한다.
+- Session History에 mode/compliant/scheduled·actual/delay/reason을 추가했다. Current/Last health와 shared cache/session 분리를 유지한다. 한 arm은 한 거래일이며 주간 자동 반복/절전 깨우기/다중 슬롯 offline replay는 추가하지 않았다.
+
+### Protocol / evidence interpretation
+
+- [TEST_PROTOCOL](TEST_PROTOCOL.md)에 Capacity v1과 Weekly Research Collection을 고정했다. 비준수/Manual/late 자료는 진단용이며 정량 capacity 비교에서 제외한다.
+- 기존 **20/50/100-slot saturation 증거는 유지**한다. 서로 다른 거래일/구간/시작 시각의 자료를 새 표준 프로토콜의 완전 통제 비교로 소급 지정하지 않는다. 특히 100-slot은 13:37:50 UTC 시작으로 새 Capacity 기준에 맞지 않는다. 기존 원본/지표/결과를 수정하지 않았다.
+- 다음 실제 실행은 **Capacity Test / Max WS 150 / preopen arm → official open → +65분 자동 종료**다. CLI Manual 실행을 표준 Capacity로 안내하지 않는다. 150/200을 최적값으로 채택하지 않았다.
+
+### Validation
+
+- 최종 전체 회귀 **233 통과 / 실패 suite 0**. 근거는 `data/kiwoom_provider_validation/tests_summary.json`과 suite 로그다. 기존 207 단위와 신규 schedule 26개(가짜 시계/합성 live provider/임시 DB/offscreen UI)를 실행했다. OCR 초기화/Registry/벽/Toss/halt/CLI/replay/계산/보호/샘플링/REST/ZIP/cache 회귀를 포함한다.
+- 신규 검증은 주말/휴일/DST/조기폐장, preopen 빈 연구 테이블, 개장 후 새 source/최초 포착, 자동 종료, late 거부/기록, connection 지연, clock jump/resume, user stop, 준비 중 취소, FINALIZING/Master, schema 1 호환, metadata/quality/ZIP 일치, UI WAIT health다. 실제 네트워크/장중 실행을 검증한 뜻은 아니다.
+- 기존 evidence/운영 Master **38개 파일 SHA256 전후 동일**. `.env` 수정 없음. git diff --check/변경 범위/문서 링크/버전/비밀정보 패턴 점검을 완료했다. add/commit/push하지 않았다.
+- **이번 작업에서 live smoke/150-slot 실장 수집은 실행하지 않았다.** 실제 시간 정확도·개장 REST/WS 지연·cache coverage 축적은 다음 사용자 실행에서 확인한다.
+
 ## Market Radar v2.2.1 — Persistent cache / Current vs Last Health
 
 개발·read-only 감사: 2026-10-03 KST, 미커밋. 앱 **v2.2.1**, Collector v2.1 / test_version=`kiwoom_radar_v2_1` / research schema=4 / master schema=1 / OHLCV schema=1 유지.

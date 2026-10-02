@@ -1,6 +1,7 @@
 from contextlib import closing
 from pathlib import Path
 import sqlite3
+import json
 
 from runtime_paths import APP_ROOT
 
@@ -72,10 +73,15 @@ class MasterDB:
 
     def sessions(self, limit=200, offset=0):
         with closing(self.connect()) as db:
-            return [dict(r) for r in db.execute("""SELECT s.*,q.*,
+            rows = [dict(r) for r in db.execute("""SELECT s.*,q.*,
                 (SELECT COUNT(*) FROM results r WHERE r.session_id=s.id AND r.status='missing') missing_results
                 FROM sessions s LEFT JOIN quality q ON q.session_id=s.id
                 ORDER BY session_date_et DESC,s.id DESC LIMIT ? OFFSET ?""", (limit, offset))]
+            for row in rows:
+                protocol = json.loads(row.get("summary_json") or "{}").get("collection_protocol", {})
+                row.update({key: protocol.get(key) for key in ("collection_mode", "protocol_compliant",
+                    "protocol_reason", "scheduled_start", "actual_start", "start_delay_ms", "scheduled_stop", "actual_stop", "stop_delay_ms")})
+            return rows
 
     def details(self, session_id):
         with closing(self.connect()) as db:

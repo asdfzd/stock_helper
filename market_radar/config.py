@@ -20,6 +20,8 @@ class RadarConfig:
     session: str = "regular"
     data_dir: Path = APP_ROOT / "data"
     historical_cache_path: Path | None = None
+    collection_mode: str = "Manual"
+    preopen_prepare_minutes: float = 30.0
     max_ws_symbols: int = 200
     candidate_refresh_seconds: float = 60.0
     candidate_pages: int = 1
@@ -63,6 +65,10 @@ class RadarConfig:
         if self.bar_finalization_seconds < 0:
             raise ValueError("Invalid bar finalization delay")
         from math import isfinite
+        if self.collection_mode not in {"Manual", "Regular Session", "Capacity Test"}:
+            raise ValueError("Unknown collection mode")
+        if not isfinite(self.preopen_prepare_minutes) or self.preopen_prepare_minutes < 0:
+            raise ValueError("Invalid preopen preparation lead time")
         if any(not isfinite(v) or v < 0 for v in (self.rvol_backfill_min_day_volume,
                 self.rvol_backfill_min_price, self.result_tracking_hold_minutes,
                 self.result_pre_target_grace_seconds)):

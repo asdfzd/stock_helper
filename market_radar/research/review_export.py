@@ -48,6 +48,7 @@ def create_review_zip(session, output_dir=None):
                 if path.is_symlink() or not path.resolve().is_relative_to(root):
                     raise ValueError("Review file leaves session directory")
                 digest, size = hashlib.sha256(), 0
+                protocol_lines = []
                 with path.open("rb") as stream, archive.open(name, "w") as target:
                     # Stream lines to avoid loading large snapshot CSV/logs in memory.
                     for line in stream:
@@ -56,6 +57,10 @@ def create_review_zip(session, output_dir=None):
                         digest.update(line)
                         size += len(line)
                         target.write(line)
+                        if name == "metadata.json":
+                            protocol_lines.append(line)
+                if name == "metadata.json":
+                    manifest["collection_protocol"] = json.loads(b"".join(protocol_lines).decode("utf-8-sig")).get("collection_protocol")
                 manifest["included_files"].append({"name": name, "size_bytes": size, "sha256": digest.hexdigest()})
             encoded = json.dumps(manifest, ensure_ascii=False, indent=2)
             if SENSITIVE.search(encoded):

@@ -11,6 +11,10 @@ HISTORY_COLUMNS = [("session_date_et", "Date (ET)"), ("max_ws_symbols", "Max WS"
     ("candidate_count", "Candidates"), ("snapshot_count", "Snapshots"),
     ("max_slot_saturation_pct", "Max Saturation %"), ("slot_unavailable_count", "Slot unavailable events"),
     ("rest_error_count", "REST Errors"), ("rvol_available_pct", "RVOL %"), ("clean_shutdown", "Clean Shutdown"),
+    ("collection_mode", "Mode"), ("protocol_compliant", "Protocol Compliant"),
+    ("scheduled_start", "Scheduled Start UTC"), ("actual_start", "Actual Start UTC"),
+    ("start_delay_ms", "Start Delay ms"), ("scheduled_stop", "Scheduled Stop UTC"),
+    ("actual_stop", "Actual Stop UTC"), ("stop_delay_ms", "Stop Delay ms"), ("protocol_reason", "Protocol Reason"),
     ("duration_seconds", "Duration (s)"), ("test_version", "Version"), ("missing_results", "Missing Results"),
     ("timing_basis", "Duration Basis"), ("run_id", "Session ID")]
 

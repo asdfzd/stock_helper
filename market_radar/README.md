@@ -1,6 +1,6 @@
-# Market Radar v2.2.1 — Dashboard / Kiwoom research v2.1
+# Market Radar v2.2.2 — Dashboard / Kiwoom research v2.1
 
-현재 **Market Radar v2.2.1 / Collector v2.1 / test_version=kiwoom_radar_v2_1 / research schema=4 / master schema=1**의 기술 문서다. 프로그램 소개·설치는 [루트 README](../README.md), 현재 작업 상태는 [CODEX_HANDOFF](../CODEX_HANDOFF.md), 버전별 검증 이력은 [CHANGELOG](../CHANGELOG.md)를 따른다. 주문/계좌/자동매매 기능은 없다.
+현재 **Market Radar v2.2.2 / Collector v2.1 / test_version=kiwoom_radar_v2_1 / research schema=4 / master schema=1**의 기술 문서다. 프로그램 소개·설치는 [루트 README](../README.md), 현재 작업 상태는 [CODEX_HANDOFF](../CODEX_HANDOFF.md), 버전별 검증 이력은 [CHANGELOG](../CHANGELOG.md)를 따른다. 주문/계좌/자동매매 기능은 없다.
 
 ## Architecture / Provider
 
@@ -19,7 +19,7 @@
 
 ## Dashboard / Master Research DB
 
-기존 `live_ui.py`의 lazy `show_radar` 연결을 확장했다. `ui.py`의 RadarPanel은 Live Radar / Session History / Candidate History 탭, `dashboard_widgets.py`는 NULL·상태를 보존하는 표를 담당한다. `controller.py`는 STOPPED/STARTING/RUNNING/STOPPING/ERROR를 관리하며 기존 RadarWorker를 시작·중지한다. provider 생성·연결, REST/WS/backfill, export는 모두 worker에서 실행된다. runtime의 기존 수집 경로를 유지한다. v2.2.1은 provider cache 경로 선택과 읽기 전용 connection_status만 추가하며 순위·연구/cache schema는 그대로다.
+기존 `live_ui.py`의 lazy `show_radar` 연결을 확장했다. `ui.py`의 RadarPanel은 Live Radar / Session History / Candidate History 탭, `dashboard_widgets.py`는 NULL·상태를 보존하는 표를 담당한다. `controller.py`는 STOPPED/STARTING/RUNNING/STOPPING/ERROR를 관리하며 기존 RadarWorker를 시작·중지한다. provider 생성·연결, REST/WS/backfill, export는 모두 worker에서 실행된다. runtime의 기존 수집 경로를 유지한다. v2.2.2는 별도 SessionSchedule과 provider/worker gate를 추가하며 순위·연구/cache schema는 그대로다.
 
 UI timer는 메시지와 완료된 Future만 처리한다. Master 조회/import/CSV ZIP/hash와 live health SQL은 별도 단일 research executor에서 실행한다. 수집 지표와 Last gauge는 5초 간격 DB snapshot으로 읽으며 오류 시 마지막 값임을 표시한다. Current Connected/Active WS는 controller thread가 provider의 현재 WS 연결/ack를 읽는다. STOPPED는 No/0이고 Last 값은 변경하지 않는다. RUNNING은 Current Protected/Discovery/Slot unavailable(최근 DB 기준), Current Saturation(현재 ack 기준)을 표시한다. STOPPING은 종료 중 실제 연결 상태를 유지하며 인위적으로 지연하지 않는다. 정상 종료 label은 import 메시지 이후에도 남는다. Stop은 동일 Event/기존 graceful close를 요청하고 중복 클릭을 무시한다. 수집 중 창 닫기도 정상 종료를 기다린다. 앱 종료 시에도 non-daemon controller가 final export와 자동 import를 마친다. 강제 kill은 없다.
 
@@ -37,7 +37,23 @@ Data root 아래 실행 시각+UUID 폴더를 만들고 `dashboard_run.json`에 
 
 초기 후보 지표는 FIRST_DETECTED와 정확히 일치하는 snapshot을 사용한다. result status/missing_reason/sample 선택·offset/MFE/MAE 의미를 보존한다. first rank는 각 TOP10의 최초 진입 순위다. 과거 자료에 없는 운영 counter/clean shutdown은 NULL이며 duration은 관측 snapshot 구간임을 표시한다. UI lifecycle이 있으면 duration은 전체 collector 실행 구간이다. 여러 ET 날짜에 걸친 실행의 날짜별 행에도 동일 실행 구간이 표시된다. v3 이하의 세분 REST 오류 수는 unknown이며 과거 API 오류를 REST 오류로 바꾸지 않는다. 최대 saturation은 해당 날짜 batch gauge의 최대값이다.
 
-History는 200행씩 조회하고 첫 9개 열에 Date/Max WS/Candidates/Snapshots/Max Saturation/Slot unavailable events/REST errors/RVOL/Clean Shutdown을 배치한다. slot_unavailable_count는 누적 이벤트 수이며 마지막 gauge는 summary_json.tracking에 별도로 있다. 기존 master schema 1로 충분해 변경하지 않았다. ticker history는 최근 1,000개 horizon 행을 표시한다. 통계는 관측 표본·품질·결과 상태에 한정하며 추천 점수는 없다. 후보 더블클릭은 `radar_ticker_selected(str)`로 기존 분석 카드 또는 clipboard 준비 흐름에 연결된다. 자동 캡처·Registry 가짜 종목 생성은 하지 않는다.
+History는 200행씩 조회한다. Mode/Protocol compliant/Scheduled·Actual start·stop/Delay/Reason 열을 추가했으며 첫 9개 열에 Date/Max WS/Candidates/Snapshots/Max Saturation/Slot unavailable events/REST errors/RVOL/Clean Shutdown을 배치한다. slot_unavailable_count는 누적 이벤트 수이며 마지막 gauge는 summary_json.tracking에 별도로 있다. 기존 master schema 1로 충분해 변경하지 않았다. ticker history는 최근 1,000개 horizon 행을 표시한다. 통계는 관측 표본·품질·결과 상태에 한정하며 추천 점수는 없다. 후보 더블클릭은 `radar_ticker_selected(str)`로 기존 분석 카드 또는 clipboard 준비 흐름에 연결된다. 자동 캡처·Registry 가짜 종목 생성은 하지 않는다.
+
+## Regular-session scheduling (v2.2.2)
+
+Dashboard Collection Mode는 **Manual / Regular Session / Capacity Test**다. Manual과 CLI의 즉시 실행/사용자 종료 흐름은 유지한다. Scheduled protocol은 CONFIG Collector v2.1 정책을 고정하고 max WS, data/cache 경로, preopen lead time만 운영 설정으로 허용한다. scheduled replay와 기존 연구 DB 재사용은 거부한다.
+
+`scheduling.SessionSchedule`은 **STOPPED / ARMED / PREPARING / PREOPEN_WAIT / REGULAR_LIVE / FINALIZING / ERROR**를 관리한다. collector의 STARTING/RUNNING/STOPPING/STOPPED/ERROR와 별개다. ARMED 동안 collector state STARTING은 예약 작업이 진행 중이라는 뜻이며 연구 수집 시작을 뜻하지 않는다. Calendar 조회와 상태 전이는 controller thread, provider IO와 SQLite는 각 worker에서 수행한다. Qt는 mode/phase/collector/XNYS open·close ET/countdown/scheduled·actual UTC/delay/protocol/max WS/cache를 표시한다.
+
+기존 `ExchangeCalendar`의 `exchange_calendars:<version>:XNYS` 일정을 사용해 주말·휴일·DST·조기폐장을 처리한다. open−`preopen_prepare_minutes`(기본 30분)에 준비를 시작하고 lock/cache/auth/REST/WS LOGIN/catalog/type/과거 분봉을 준비한다. cached catalog 순회 backfill은 누락 분을 0으로 만들지 않는다. 마지막 15초에는 새 준비 요청을 보류하며 incomplete cache가 regular gate를 막지 않는다. 이미 진행 중인 REST는 반환까지 기다리므로 first refresh 시각도 보존한다.
+
+Provider는 개장 전 candidate source refresh/배정을 차단하고 Worker는 fetch/engine 양쪽에서 gate와 batch 시각을 확인한다. 따라서 rank/snapshot/FIRST_DETECTED/result timer/regular OR/HOD는 개장 전 생성되지 않는다. open 후 DB/REST 준비 및 WS 연결이 확인되면 gate를 열고 새 source universe부터 시작한다. 실제 gate 개방 `actual_regular_start_utc`, 첫 source refresh `first_candidate_refresh_utc`, 첫 batch `first_regular_batch_utc`를 구분한다. 준비 중 auth connection과 Active WS ack 수는 별개이며 Current/Last 의미를 유지한다.
+
+Capacity는 open+65분, Regular는 공식 close에 50ms controller 점검으로 graceful stop을 요청하며 30초 snapshot 대기를 깨운다. FINALIZING은 provider close/최종 export/quality/metadata/Master import를 포함한다. import 실패는 Session ERROR/비준수이며 collector 수집 성공 상태와 구분하고 수동 import 재시도를 안내한다. 준비 전 또는 DB 생성 전 취소는 lifecycle만 보존한다. 한 번 arm은 한 거래일이며 다음 거래일 자동 반복/절전 깨우기는 없다.
+
+Capacity의 장중 late arm은 명시적으로 거부하고 공식 close 이후에 다음 거래일을 선택한다. Regular late arm은 허용하되 late_start/비준수/실제 시각을 저장한다. 시작·종료 tolerance 1초, 관측 공백 5초, UTC/monotonic drift 2초 기준은 [TEST_PROTOCOL](../TEST_PROTOCOL.md)에 고정했다. 연결이 open 이후 처음 확인되면 1초 이내에도 비준수다. 가짜 open 시각·누락 snapshot 소급 생성은 없다.
+
+Protocol은 lifecycle, `radar_metadata.collection_protocol` JSON, export metadata/quality, ZIP manifest에 기록한다. Master schema 1의 `quality.summary_json`으로 보존하고 History 조회 시 필드를 펼치므로 research schema 4/Master schema 1 migration은 필요하지 않다. legacy 값은 unknown이며 20/50/100 과거 자료를 compliant로 채우지 않는다. `actual_stop`은 gate 폐쇄/stop 요청, lifecycle stopped_at은 collector 종료 완료, regular_duration_seconds는 실제 연구 구간이다. 기존 History duration은 arm을 포함한 controller 구간이다. full_session은 준수 Regular 실행에만 true다.
 
 ## Review ZIP
 
