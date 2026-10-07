@@ -78,10 +78,27 @@ class MasterDB:
                 FROM sessions s LEFT JOIN quality q ON q.session_id=s.id
                 ORDER BY session_date_et DESC,s.id DESC LIMIT ? OFFSET ?""", (limit, offset))]
             for row in rows:
-                protocol = json.loads(row.get("summary_json") or "{}").get("collection_protocol", {})
+                summary = json.loads(row.get("summary_json") or "{}")
+                validation = summary.get("validation", {})
+                row.update(validation_overall=validation.get("overall"), validator_version=validation.get("validator_version"),
+                           validated_at=validation.get("validated_at"))
+                protocol = summary.get("collection_protocol", {})
                 row.update({key: protocol.get(key) for key in ("collection_mode", "protocol_compliant",
                     "protocol_reason", "scheduled_start", "actual_start", "start_delay_ms", "scheduled_stop", "actual_stop", "stop_delay_ms")})
             return rows
+
+    def save_validation(self, run_id, validation):
+        if validation.get("run_id") != run_id:
+            raise ValueError("Validation identity mismatch")
+        with closing(self.connect()) as db, db:
+            row = db.execute("SELECT q.session_id,q.summary_json,s.session_date_et FROM quality q JOIN sessions s "
+                             "ON s.id=q.session_id WHERE s.run_id=?", (run_id,)).fetchone()
+            if row is None or row["session_date_et"] != validation.get("session_date"):
+                raise ValueError("Validation session not found")
+            summary = json.loads(row["summary_json"])
+            summary["validation"] = validation
+            db.execute("UPDATE quality SET summary_json=? WHERE session_id=?",
+                       (json.dumps(summary, ensure_ascii=False), row["session_id"]))
 
     def details(self, session_id):
         with closing(self.connect()) as db:

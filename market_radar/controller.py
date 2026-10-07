@@ -14,6 +14,7 @@ from .runtime import RadarWorker
 from .config import DEFAULT_SHARED_CACHE_PATH
 from .research.importer import import_session
 from .research.master_db import DEFAULT_MASTER_PATH
+from .research.validator import revalidate_session
 from .scheduling import SessionSchedule, SystemClock, validate_protocol_config, LATE_CAPACITY
 
 
@@ -159,6 +160,7 @@ class CollectorController:
         # Remain FINALIZING until exports, protocol persistence and Master import finish.
         final_phase = self.schedule.phase
         self.schedule.phase = "FINALIZING"
+        items = []
         try:
             self._save_lifecycle()
             self._persist_final_protocol()
@@ -174,6 +176,19 @@ class CollectorController:
             except Exception:
                 pass
             self.events.put(("import_failed", f"수집 완료, 최종 metadata/Master 등록 실패 ({type(exc).__name__}). Import Existing Session으로 재시도하세요."))
+        # Validation is downstream of successful export/import. Its failure must never
+        # rewrite collector metadata, protocol, source DB, or successful exports.
+        validation_items = items or ([dict(day=self.schedule.snapshot()["session_date_et"], run_id=None)]
+                                    if self.worker.config.db_path.exists() else [])
+        for item in validation_items:
+            try:
+                root = self.worker.config.data_dir
+                summary = revalidate_session(dict(source_db_path=str(self.worker.config.db_path),
+                    session_date_et=item["day"], run_id=item["run_id"], export_path=str(root / "export" / item["day"])),
+                    self.master_path if items else None)
+                self.events.put(("validated", summary))
+            except Exception as exc:
+                self.events.put(("validation_failed", f"Session validation unavailable ({type(exc).__name__}); Revalidate Session으로 재시도하세요."))
         self.schedule.phase = final_phase
         self.state = "ERROR" if self.worker.error else "STOPPED"
         # Final protocol was persisted before import. No extra disk write is needed for a phase-only change.

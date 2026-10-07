@@ -8,7 +8,7 @@ import re
 import tempfile
 import zipfile
 
-EXPORT_FILES = ("quality_summary.json", "candidates.csv", "snapshots.csv", "events.csv", "results.csv", "metadata.json")
+EXPORT_FILES = ("quality_summary.json", "candidates.csv", "snapshots.csv", "events.csv", "results.csv", "metadata.json", "validation_summary.json")
 # Fail closed: even a suspicious field name prevents sharing that artifact.
 SENSITIVE = re.compile(r"(?i)(?:app[_ -]?(?:key|secret)|client[_ -]?secret|\bsecret\b|secret[_ -]?key|access[_ -]?token|refresh[_ -]?token|\btoken\b|authorization|bearer\s+|account(?:[_ -]?(?:id|no|number))?|acct[_ -]?(?:no|id)|계좌|비밀번호|password|api[_ -]?key|private[_ -]?key)")
 
@@ -36,6 +36,7 @@ def create_review_zip(session, output_dir=None):
         "session_date": session["session_date_et"], "run_id": session["run_id"],
         "test_version": session.get("test_version"), "schema_version": session.get("research_schema_version"),
         "max_ws_symbols": session.get("max_ws_symbols"), "clean_shutdown": session.get("clean_shutdown"),
+        "validation_overall": None, "validator_version": None,
         "included_files": [], "missing_files": [], "consistency": "export files as read; active collection may update files"}
     handle, temporary = tempfile.mkstemp(prefix="review_", suffix=".tmp", dir=output_dir)
     os.close(handle)
@@ -57,10 +58,19 @@ def create_review_zip(session, output_dir=None):
                         digest.update(line)
                         size += len(line)
                         target.write(line)
-                        if name == "metadata.json":
+                        if name in ("metadata.json", "validation_summary.json"):
                             protocol_lines.append(line)
                 if name == "metadata.json":
                     manifest["collection_protocol"] = json.loads(b"".join(protocol_lines).decode("utf-8-sig")).get("collection_protocol")
+                if name == "validation_summary.json":
+                    validation = json.loads(b"".join(protocol_lines).decode("utf-8-sig"))
+                    if validation.get("run_id") != session["run_id"] or validation.get("session_date") != session["session_date_et"]:
+                        raise ValueError("Validation identity mismatch; revalidate session")
+                    from .validator import evidence_fingerprint
+                    source = session.get("source_db_path")
+                    if not source or validation.get("evidence_sha256") != evidence_fingerprint(source, session["session_date_et"]):
+                        raise ValueError("Validation is stale; revalidate session")
+                    manifest.update(validation_overall=validation["overall"], validator_version=validation["validator_version"])
                 manifest["included_files"].append({"name": name, "size_bytes": size, "sha256": digest.hexdigest()})
             encoded = json.dumps(manifest, ensure_ascii=False, indent=2)
             if SENSITIVE.search(encoded):

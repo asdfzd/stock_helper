@@ -83,6 +83,17 @@ def import_session(source, master_path, *, lifecycle=None):
                 run_id = hashlib.sha256((origin + "|" + day).encode()).hexdigest()[:32]
                 prior = dst.execute("SELECT id FROM sessions WHERE run_id=?", (run_id,)).fetchone()
                 q = summarize(src, version, day)
+                validation_path = root / "export" / day / "validation_summary.json"
+                if validation_path.is_file():
+                    # Only retain a validation of these exact finalized inputs.
+                    from .validator import evidence_fingerprint
+                    try:
+                        validation = json.loads(validation_path.read_text(encoding="utf-8"))
+                        if (validation.get("run_id") == run_id and validation.get("session_date") == day and
+                            validation.get("evidence_sha256") == evidence_fingerprint(source, day)):
+                            q["validation"] = validation
+                    except (OSError, ValueError, TypeError):
+                        pass
                 if lifecycle.get("collection_protocol"):
                     q["collection_protocol"] = lifecycle["collection_protocol"]
                 observed = src.execute("SELECT MIN(timestamp_utc),MAX(timestamp_utc) FROM radar_snapshots WHERE session_date=?", (day,)).fetchone()

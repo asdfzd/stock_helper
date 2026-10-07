@@ -22,6 +22,7 @@ from .provider import JsonlReplayProvider
 from .research.importer import import_session, live_health
 from .research.master_db import DEFAULT_MASTER_PATH, MasterDB
 from .research.review_export import create_review_zip
+from .research.validator import revalidate_session
 
 COLUMNS = LIVE_COLUMNS
 
@@ -45,6 +46,7 @@ class RadarPanel(QWidget):
         self._current_session = None
         self._selection_generation = 0
         self._history_offset = 0
+        self._refresh_after_history = False
         self._closing = self.closed = False
         self.setWindowTitle(f"Market Radar Dashboard · v{__version__}")
         self.resize(1400, 850)
@@ -57,6 +59,9 @@ class RadarPanel(QWidget):
         self.run_status = QLabel()
         self.run_status.setWordWrap(True)
         layout.addWidget(self.run_status)
+        self.validation_status = QLabel()
+        self.validation_status.setWordWrap(True)
+        layout.addWidget(self.validation_status)
         self.cache_label = QLabel()
         layout.addWidget(self.cache_label)
         self.shutdown_label = QLabel()
@@ -127,6 +132,7 @@ class RadarPanel(QWidget):
         for label, delta in (("Previous", -200), ("Next", 200)):
             self.add_button(paging, label, lambda checked=False, n=delta: self.history_page(n))
         history_layout.addLayout(paging)
+        self.add_button(paging, "Revalidate Session", self.revalidate)
         self.history = DataTable(HISTORY_COLUMNS)
         for i, width in enumerate((100, 70, 85, 85, 115, 150, 90, 75, 115)):
             self.history.setColumnWidth(i, width)
@@ -138,8 +144,11 @@ class RadarPanel(QWidget):
         self.quality_text, self.source_text = QTextEdit(), QTextEdit()
         self.quality_text.setReadOnly(True)
         self.source_text.setReadOnly(True)
+        self.validation_text = QTextEdit()
+        self.validation_text.setReadOnly(True)
         for widget, label in ((self.candidates, "Candidates"), (self.results, "Results"),
-                              (self.quality_text, "Quality"), (self.source_text, "Source files")):
+                              (self.quality_text, "Quality"), (self.validation_text, "Validation Summary"),
+                              (self.source_text, "Source files")):
             self.details_tabs.addTab(widget, label)
         history_layout.addWidget(self.details_tabs)
         self.tabs.addTab(history_box, "Session History")
@@ -161,7 +170,7 @@ class RadarPanel(QWidget):
         if geometry:
             self.restoreGeometry(geometry)
         for i, table in enumerate([*self.tables, self.history]):
-            key = f"columns_{i}" if i < 2 else "history_columns_v2_2_2"
+            key = f"columns_{i}" if i < 2 else "history_columns_v2_3_0"
             state = self.settings.value(key)
             if state:
                 table.horizontalHeader().restoreState(state)
@@ -209,6 +218,7 @@ class RadarPanel(QWidget):
             self.shutdown_label.clear()
             self._selected_session = None
             self.history.clearSelection()
+            self.validation_status.clear()
             self.status.setText("STARTING · 연결 및 session DB 준비 중")
             self.mode.setText(("REPLAY · 기록/테스트 데이터" if provider else "LIVE · Kiwoom") + f" · {config.test_version}")
             self.poll()
@@ -226,6 +236,8 @@ class RadarPanel(QWidget):
         self.controller.stop()
 
     def refresh(self):
+        if "history" in self.jobs:
+            self._refresh_after_history = True
         offset = self._history_offset
         self.submit("history", lambda: self.master.sessions(offset=offset), self.render_history)
         self._health_at = 0
@@ -246,6 +258,9 @@ class RadarPanel(QWidget):
                 if row["id"] == selected:
                     self.history.selectRow(i)
                     break
+        if self._refresh_after_history:
+            self._refresh_after_history = False
+            self.refresh()
 
     def session_selected(self):
         row = self.history.currentRow()
@@ -266,6 +281,9 @@ class RadarPanel(QWidget):
         for row in quality:
             row["summary_json"] = json.loads(row["summary_json"])
         self.quality_text.setPlainText(json.dumps(quality, ensure_ascii=False, indent=2))
+        validation = quality[0]["summary_json"].get("validation") if quality else None
+        self.validation_text.setPlainText(json.dumps(validation, ensure_ascii=False, indent=2) if validation else
+            "Not validated · Revalidate Session을 실행하세요. PASS는 수익성 판단이 아닙니다.")
         self.source_text.setPlainText(json.dumps(data["session"], ensure_ascii=False, indent=2))
 
     def select_ticker(self, table, row):
@@ -292,6 +310,25 @@ class RadarPanel(QWidget):
         if path:
             self.status.setText("Master DB import 중…")
             self.submit("import", lambda: import_session(path, self.master.path), self.import_done)
+
+    def revalidate(self):
+        if self.controller.busy:
+            self.status.setText("수집 종료 후 Revalidate Session을 실행하세요.")
+            return
+        try:
+            session = self.target_session()
+        except ValueError as exc:
+            self.status.setText(str(exc))
+            return
+        self.submit("validation", lambda: revalidate_session(session, self.master.path), self.validation_done)
+
+    def validation_done(self, summary):
+        reasons = summary.get("errors") or summary.get("warnings") or []
+        text = "Session validation: " + summary["overall"]
+        if reasons:
+            text += " · " + reasons[0]["code"]
+        self.validation_status.setText(text)
+        self.refresh()
 
     def import_done(self, rows):
         self.status.setText(f"Master 등록/갱신 완료 · {len(rows)} session/day")
@@ -374,6 +411,10 @@ class RadarPanel(QWidget):
             kind, value = self.controller.events.get_nowait()
             if kind == "imported":
                 self.import_done(value)
+            elif kind == "validated":
+                self.validation_done(value)
+            elif kind == "validation_failed":
+                self.validation_status.setText(value)
             elif kind == "collector_finished" and worker and worker.error:
                 pass
             else:
@@ -433,7 +474,7 @@ class RadarPanel(QWidget):
         self.settings.setValue("data_root", self.data_root.text())
         self.settings.setValue("geometry", self.saveGeometry())
         for i, table in enumerate([*self.tables, self.history]):
-            key = f"columns_{i}" if i < 2 else "history_columns_v2_2_2"
+            key = f"columns_{i}" if i < 2 else "history_columns_v2_3_0"
             self.settings.setValue(key, table.horizontalHeader().saveState())
         if self.controller.busy:
             self._closing = True

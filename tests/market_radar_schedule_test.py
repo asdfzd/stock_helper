@@ -233,12 +233,14 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(metadata["collection_protocol"], p)
         self.assertEqual(quality["collection_protocol"], p)
         session = MasterDB(self.controller.master_path).sessions()[0]
+        self.assertEqual(session["validation_overall"], "FAIL")  # user stop is non-compliant
         self.assertEqual(session["collection_mode"], "Capacity Test")
         self.assertEqual(session["actual_start"], SESSION.open_utc)
         with closing(sqlite3.connect(self.controller.master_path)) as db:
             self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 1)
         with zipfile.ZipFile(create_review_zip(session)) as archive:
             self.assertEqual(json.loads(archive.read("review_manifest.json"))["collection_protocol"], p)
+            self.assertIn("validation_summary.json", archive.namelist())
     def test_autostop_interrupts_30_second_snapshot_wait(self):
         self.start()
         self.clock.advance(1)
@@ -264,6 +266,28 @@ class IntegrationTests(unittest.TestCase):
             finally: release.set()
             self.controller.thread.join(8)
         self.assertEqual(self.controller.session_phase, "STOPPED")
+
+    def test_finalizing_includes_validator_and_failure_is_isolated(self):
+        entered, release = threading.Event(), threading.Event()
+        def failing(*args, **kwargs):
+            entered.set(); release.wait(5)
+            raise OSError("synthetic validation output failure")
+        with patch("market_radar.controller.revalidate_session", side_effect=failing):
+            self.start()
+            self.controller.stop()
+            try:
+                self.assertTrue(entered.wait(5))
+                self.assertEqual(self.controller.session_phase, "FINALIZING")
+                root = self.controller.config.data_dir
+                before = {p: p.read_bytes() for p in root.rglob('*') if p.is_file()}
+            finally:
+                release.set()
+            self.controller.thread.join(8)
+        self.assertEqual(self.controller.state, "STOPPED")
+        self.assertTrue(self.controller.lifecycle["clean_shutdown"])
+        self.assertEqual(before, {p: p.read_bytes() for p in before})
+        self.assertTrue(any(k == "validation_failed" for k, _ in self.controller.events.queue))
+        self.assertTrue(MasterDB(self.controller.master_path).sessions())
     def test_late_rejection_does_not_create_provider(self):
         self.clock.advance(60)
         self.controller.provider_factory = Mock()

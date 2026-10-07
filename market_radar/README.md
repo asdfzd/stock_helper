@@ -1,6 +1,8 @@
-# Market Radar v2.2.2 — Dashboard / Kiwoom research v2.1
+# Market Radar v2.3.0 — Session Validator / Kiwoom research v2.1
 
-현재 **Market Radar v2.2.2 / Collector v2.1 / test_version=kiwoom_radar_v2_1 / research schema=4 / master schema=1**의 기술 문서다. 프로그램 소개·설치는 [루트 README](../README.md), 현재 작업 상태는 [CODEX_HANDOFF](../CODEX_HANDOFF.md), 버전별 검증 이력은 [CHANGELOG](../CHANGELOG.md)를 따른다. 주문/계좌/자동매매 기능은 없다.
+현재 **Market Radar v2.3.0 / Validator 1 / Collector v2.1 / test_version=kiwoom_radar_v2_1 / research schema=4 / master schema=1**의 기술 문서다. 프로그램 소개·설치는 [루트 README](../README.md), 현재 작업 상태는 [CODEX_HANDOFF](../CODEX_HANDOFF.md), 버전별 검증 이력은 [CHANGELOG](../CHANGELOG.md)를 따른다. 주문/계좌/자동매매 기능은 없다.
+
+최상위 방향 원본은 [PROJECT_DIRECTION.docx](../PROJECT_DIRECTION.docx)이며 [MD mirror](../PROJECT_DIRECTION.md)는 그 의미를 따른다. 장기 흐름은 Market Radar → Session Validator → Research / Master DB → Strategy Analysis → Stock Helper → Live Decision Support다. 현재의 후보 탐색·수집 품질 검증과 향후 충분한 재검증 후의 Candidate Rank를 구분하고, 기존 가격구조와 독립 비교한 뒤 결합 효과를 검증한다. 이 문서의 현재 기능을 최종 전략 검증 완료로 해석하지 않는다.
 
 ## Architecture / Provider
 
@@ -21,7 +23,7 @@
 
 기존 `live_ui.py`의 lazy `show_radar` 연결을 확장했다. `ui.py`의 RadarPanel은 Live Radar / Session History / Candidate History 탭, `dashboard_widgets.py`는 NULL·상태를 보존하는 표를 담당한다. `controller.py`는 STOPPED/STARTING/RUNNING/STOPPING/ERROR를 관리하며 기존 RadarWorker를 시작·중지한다. provider 생성·연결, REST/WS/backfill, export는 모두 worker에서 실행된다. runtime의 기존 수집 경로를 유지한다. v2.2.2는 별도 SessionSchedule과 provider/worker gate를 추가하며 순위·연구/cache schema는 그대로다.
 
-UI timer는 메시지와 완료된 Future만 처리한다. Master 조회/import/CSV ZIP/hash와 live health SQL은 별도 단일 research executor에서 실행한다. 수집 지표와 Last gauge는 5초 간격 DB snapshot으로 읽으며 오류 시 마지막 값임을 표시한다. Current Connected/Active WS는 controller thread가 provider의 현재 WS 연결/ack를 읽는다. STOPPED는 No/0이고 Last 값은 변경하지 않는다. RUNNING은 Current Protected/Discovery/Slot unavailable(최근 DB 기준), Current Saturation(현재 ack 기준)을 표시한다. STOPPING은 종료 중 실제 연결 상태를 유지하며 인위적으로 지연하지 않는다. 정상 종료 label은 import 메시지 이후에도 남는다. Stop은 동일 Event/기존 graceful close를 요청하고 중복 클릭을 무시한다. 수집 중 창 닫기도 정상 종료를 기다린다. 앱 종료 시에도 non-daemon controller가 final export와 자동 import를 마친다. 강제 kill은 없다.
+UI timer는 메시지와 완료된 Future만 처리한다. Master 조회/import/CSV ZIP/hash와 live health SQL은 별도 단일 research executor에서 실행한다. 수집 지표와 Last gauge는 5초 간격 DB snapshot으로 읽으며 오류 시 마지막 값임을 표시한다. Current Connected/Active WS는 controller thread가 provider의 현재 WS 연결/ack를 읽는다. STOPPED는 No/0이고 Last 값은 변경하지 않는다. RUNNING은 Current Protected/Discovery/Slot unavailable(최근 DB 기준), Current Saturation(현재 ack 기준)을 표시한다. STOPPING은 종료 중 실제 연결 상태를 유지하며 인위적으로 지연하지 않는다. 정상 종료 label은 import 메시지 이후에도 남는다. Stop은 동일 Event/기존 graceful close를 요청하고 중복 클릭을 무시한다. 수집 중 창 닫기도 정상 종료를 기다린다. 앱 종료 시에도 non-daemon controller가 final export와 자동 import·validation을 마친다. 강제 kill은 없다.
 
 Data root 아래 실행 시각+UUID 폴더를 만들고 `dashboard_run.json`에 실제 시작·종료·clean_shutdown·shutdown 시간을 보존한다. max WS 기본 200과 grace 0.25초 등은 CONFIG를 따른다. 200은 최적 capacity 권고가 아니다. QSettings에는 마지막 max WS/data root/창 위치/열 폭만 저장한다. 기존 단일 Kiwoom lock을 그대로 공유하므로 UI/CLI 충돌은 ERROR 및 명확한 메시지로 표시한다.
 
@@ -49,15 +51,31 @@ Dashboard Collection Mode는 **Manual / Regular Session / Capacity Test**다. Ma
 
 Provider는 개장 전 candidate source refresh/배정을 차단하고 Worker는 fetch/engine 양쪽에서 gate와 batch 시각을 확인한다. 따라서 rank/snapshot/FIRST_DETECTED/result timer/regular OR/HOD는 개장 전 생성되지 않는다. open 후 DB/REST 준비 및 WS 연결이 확인되면 gate를 열고 새 source universe부터 시작한다. 실제 gate 개방 `actual_regular_start_utc`, 첫 source refresh `first_candidate_refresh_utc`, 첫 batch `first_regular_batch_utc`를 구분한다. 준비 중 auth connection과 Active WS ack 수는 별개이며 Current/Last 의미를 유지한다.
 
-Capacity는 open+65분, Regular는 공식 close에 50ms controller 점검으로 graceful stop을 요청하며 30초 snapshot 대기를 깨운다. FINALIZING은 provider close/최종 export/quality/metadata/Master import를 포함한다. import 실패는 Session ERROR/비준수이며 collector 수집 성공 상태와 구분하고 수동 import 재시도를 안내한다. 준비 전 또는 DB 생성 전 취소는 lifecycle만 보존한다. 한 번 arm은 한 거래일이며 다음 거래일 자동 반복/절전 깨우기는 없다.
+Capacity는 open+65분, Regular는 공식 close에 50ms controller 점검으로 graceful stop을 요청하며 30초 snapshot 대기를 깨운다. FINALIZING은 provider close/최종 export/quality/metadata/Master import/validation을 포함한다. import 실패는 Session ERROR/비준수이며 collector 수집 성공 상태와 구분하고 수동 import 재시도를 안내한다. 준비 전 또는 DB 생성 전 취소는 lifecycle만 보존한다. 한 번 arm은 한 거래일이며 다음 거래일 자동 반복/절전 깨우기는 없다.
 
 Capacity의 장중 late arm은 명시적으로 거부하고 공식 close 이후에 다음 거래일을 선택한다. Regular late arm은 허용하되 late_start/비준수/실제 시각을 저장한다. 시작·종료 tolerance 1초, 관측 공백 5초, UTC/monotonic drift 2초 기준은 [TEST_PROTOCOL](../TEST_PROTOCOL.md)에 고정했다. 연결이 open 이후 처음 확인되면 1초 이내에도 비준수다. 가짜 open 시각·누락 snapshot 소급 생성은 없다.
 
 Protocol은 lifecycle, `radar_metadata.collection_protocol` JSON, export metadata/quality, ZIP manifest에 기록한다. Master schema 1의 `quality.summary_json`으로 보존하고 History 조회 시 필드를 펼치므로 research schema 4/Master schema 1 migration은 필요하지 않다. legacy 값은 unknown이며 20/50/100 과거 자료를 compliant로 채우지 않는다. `actual_stop`은 gate 폐쇄/stop 요청, lifecycle stopped_at은 collector 종료 완료, regular_duration_seconds는 실제 연구 구간이다. 기존 History duration은 arm을 포함한 controller 구간이다. full_session은 준수 Regular 실행에만 true다.
 
+## Automatic Session Validator 1
+
+`research/validator.py`는 투자 점수 없이 세션 시스템/데이터 품질을 판정한다. Dashboard controller는 final export·quality·최종 protocol 저장과 Master import 뒤에 실행하며 완료까지 FINALIZING을 유지한다. 검증기의 실행/저장 실패는 collector metadata를 다시 쓰거나 성공한 원본을 변경하지 않는다. Live에는 검증 결과 또는 unavailable, History에는 Validation 열·Validation Summary 탭·Revalidate Session을 제공한다. 긴 상세 내용은 JSON으로 확인한다.
+
+검증 범위는 XNYS/준수/arm/start/stop/clean shutdown, preopen snapshot·event·candidate, SQLite integrity/필수 table/FK/첫 포착 snapshot·event, CSV 4종의 헤더·행 수·내용, metadata/quality 재계산, capacity peak/last, RVOL/return/stale/REST/WS/backfill/runtime, expected horizon과 sample timestamp/offset이다. 아직 종료 시점에 도달하지 않은 pending은 그대로 허용한다. 정량 정책과 severity는 [TEST_PROTOCOL](../TEST_PROTOCOL.md)에 둔다.
+
+원본 SQLite는 DB와 committed WAL을 임시 폴더로 복사해 query_only transaction으로 읽으므로 원본 SHM도 수정하지 않는다. 파일 복사 중 변경을 확인하며 전후 logical DB/export/lifecycle fingerprint를 비교한다. snapshot raw는 전체 시장이 아닌 수집 범위 evidence다. capacity peak는 batch gauge의 최대값이며 batch 사이의 미관측 순간 peak를 보증하지 않는다.
+
+Summary는 `<session>/export/<ET-date>/validation_summary.json`에 atomic replace한다. 필수 키는 validator_version/session_date/run_id/validated_at/overall/protocol/integrity/capacity/data_quality/results/errors/warnings이며 policy와 evidence_sha256도 보존한다. PASS/WARN/FAIL은 수집 품질이며 수익성 결론이 아니다. Manual/legacy는 표준 비교 적합성을 보증하지 않는다.
+
+Master schema 1의 `quality.summary_json.validation`에 전체 결과를 저장하고 조회 때 validation_overall/validator_version/validated_at을 펼친다. research schema 4, Master schema 1 유지. Revalidate는 원본을 수정하지 않으며 동일 run_id를 갱신한다. 재import는 evidence fingerprint가 같은 validation만 유지하고 달라진 결과는 unknown으로 만든다. Review ZIP은 validation JSON도 기존 민감정보/경로 검사·SHA256을 적용하고 manifest에 validation_overall/validator_version을 기록한다. validation identity/freshness가 다르면 ZIP 생성을 거부하므로 먼저 재검증한다.
+
+자동 실행은 Dashboard 종료 경로다. 기존 CLI 수집 정책은 그대로이며 `python -m market_radar.research.validator <source.db> --date YYYY-MM-DD`는 보관 세션 JSON만 생성하는 별도 검증 명령이다. Master 등록 실패 시에도 가능한 원본에 대해서는 JSON 산출을 시도한다. DB 생성 전 취소는 lifecycle만 남는다.
+
+상위 방향은 [PROJECT_DIRECTION](../PROJECT_DIRECTION.md), 새 대화는 [START_HERE](../START_HERE.md), 현재 연구 단계는 [HANDOFF](../CODEX_HANDOFF.md)를 따른다.
+
 ## Review ZIP
 
-`research/review_export.py`는 선택 세션(선택이 없으면 현재 세션)의 export allowlist `quality_summary.json`, `candidates.csv`, `snapshots.csv`, `events.csv`, `results.csv`, `metadata.json`과 해당 ET 날짜 로그만 묶는다. 없는 파일은 manifest에 기록하며 파일 전체가 없으면 생성하지 않는다. DB/cache/raw/임의 하위 폴더는 포함하지 않는다. `market_radar_review_<ET-date>_<run-id>.zip`을 해당 세션 `reviews/`에 atomic replace로 저장한다.
+`research/review_export.py`는 선택 세션(선택이 없으면 현재 세션)의 export allowlist `quality_summary.json`, `candidates.csv`, `snapshots.csv`, `events.csv`, `results.csv`, `metadata.json`, `validation_summary.json`과 해당 ET 날짜 로그만 묶는다. 없는 파일은 manifest에 기록하며 파일 전체가 없으면 생성하지 않는다. DB/cache/raw/임의 하위 폴더는 포함하지 않는다. `market_radar_review_<ET-date>_<run-id>.zip`을 해당 세션 `reviews/`에 atomic replace로 저장한다.
 
 manifest에는 생성시각·날짜·run_id·test/schema version·max WS·파일명/크기/SHA256을 담는다. 각 파일은 streaming으로 검사하며 인증/토큰/계좌 등 민감정보 키 패턴이 발견되거나 원본 밖 링크이면 ZIP 전체를 거부한다. 민감값을 오류 메시지에 재출력하지 않는다. 기존 안전 ZIP은 실패 시 유지된다. 임의의 무표식 비밀 문자열까지 탐지하는 보장은 없으므로 collector의 기존 공개 필드 allowlist도 유지한다.
 
@@ -106,7 +124,7 @@ FIRST_DETECTED는 두 표 TOP10 진입 시 유효 가격으로 기록한다. tra
 
 슬롯 순서는 기존 보호 중 구독 → 추가 보호 대상 → 현재 discovery → 기타 pending 추적이다. 보호 중에는 source/ranking 이탈만으로 REMOVE하지 않는다. 슬롯 수를 넘어 보호 대상이 생겨도 기존 보호 구독을 유지하고 미등록 종목의 사유를 기록한다. 결과 데이터 완전성을 위한 네트워크 배정이다.
 
-20은 smoke/test 규모이며 전체 후보를 추적하는 주간 운영 권장값이 아니다. 기존 50-slot에 이어 100-slot 보관 세션도 최대 saturation 100%로 확인했다. 다음 사용자 검증은 150-slot capacity test다. 기존 max_ws_symbols 설정과 CLI를 유지하며 200은 공식 상한이다. 운영값은 capacity smoke 결과로 결정한다.
+20은 smoke/test 규모이며 전체 후보 추적용 주간 운영 권장값이 아니다. 기존 50/100-slot 포화에 이어 2026-10-06 ET 표준 150-slot 세션을 검증했다. 최대 Active 106, protected 89, discovery 80, saturation 70.67%, 미배정 0건이다. 150을 고정 운영 후보로 사용할 근거이나 다른 시장 상태의 추가 확인이 필요하며 영구 최적값 판정은 아니다. 기존 CONFIG max WS와 사용자 저장값은 변경하지 않았다.
 
 슬롯이 차도 전체 discovery는 radar_discoveries 및 raw UNIVERSE에 남긴다. 신규 종목은 tracking_slot_unavailable, awaiting_subscription 등으로 구분한다. 유효 가격 없는 종목의 FIRST_DETECTED/결과 기준가를 만들지 않는다.
 
@@ -155,12 +173,12 @@ data/
     reviews/
 ~~~
 
-이번 감사 시 canonical cache는 없었다. 다음 실제 provider connect 때 생성하고, 이후 compatible cache를 재사용한다. 기존 session cache 여러 개를 자동 복사/merge하지 않는다. 필요하면 별도 명시적 import/migration 작업으로 검토한다. cache의 provider=kiwoom/mode=real/schema=1/bar_policy=assumed_et_start_v1 metadata 검증을 DDL/journal 변경 전에 그대로 수행하며 incompatible cache를 ALTER하지 않는다. 기존 cache에는 minute/daily/catalog뿐 아니라 raw_records도 있으므로 shared cache 사용 시 raw도 그 DB에 누적된다. raw 분리/자동 삭제는 이번 변경에 포함되지 않는다.
+Dashboard canonical cache는 세션 밖에서 계속 재사용한다. legacy cache 자동 복사/merge는 하지 않으며 필요하면 별도 명시적 import/migration으로 검토한다. cache의 provider=kiwoom/mode=real/schema=1/bar_policy=assumed_et_start_v1 검증을 DDL/journal 변경 전에 유지한다. cache에는 raw_records도 누적되며 raw 분리/자동 삭제는 이번 범위 밖이다.
 
-공유는 매 실행 cold cache 구조를 없애는 변경이며 RVOL available을 보장하지 않는다. 부족한 history와 무체결 불확실 분은 기존처럼 NULL/MIXED_OR_UNCERTAIN이다. 실제 누적 효과는 다음 150-slot 수집에서 검증한다.
+공유는 매 실행 cold cache 구조를 없애는 변경이며 RVOL available을 보장하지 않는다. 부족한 history와 무체결 불확실 분은 기존처럼 NULL/MIXED_OR_UNCERTAIN이다. 최근 150-slot 보관 세션의 RVOL은 0%였으며 누적 coverage 효과는 추가 거래일에서 확인한다.
 
 ~~~powershell
-# 다음 사용자 capacity test: CLI에서도 공유 cache를 명시하는 경우
+# Manual 진단 예시: 표준 Capacity Test는 Dashboard에서 preopen arm
 & .\.venv-paddle\Scripts\python.exe -m market_radar --collect --max-ws-symbols 150 --data-dir data/kiwoom_capacity_150_next --cache-path data/market_radar_cache/kiwoom_v2.db
 ~~~
 
@@ -182,7 +200,7 @@ Ctrl+C 수신 즉시 새 scheduling/REST retry/WS REG를 중단한다. 현재 bo
 
 ## Known Limitations
 
-- 20/50/100슬롯의 saturation을 확인했으며 다음 사용자 검증은 150-slot capacity test다. 장기 부하와 전체 후보 추적 여부는 별도 검증해야 한다.
+- 20/50/100슬롯의 saturation 이후 표준 150-slot 세션에서 peak 70.67%와 미배정 0건을 확인했다. 장기 부하·다른 시장 상태·전체 후보 추적 여부는 별도 검증해야 한다.
 - 봉 라벨/무체결 분/FE14 notional/FID290 enum은 미확정이다. 무료 feed를 전 거래소 SIP로 보장하지 않으며 결측을 합성하지 않는다.
 - 공식 확정 EOD·기업행동 보정·완료 cache의 정정/분할 자동 refresh는 미구현이다. raw 보관기간·압축·자동 삭제도 없다.
 - type unknown에는 확인하지 못한 비보통주가 남을 수 있다. negative TTL 안의 데이터 회복은 즉시 감지하지 못할 수 있다.

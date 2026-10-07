@@ -4,6 +4,85 @@
 
 날짜는 확인된 Git commit 날짜와 실제 검증 시각을 구분한다. 별도 릴리스 날짜·commit이 확인되지 않은 단계는 임의로 채우지 않는다. 프로그램 버전과 research schema 버전은 별개다. 아래 Known limitations는 각 버전 당시의 상태이며 이후 해결 여부는 다음 버전을 참조한다. 로컬 data 경로는 증거 위치이며 Git에 포함하지 않는다. 공용 tests_summary.json은 후속 실행으로 갱신되므로 과거 테스트 수는 당시 commit의 문서 기록을 근거로 한다.
 
+## 2026-10-07 문서 정합성 검수 — 사용자 교체 DOCX 기준
+
+- 사용자가 교체한 PROJECT_DIRECTION.docx(작성 기준 2026-10-07)를 최상위 방향 원본으로 적용했다. DOCX는 읽기 전용이며 SHA256 `a92ad593d07d54475268c449374d0bbf1581cc55c9a681e74df3c77564e8175b`를 작업 전후 보존했다. 아래 v2.3.0의 최초 DOCX 생성·50문단 동등성 기록은 교체 전 파일에 관한 과거 이력이다.
+- MD에 Current/Emerging 역할 분리, NULL 원칙, preopen 준비와 regular research 분리, +30s~D+3 결과 추적, 기존 가격구조와 독립·결합 비교, 최종 GUI·기능 선택 기준 등 원본의 빠진 의미를 보완했다. START_HERE의 읽는 순서와 DOCX 우선 원칙, AGENTS의 방향 변경·출처 생성 금지 규칙을 명확히 했다. README 2종에 현재 수집 기능과 장기 의사결정 보조 목표를 구분했다.
+- HANDOFF를 현재 버전·shared cache·scheduled Regular/Capacity·Validator·기존 150-slot WARN·Phase A 마무리~B 시작·Next Work 중심으로 정리했다. 교체 전 DOCX 부재/생성·렌더 제한과 긴 검증 경과는 기존 CHANGELOG 이력에서 확인한다. RESEARCH_BASIS 7개 연구 축과 TEST_PROTOCOL은 정합성을 확인하고 유지했다. 검증되지 않은 citation을 추가하지 않았다.
+- 문서 전용 작업이며 앱 v2.3.0 / Collector v2.1 / Validator 1 / research schema 4 / Master schema 1 유지. 이전 256 통과 기록을 다시 실행한 것처럼 기록하지 않는다. 기존 validation JSON만 읽었으며 전체 회귀·live smoke·세션 재검증은 실행하지 않았다.
+- 검증: DOCX SHA256 동일, MD 핵심 의미/START_HERE 링크/Next Work/버전 일치, diff --check 및 변경 내용 인증값 패턴 확인. 기존 Python/launcher 코드와 .env 해시, data 파일 목록·크기·mtime 보존 확인. 기존 미커밋 변경을 유지하고 git add/commit/push하지 않았다.
+
+## Market Radar v2.3.0 — Automatic Session Validator와 프로젝트 방향 기준서
+
+개발·보관 실데이터 재감사: 2026-10-07 KST. **앱 v2.3.0 / Validator 1 / Collector v2.1 / kiwoom_radar_v2_1 / research schema 4 / Master schema 1**. 시작 시 launcher 4개와 README/CHANGELOG/HANDOFF의 기존 미커밋 변경이 있었고 그대로 보존했다. ranking/RVOL/NULL/protected tracking/result sampling/provider/OCR/벽/Toss/halt 공식·동작은 변경하지 않았다.
+
+### 구현
+
+- 정상 Dashboard 종료의 FINALIZING을 export·quality·Master import·Validator·JSON/Master 저장까지 유지한다. 검증기 오류는 원본 metadata·export·수집 성공을 바꾸지 않는다. 수집/등록 실패 시에도 연구 DB가 있으면 검증 JSON 산출을 시도한다.
+- Validator는 XNYS/timing/준수/clean shutdown, preopen 연구 오염, SQLite integrity/필수 표/FK/연구 참조, metadata·quality 재계산, CSV 4종의 헤더·행 수·내용, capacity peak/last, 데이터 품질, horizon·sample timestamp/offset을 검사한다. timing·horizon 상수는 기존 scheduler/engine에서 재사용한다.
+- PASS/WARN/FAIL과 사용 policy·근거 fingerprint를 `validation_summary.json`에 atomic 저장한다. WARN 임계값은 RVOL <50%, stale 관측비율 >5%, missing ≥1이며 전략 점수가 아니다. Worker/DB 오류로 유실된 batch도 v1은 보수적으로 FAIL 처리한다. 종료 뒤 목표인 pending은 정상으로 유지한다.
+- 원본 DB/WAL을 임시 복사해 query_only로 검증하여 원본 SHM까지 보존한다. logical DB 내용과 export/lifecycle 해시로 재import·ZIP의 validation freshness를 검사한다. 단순 SQLite checkpoint는 무효화하지 않으며 D+n 등 원본 변화는 재검증을 요구한다.
+- History Validation 열·Validation Summary 탭·Revalidate Session, Live 간단 상태를 추가했다. Master는 기존 `quality.summary_json.validation` 사용, 별도 column/migration 없음. ZIP allowlist와 manifest에 validation을 추가하면서 기존 민감정보/경로/hash/atomic 규칙을 유지한다. 명시적 CLI 검증 명령도 제공한다.
+- 원래 PROJECT_DIRECTION DOCX/MD 및 RESEARCH_BASIS가 저장소에 없음을 재확인했다. 사용자 요청의 방향을 기준으로 DOCX/MD를 새 작성하고 START_HERE와 RESEARCH_BASIS를 추가했다. 데이터 기반 의사결정 보조 목표, Phase A~H, 충분한 검증 후 Candidate Rank, 추천의 의미, 1주 첫 표본/추가 기간 검증, 입력 비교 가능성을 명시했다. 외부 citation은 만들지 않고 출처 검증 필요로 표시했다. `tools/sync_project_direction.py`가 MD의 모든 문단을 DOCX로 동기화하고 재개봉·텍스트 일치를 확인한다.
+
+### 실제 150-slot 첫 validation baseline
+
+원본: `data/20261006_184830_801a37e9`, **2026-10-06 ET**, run_id `cec24441029dc588e58bf6c97d51028b`. 새 live smoke가 아니라 이미 수집된 DB/export/log의 read-only 재감사다. 결과 **WARN**. Protocol / Premarket Leak / DB·export Integrity / Capacity는 PASS이며 errors 0건이다.
+
+| 항목 | 원본 재계산 |
+|---|---:|
+| 시작 / 종료 지연 | 57.473ms / 56.438ms |
+| snapshots / candidates / unique snapshot tickers | 8,584 / 91 / 231 |
+| events / results | 1,481 / 1,001 |
+| Max WS / peak Active / last Active | 150 / 106 / 105 |
+| peak / last Protected | 89 / 78 |
+| peak / last Discovery | 80 / 74 |
+| peak / last saturation | 70.6667% / 70% |
+| slot unavailable event / peak / last | 0 / 0 / 0 |
+| RVOL available / warming / incomplete_history | 0% / 1,163 / 7,421 |
+| return 1m / 5m available | 27.2251% / 23.8117% |
+| stale / unique stale tickers / stale 관측비율 | 723 / 59 / 7.7683% |
+| REST total / deterministic / transient / rate limited | 53 / 53 / 0 / 0 |
+| REST unsupported / no_data / suppressed | 30 / 23 / 36 |
+| backfill incomplete attempts | 3,813 |
+| WS gap / worker / DB / export error | 0 / 0 / 0 / 0 |
+| complete post_target / pre_target_grace | 482 / 5 |
+| result missing / reasons | 37 / stale_price 36 + not_subscribed 1 |
+
+WARN 사유: RVOL coverage low, stale coverage high, REST errors, deterministic suppressed, incomplete history, missing results. stale 비율은 723/(8,584+723)이며 snapshot에 저장되지 않은 stale 관측을 분모에 포함한다. 로그의 stale 723건·shutdown_complete/program_stop 각 1건·DB/calculation/export 오류 0건과 대조했다.
+
+| Horizon | complete | missing | pending | outside_session |
+|---|---:|---:|---:|---:|
+| +30s | 87 | 3 | 1 | 0 |
+| +1m | 88 | 2 | 1 | 0 |
+| +3m | 78 | 11 | 2 | 0 |
+| +5m | 81 | 8 | 2 | 0 |
+| +10m | 78 | 9 | 4 | 0 |
+| +30m | 63 | 3 | 25 | 0 |
+| +60m | 12 | 1 | 78 | 0 |
+
+EOD/D+1/D+2/D+3는 각각 pending 91. missing expected horizon=0, invalid sample=0, overdue pending=0이다. +60m pending 78개는 종료 이후 목표이며 FAIL이 아니다. 150은 이 거래일의 슬롯 부족이 관측되지 않은 운영 후보이지 영구 최적값이나 통제된 인과 결론이 아니다.
+
+### 검증과 제약
+
+- 전체 회귀 **256 통과 / 실패 suite 0**. 기존 suite 전체와 Validator 22개·FINALIZING/검증 실패 격리 1개를 추가 실행했다. 근거: `data/kiwoom_provider_validation/tests_summary.json`. 합성 DB/fake clock/offscreen UI/replay/OCR 초기화 검사이며 실제 새 네트워크 수집은 하지 않았다. Current/Emerging·scheduled collection·shared cache·OCR·벽·Toss·halt 회귀 포함.
+- 전체 회귀 후 History 열 너비 설정 키 분리·테스트 QSettings 격리·검증 완료 시 진행 중 History 조회 뒤 재갱신 보강을 했다. 관련 Dashboard 27개/Validator 22개/Live UI script를 다시 통과했으며 중복 집계하지 않았다.
+- 첫 전체 실행에서 SQLite checkpoint에 따른 stale 오탐 1개를 발견했다. DB/WAL 파일 바이트 대신 logical DB fingerprint로 수정 후 관련 suite와 전체를 재실행하여 통과했다. 정상 PASS/WARN/FAIL, preopen 세 표, DB 손상/FK/표 누락, CSV 행 수·같은 행 수 내용 변조, metadata/quality, slot/RVOL/stale, pending, 결과 sample, 재검증/atomic 실패/Master/UI/ZIP/원본 WAL·SHM 보존을 확인했다.
+- 실제 원본 **12개 파일 SHA256 전후 동일**. 원본 세션에는 validation_summary만 새로 생성하고 기존 DB/WAL/SHM/export 6종/lifecycle/log/ZIP은 보존했다. 운영 Master에는 해당 run_id의 validation summary만 갱신했다. 새 포맷 ZIP 검사는 `data/session_validator_checks/review/`의 별도 ZIP으로 수행하여 기존 실제 ZIP을 덮어쓰지 않았다.
+- DOCX ZIP/XML·python-docx 재개봉·MD 전체 문단 동등성 통과. `render_docx.py` 실행은 Windows runtime의 LibreOffice/soffice 부재로 실패했으므로 페이지 렌더·시각 검증 완료라고 주장하지 않는다. 원본 방향 문서가 없어 기존 문서와의 diff도 불가능했다.
+- 현재 연구 단계는 Phase A 마무리~Phase B 시작. 150-slot 실데이터 수집은 이미 시작됐으나 표준 full-session 여러 거래일·1주 축적·다른 시장 상태 검증은 남아 있다. 미래 D+n 자동 수집, 임의 BUY 점수, 주문/계좌 기능은 추가하지 않았다. `.env` 읽기·수정과 git add/commit/push 없음.
+
+## Windows Quick Launch v1 — Stock Helper 바탕화면 실행
+
+개발: 2026-10-03 KST, 기반 HEAD `52e0dec`. 실행 도구 버전 v1이며 **Market Radar v2.2.2 / Collector v2.1 / research schema 4 / Master schema 1**은 유지한다.
+
+- 일반/Debug CMD와 공통 PowerShell launcher를 추가했다. 스크립트 위치에서 프로젝트 root와 작업 폴더를 계산하고 로컬 `.venv-paddle`만 사용한다. 일반은 pythonw 우선/python fallback·숨김 콘솔, Debug는 python·콘솔 유지다. 필수 파일 누락과 비정상 종료를 안내하며 별도 인증정보/로그 파일을 만들지 않는다.
+- Desktop SpecialFolder와 WScript.Shell로 `Stock Helper.lnk`를 생성·갱신한다. 같은 프로젝트 대상만 갱신하며 다른 동명 대상은 보존한다. 선택적 ico/기존 Python/Windows 아이콘을 사용한다. 저장소 이동 후 이전 대상의 바로가기는 사용자가 이름을 바꾼 뒤 다시 생성한다.
+- PyInstaller 패키징/의존성 설치/기존 앱·Dashboard·Collector·ranking·OCR·CLI 코드는 변경하지 않았다. 기존 single collector lock을 유지하며 앱 창의 중복 실행 제한은 추가하지 않았다.
+- 이전 v2.2.2의 전체 회귀 233 통과와 evidence/Master 38개 파일 SHA256 보존 기록은 이전 작업 결과다. 이번 실행 도구 검증과 구분한다.
+- 이번 검증: 복사한 실행 도구/실제 venv Python/가짜 entry point를 사용해 공백·한글·`&` 경로, 프로젝트 기준 cwd/argv, pythonw 우선·python fallback, Debug pause/exit code, 필수 파일 누락을 확인했다. 임시 Desktop의 실제 COM 바로가기 생성·재생성·동명 다른 대상 보존도 통과했다. 실제 Desktop 바로가기를 두 번 생성·갱신하고 필드를 검증했다.
+- 실제 `Stock Helper.lnk` → 기존 UI의 응답하는 창을 확인한 뒤 정상 닫기, launcher exit 0 및 생성 프로세스 잔존 없음 확인. Market Radar/Kiwoom 수집은 시작하지 않았다. `live_ui_dashboard_test.py`, `ui_registry_integration_test.py` 통과(offscreen), `python -m market_radar --help` 성공. 전체 suite/150-slot/live collection 검증은 이번에 실행하지 않았다.
+
 ## Market Radar v2.2.2 — XNYS scheduled collection
 
 개발: 2026-10-03 KST, 이번 변경 미커밋. 기반 HEAD `faedfa2`에 이전 Dashboard/shared storage 작업이 보존되어 있다. **앱 v2.2.2 / Collector v2.1 / kiwoom_radar_v2_1 / research schema 4 / Master schema 1**. ranking/RVOL/NULL/보호 추적/주문·계좌 범위는 변경하지 않았다.
