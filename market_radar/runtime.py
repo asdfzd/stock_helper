@@ -36,7 +36,7 @@ class DailyLogHandler(logging.Handler):
 
 class RadarWorker:
     """All provider IO, calculations, SQLite and CSV operations stay off Qt."""
-    def __init__(self, provider: MarketDataProvider, config: RadarConfig, *, fast_replay=False, schedule=None):
+    def __init__(self, provider: MarketDataProvider, config: RadarConfig, *, fast_replay=False, schedule=None, paper=None):
         if provider.mode not in {"live", "replay"}:
             raise ValueError("Provider must identify live/replay mode")
         self.provider = provider
@@ -56,6 +56,7 @@ class RadarWorker:
         self.shutdown_elapsed_ms = None
         self.phase = "STOPPED"
         self.schedule = schedule
+        self.paper = paper if config.collection_mode != "Capacity Test" else None
 
     def _persist_protocol(self, store):
         if self.schedule:
@@ -91,6 +92,8 @@ class RadarWorker:
             self.logger.info('shutdown_requested reason=%s timestamp=%s elapsed_ms=%.3f', reason,
                 utc(datetime.now(timezone.utc)), self._shutdown_elapsed(), extra=event('shutdown_requested_count'))
         self.stop_event.set()  # UI never waits for a network request or export.
+        if first and self.paper is not None:
+            self.paper.request_finish(self.shutdown_requested_utc)
         self.phase = "STOPPING"
         if hasattr(self.provider, "request_stop"):
             self.provider.request_stop()
@@ -131,6 +134,8 @@ class RadarWorker:
             self.publish(f"{self.provider.name}: 연결 중")
             self.provider.connect()
             connected = True
+            if self.paper is not None:
+                self.paper.start()  # Provider owns the collector lock before recovery.
             logger.info("provider_connected %s", self.provider.name)
             identity = {
                 "provider": self.provider.name, "mode": self.provider.mode,
@@ -181,6 +186,15 @@ class RadarWorker:
                         self.publish(f"데이터 지연/시각 오류 ({delay:.0f}s): 갱신 보류, 기존 표는 과거 데이터")
                     else:
                         rows = engine.process(batch, utc(now))
+                        if self.paper is not None:
+                            # Separate consumer; no paper schema in the research DB.
+                            try:
+                                detected = {r["ticker"]: r["first_detected_utc"] for r in store.db.execute(
+                                    "SELECT ticker,first_detected_utc FROM radar_candidates WHERE session_date=?",
+                                    (instant(batch.timestamp_utc).astimezone(ET).date().isoformat(),))}
+                                self.paper.frame(batch, rows, detected, utc(self._now()))
+                            except Exception:
+                                self.paper.fail()  # Paper faults cannot fail a Radar batch.
                         if hasattr(self.provider, "set_result_tracking"):
                             self.provider.set_result_tracking(store.protected_tracking(utc(now)))
                         self.publish(f"{self.provider.name} | {batch.universe} | ET {instant(batch.timestamp_utc).astimezone(ET).isoformat()}", rows)
@@ -236,6 +250,8 @@ class RadarWorker:
         finally:
             if not self.stop_event.is_set():
                 self.stop(reason="collection_complete")
+            if self.paper is not None:
+                self.paper.finish()  # Flush/recover state before provider releases its lock.
             try:
                 self.provider.close()
             except Exception:

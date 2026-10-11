@@ -1,0 +1,2 @@
+# Optional, independent Namuh read-only probe; Windows OS trust store for WS TLS.
+nhplug[tls]==0.4.1

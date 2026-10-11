@@ -10,7 +10,7 @@ import time
 from PySide6.QtCore import QSettings, QTimer, QUrl, Signal, Qt
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (QApplication, QDoubleSpinBox, QFileDialog, QHBoxLayout,
-    QLabel, QLineEdit, QPushButton, QSpinBox, QSplitter, QTabWidget, QTextEdit, QVBoxLayout, QWidget, QComboBox)
+    QLabel, QLineEdit, QPushButton, QSpinBox, QSplitter, QTabWidget, QTextEdit, QVBoxLayout, QWidget, QComboBox, QCheckBox)
 
 from . import __version__
 from .config import CONFIG, DEFAULT_SHARED_CACHE_PATH
@@ -90,6 +90,16 @@ class RadarPanel(QWidget):
         self.start_button = self.add_button(controls, "Start Collection", lambda: self.start())
         self.stop_button = self.add_button(controls, "Stop Collection", self.stop)
         layout.addLayout(controls)
+        opening_controls = QHBoxLayout()
+        self.opening_hour_enable = QCheckBox("Opening Hour Research · 종료 후 분석")
+        self.opening_hour_enable.setToolTip("기본 OFF · Regular Session 전용 · 기존 자료만 사후 분석")
+        self.opening_hour_status = QLabel("OFF · candidates - · full coverage -")
+        opening_controls.addWidget(self.opening_hour_enable)
+        opening_controls.addWidget(self.opening_hour_status)
+        opening_controls.addStretch()
+        layout.addLayout(opening_controls)
+        self.collection_mode.currentTextChanged.connect(self._render_opening_hour)
+        self.opening_hour_enable.toggled.connect(self._render_opening_hour)
         buttons = QHBoxLayout()
         self.replay_button = self.add_button(buttons, "Open Replay", self.open_replay)
         for label, action in (("Import Existing Session", self.import_existing), ("Refresh", self.refresh),
@@ -165,6 +175,11 @@ class RadarPanel(QWidget):
         self.ticker_table = DataTable()
         ticker_layout.addWidget(self.ticker_table)
         self.tabs.addTab(ticker_box, "Candidate History")
+        from .paper_rotation_v2.ui import PairedPaperPanel
+        self.paper_panel = PairedPaperPanel()
+        self.tabs.addTab(self.paper_panel, "Paper Trading")
+        self.collection_mode.currentTextChanged.connect(lambda: self.paper_panel.render(
+            None, busy=self.controller.busy, collection_mode=self.collection_mode.currentText()))
         layout.addWidget(QLabel("- = unavailable · 더블클릭: 종목 선택 · 새 수집은 data root 아래 별도 폴더 · 폴더/ZIP은 선택 세션 기준"))
         geometry = self.settings.value("geometry")
         if geometry:
@@ -201,6 +216,20 @@ class RadarPanel(QWidget):
         if path:
             self.data_root.setText(path)
 
+    def _render_opening_hour(self, *_):
+        regular = self.collection_mode.currentText() == "Regular Session"
+        if not regular:
+            self.opening_hour_enable.setChecked(False)
+        self.opening_hour_enable.setEnabled(regular and not self.controller.busy)
+        result = self.controller.opening_hour_result if regular else {"status": "OFF"}
+        status = result["status"]
+        if status == "OFF" and self.opening_hour_enable.isChecked():
+            status = "ENABLED"
+        quality = result.get("quality", {})
+        self.opening_hour_status.setText(f"{status} · candidates {quality.get('candidate_count', '-')} · "
+            f"full coverage {quality.get('candidates_with_full_60m', '-')}")
+        self.opening_hour_status.setToolTip(result.get("export_path") or result.get("error", "세션 종료 후 생성"))
+
     def start(self, provider=None, *, fresh_directory=None):
         if self.controller.busy:
             return
@@ -209,7 +238,10 @@ class RadarPanel(QWidget):
             config = base if provider and fresh_directory is None else replace(base, max_ws_symbols=self.max_ws.value(),
                 data_dir=Path(self.data_root.text()).expanduser().resolve(), result_pre_target_grace_seconds=self.grace.value(),
                 collection_mode=self.collection_mode.currentText() if provider is None else "Manual")
-            self.controller.start(config, provider, fresh_directory=(provider is None if fresh_directory is None else fresh_directory))
+            self.controller.start(config, provider, fresh_directory=(provider is None if fresh_directory is None else fresh_directory),
+                                  paper_enabled=self.paper_panel.enable.isChecked() and provider is None,
+                                  paper_rotation_enabled=self.paper_panel.rotation_enable.isChecked() and provider is None,
+                                  opening_hour_enabled=self.opening_hour_enable.isChecked() and provider is None)
             for table in self.tables:
                 table.render_rows([])
             self._summary = {}
@@ -430,6 +462,9 @@ class RadarPanel(QWidget):
                     else:
                         self.status.setText(f"{key} 작업 실패 ({type(exc).__name__}) · 원본/권한/민감정보를 확인하고 재시도하세요.")
         busy = self.controller.busy
+        self._render_opening_hour()
+        self.paper_panel.render(self.controller.paper.view() if self.controller.paper else None,
+                                busy=busy, collection_mode=self.collection_mode.currentText())
         self.start_button.setEnabled(not busy)
         self.replay_button.setEnabled(not busy)
         self.stop_button.setEnabled(busy and self.controller.state in ("STARTING", "RUNNING"))

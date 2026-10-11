@@ -35,13 +35,17 @@
 
 | 구분 | 현재 값 |
 |---|---|
-| Market Radar 앱 버전 | **v2.3.0** (Automatic Session Validator) |
+| Market Radar 앱 버전 | **v2.6.0** (Opening Hour Research v1 추가) |
 | Session Validator | **1** (수집 품질 검증; 전략 판단 아님) |
 | Collector 연구 버전 | **v2.1** |
 | test_version | `kiwoom_radar_v2_1` |
 | Research schema | **4** |
 | Master schema | **1** |
 | Windows Quick Launch | **v1** (`.venv-paddle` 실행, EXE 패키징 없음) |
+| 독립 NH read-only adapter | **v1.1** (`nhplug 0.4.1`; 잔고·매수가능수량 조회 PASS, RC 보류) |
+| Paper Trading / paper schema | **v1 / 1** (기본 OFF, 실제 주문 disabled / not implemented) |
+| Rotation Shadow / rotation extension schema | **v2 / 1** (`paper_rotation_v2`, 별도 DB, 기본 OFF) |
+| Opening Hour Research / schema | **v1 / 1** (`opening_hour_v1`, 세션 종료 후 관찰 연구, 기본 OFF) |
 
 프로그램 버전과 DB schema 버전은 별도로 관리합니다. 현재 다음 기능을 제공합니다.
 
@@ -65,6 +69,88 @@
 - [CHANGELOG.md](CHANGELOG.md): 영구 버전별 개발·검증 이력
 - [CODEX_HANDOFF.md](CODEX_HANDOFF.md): 현재 개발 상태와 다음 작업
 - [AGENTS.md](AGENTS.md): 프로젝트 작업·문서 갱신 규칙
+
+## Paper Trading / Shadow Trading v1
+
+**Experimental baseline strategy**이며 수익성은 검증되지 않았습니다(`strategy profitability = not established`). Kiwoom의 현재 후보 순위·완료 분봉 momentum과 live 가격만 사용합니다. NH 연결은 사용하지 않고 실제 주문은 **disabled / not implemented**, 주문 호출은 **0건**입니다. 관측가격 기반 가상 실행이며 거래비용·호가 spread·slippage·체결 가능성을 모델링하지 않습니다.
+
+Dashboard **Paper Trading** 탭에서 수집 시작 전에 **Enable Paper Trading**을 선택합니다. 기본 OFF이며 실행 중에는 설정을 고정합니다. **Regular Session**을 개장 전에 Start Collection하면 preopen 대기 → 정규장 후보 WATCHING → 조건 확인 → 후속 live 가격 진입 → TP/SL → 다음 후보 순서로 진행합니다. Manual은 정규장 진단에만 사용하며 **Capacity Test에서는 강제 OFF**로 Paper thread/DB/WS hook을 시작하지 않습니다. 재실행할 때마다 직접 Enable해야 합니다.
+
+- 후보: 양쪽 TOP10 → Emerging TOP10 → Current TOP10, 그룹 안에서 Emerging rank → Current rank → ticker 순입니다. 기존 슬롯 배정은 변경하지 않습니다.
+- 진입: WATCHING 이후 끝난 새 완료 1분봉, 양수 1m·5m return, watch 가격 초과, TOP10·fresh price·정상 WS가 모두 필요합니다. NULL은 진입 불가이며 RVOL/OR/HOD는 근거만 저장합니다.
+- 진입 가격: **신호 평가 시각보다 늦게 수신한 첫 유효 Kiwoom 가격**입니다. UTC 로컬 수신시각을 소수초까지 보존하며 거래소 체결시각이라고 주장하지 않습니다.
+- 한 번에 1종목, ET 거래일당 OPEN 최대 4회, 동일 ticker 당일 재진입 금지. +15%/-10% 첫 관측 crossing의 실제 관측가격으로 종료하며 목표가 체결을 가정하지 않습니다. 공식 close의 정상 보유분은 마지막 유효가격으로 SESSION_END 처리합니다.
+- disconnect·stale·큐 손실·시각 이상은 DATA_INTEGRITY_INVALID, 수동 중단·재시작은 INTERRUPTED로 구분합니다. 불명확한 exit 가격/return은 NULL이며 정상 성과 통계에서 제외합니다. 재시작 시 진입 횟수·ticker 차단을 유지하고 미완료 WATCHING/신호는 새 관측으로 다시 시작합니다.
+
+첫 Enable 실행 때 별도 `data/paper_trading/paper_trades.db`(paper schema 1)를 생성합니다. 연구 schema 4/cache/Validator는 유지합니다. 종료 후 `data/paper_trading/export/<ET-date>/`에 trades/events/horizons CSV와 summary JSON을 저장합니다. entry evidence는 불변이며 사후 horizon은 정확한 시각의 관측이 있는 경우만 사용하고 없으면 NULL입니다. 자세한 정의는 [기술 README](market_radar/README.md)를 따릅니다.
+
+v2.4.1에서는 수집기 잠금을 확보한 뒤에만 Paper 복원을 시작하고 잠금 해제 전에 저장을 마칩니다. 수동 중지는 최초 중지 요청시각으로 기록하며, 같은 수신시각에 들어온 서로 다른 가격도 도착 순서대로 TP/SL에 반영합니다.
+
+v2.4.2에서는 수집 상태 JSON을 교체할 때 발생하는 일시적인 Windows 접근 거부에 최대 3회 재시도합니다. 계속 실패하면 기존 파일을 보존하고 실패한 파일명·작업 단계·오류 번호를 표시합니다.
+
+네트워크 없이 합성 재현성 검증(임시 DB만 사용):
+
+```powershell
+& .\.venv-paddle\Scripts\python.exe -m unittest tests.paper_trading_test
+& .\.venv-paddle\Scripts\python.exe -m market_radar.paper.replay tests/fixtures/paper_baseline_v1.jsonl
+```
+
+실제 live shadow는 아직 실행하지 않았습니다. 기존 30초 snapshot만으로 모든 실시간 tick을 복원하지 않으며, clock_jump가 있었던 2026-10-07 Capacity 세션을 전략 수익성 표본으로 사용하지 않습니다.
+
+## Rotation Shadow v2 / Post-exit review
+
+기존 **Baseline v1은 그대로 보존**합니다. Paper Trading 탭의 **Enable Rotation v2**를 수집 시작 전에 선택하면 같은 시세·평가시각에서 v1과 독립 실행합니다. 기본 OFF이며 Capacity Test에서는 둘 다 실행하지 않습니다. 일반 진입·TP/SL은 v1과 같고, v2만 현재 종목 약화와 새 후보의 모든 **material evidence dominance** 조건을 확인한 뒤 가상 교체합니다. 상승확률은 계산하지 않습니다.
+
+전환은 signal 이후 기존 종목의 첫 유효 가격으로 exit → 그보다 늦은 새 종목 첫 유효 가격으로 entry입니다. 두 체결에 같은 관측을 쓰지 않으며, 각 전략의 하루 4회·동일 ticker 재진입 금지·1종목 원칙을 유지합니다. 실제 주문은 0건입니다.
+
+Paper를 활성화하면 종료된 v1/v2 ticker도 공식 close까지 별도 추적합니다. 원래 TP/SL 도달, SL 이후 회복, TP 이후 추가 상승·시간 순서상 최대 반락과 근거 tag를 기록합니다. 이 데이터는 사후 review 전용입니다. 시세 공백·조기 중지는 INCOMPLETE로 남기며 미래 가격으로 판단/체결을 보완하지 않습니다.
+
+v1 DB와 export는 유지합니다. 별도 `data/paper_trading/paper_rotation_v2/review.db`와 `export/<ET-date>/`에 두 전략의 `paper_trades.csv`, `paper_post_exit.csv`, 실제 후속 tick 경로, `paper_rotation_comparison.csv`, switch evidence CSV, `paper_daily_summary.json`을 저장합니다. 동일 시작 trade는 v1 종료 수익률과 v2 연결 trade 수익률로 비교하고, exact 동일시각 가격이 있는 경우만 교체 이후 손익 차이를 계산합니다. 필드·공식·NULL 정의는 [기술 README](market_radar/README.md)를 따릅니다.
+
+```powershell
+& .\.venv-paddle\Scripts\python.exe -m unittest tests.paper_trading_test tests.paper_rotation_v2_test
+& .\.venv-paddle\Scripts\python.exe -m market_radar.paper_rotation_v2.replay tests/fixtures/paper_rotation_v2.jsonl
+```
+
+## Opening Hour Research v1
+
+미국 정규장 개장 후 첫 60분에 Radar candidate/discovery에 등장한 후보의 가격·거래량 경로를 **기존 자료로 사후 분석**합니다. `data collection / descriptive research`이며 buy signal, prediction model, profitable pattern을 생성하지 않습니다. Paper v1·Rotation v2 판단과 연결하지 않고, 같은 run/ticker의 거래 reference ID만 읽습니다.
+
+Dashboard에서 **Regular Session**을 선택하고 상단 **Opening Hour Research · 종료 후 분석**을 켠 뒤, 공식 개장 전에 Start Collection으로 arm합니다. 기본 OFF이며 Capacity Test와 Manual에서는 강제 OFF입니다. Paper/Rotation은 Paper Trading 탭에서 별도로 켤 수 있습니다. 공식 close까지 수집하면 collector/Paper 종료·기존 export/Validator가 끝난 뒤 별도 분석을 수행합니다. `OFF / ENABLED / COMPLETE / INCOMPLETE`, 후보 수와 60분 전체 coverage 수를 표시합니다. 새 REST·WS 구독이나 backfill은 추가하지 않습니다.
+
+XNYS official open부터 60분, **09:30~10:29 시작의 완료 1분봉 60개**를 사용합니다. 10:30 시작 봉은 제외하고 3분 20개·5분 12개로 집계합니다. cache에 없는 시가, 누락 분, 불완전 집계는 NULL로 보존합니다. 분봉 돌파·고저점 시각은 1분 구간이며, 분 중간에 발견한 후보의 정확한 detection-relative MFE/MAE는 NULL입니다. 해석과 공식은 [기술 문서](market_radar/README.md#opening-hour-research-v1)에 있습니다.
+
+별도 DB는 `data/opening_hour_research/opening_hour.db`, export는 `data/opening_hour_research/export/<ET-date>/<research-id>/`입니다. 날짜별 폴더에 candidates·1m/3m/5m bars·events·time_snapshots·outcomes·volume_segments CSV와 metadata·quality·summary JSON이 생성됩니다. 해당 폴더를 ZIP으로 보관해 다른 거래일과 비교할 수 있습니다. 결측/coverage와 표본 수를 함께 확인합니다.
+
+종료된 과거 세션의 읽기 전용 수동 분석:
+
+~~~powershell
+& .\.venv-paddle\Scripts\python.exe tools/opening_hour_research/analyze_session.py --session-dir "data/<session-directory>"
+~~~
+
+필요하면 `--date YYYY-MM-DD`, `--cache-path <cache.db>`, `--paper-db <paper.db>`(여러 번), `--output-db <separate.db>`, `--export-root <folder>`를 지정합니다. 원본 session/cache/export/Master/Paper는 변경하지 않습니다. 기존 Capacity 세션도 구조·기술통계 분석은 가능하지만 전략 수익성 근거로 바꾸지 않습니다. 이번 검증은 합성 임시 자료에 한정하며 실제 live 수집은 후속 확인 대상입니다.
+
+## NH Namuh PLUG read-only probe
+
+Kiwoom은 **market discovery / research**, NH는 독립적인 **read-only execution-price/account provider**로 구분합니다. NH 어댑터 v1.1은 Dashboard/Collector에 자동 연결되지 않습니다. 공식 [nhplug SDK](https://github.com/PLUG-OpenAPI/nhplug-sdk) **0.4.1**을 사용하며, 프로젝트 `.env`의 `NHPLUG_APP_KEY`, `NHPLUG_APP_SECRET`을 읽습니다. 실제 값은 출력하지 않습니다.
+
+NH 토큰은 파일 캐시 없이 프로세스 메모리에서만 재사용합니다. 따라서 NH probe를 새 프로세스로 실행할 때마다 새 발급과 보안 알림이 발생할 수 있습니다. Paper Trading과 오프라인 테스트는 NH 토큰을 발급하지 않습니다.
+
+```bash
+./.venv-paddle/Scripts/python.exe -m pip install -r market_radar/requirements-nhplug.txt
+./.venv-paddle/Scripts/python.exe tools/nhplug_probe/probe.py
+./.venv-paddle/Scripts/python.exe tools/nhplug_probe/accounts.py
+```
+
+기본 실행은 인증 → AAPL 현재가 → 계좌목록 조회 후 종료합니다(`--accounts`는 기본 포함 동작). `--realtime`에서만 지정한 한 종목의 공식 GIC를 종목마스터에서 확인해 대문자 `RC`로 구독합니다. `PASS`/`CONNECTED_NO_TICK`/`FAIL`을 구분하고 구독·해제 ACK와 연결 종료를 검사합니다. 출력 가격의 `received_at`은 로컬 UTC 수신 시각이며 거래소 체결시각으로 해석하지 않습니다.
+
+2026-10-08 KST 실제 기본 smoke는 **PASS**: OAuth·AAPL REST 현재가·계좌목록 성공, 계좌 6개 중 운영 유형 `01`·`02` 기준 3개. 마스킹한 끝 4자리가 같아도 전체 계좌가 다르면 별개입니다. 이전 WebSocket 검사는 연결 성공, **구독 FAIL (`WSS10012`)**로 체결 수신과 정상 해제 ACK는 미확인, 소켓 close는 확인했습니다. [공식 명세](https://www.nhplug.com/openapi-docs/gbstock/openapi.json)는 `RC`에 유료시세 약정을 요구하지만 해당 오류 코드의 정확한 원인은 확인되지 않았습니다. RC는 현재 보류하며 이번 계좌 작업에서 수정·재호출하지 않았습니다. 실시간 시장 시세는 Kiwoom이 담당합니다.
+
+`accounts.py`는 운영 계좌 각각의 미국/USD 잔고를 조회하고, 잔고 조회가 PASS인 계좌 모두에 AAPL 매수가능수량을 조회합니다. `/gbstock/inquiry/v1/buyableAmount`의 `pcs_dit="2"`와 NH REST 현재가를 사용하며, 원화증거금(`wtm_cur_knd_cd="2"`)·지정가 기준의 조회입니다. 2026-10-08 실제 결과는 운영 3개 모두 잔고 PASS(보유 종목 0·0·1개), 매수가능수량 조회 PASS(모두 0주), 실제 주문 0건입니다. 수량 0은 조회 실패가 아닙니다.
+
+토큰 파일 캐시는 비활성화하고 계좌번호는 마지막 4자리만 표시합니다. 원본 응답·인증값·계좌 전체를 파일에 저장하지 않으며 기존 `data/`를 사용하지 않습니다. 같은 끝자리 계좌는 이번 응답 순서의 `live-1` 등으로 구분하며 이 번호는 영구 식별자가 아닙니다. 사용 가능한 계좌가 여러 개면 사용자가 선택해야 하며, `NHPLUG_DEFAULT_ACCOUNT`나 `.env`를 자동 변경하지 않습니다. 허용 REST는 인증·현재가·계좌목록·잔고·매수가능수량 조회뿐입니다. NH는 Paper에 연결하지 않으며 실제 주문은 미구현이고 buy/sell/modify/cancel/reservation 경로는 차단합니다.
+
+RC 키 재감사에서도 기존 전송 키는 AAPL 티커가 아닌 공식 마스터 GIC였습니다. 공식 `sGIC[15]`는 저장 필드 폭이며 AAPL 행의 유효 값은 7문자(뒤 공백 8개 제거)입니다. 같은 키를 RC/7080으로 재시험해 WSS10012를 재현했습니다. 권한·약정은 원인 후보로만 남깁니다. probe는 전송한 키의 형식·길이와 ACK code만 진단에 추가하며, 소문자 `rc`로 자동 전환하지 않습니다.
 
 ## 환경 변수
 

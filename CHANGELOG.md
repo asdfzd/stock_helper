@@ -1,8 +1,74 @@
 # Changelog
 
+## 2026-10-12 — Market Radar v2.6.0 / Opening Hour Research v1 / opening hour schema 1
+
+- 기존 candidate/discovery·완료 1m·shared minute cache를 read-only 분석하는 `opening_hour_v1`을 추가했다. 기본 OFF/Regular Session 전용이며 collector/Paper 종료 후에만 실행한다. Capacity/Manual 자동 OFF, 종료된 과거 자료는 별도 CLI로 명시적으로 분석한다. 추가 REST·WS subscription·backfill·실제 주문 **0건**, live strategy/ranking 입력 변경 없음.
+- XNYS open~open+60분, 09:30~10:29 시작 1m 60개와 3m 20개/5m 12개, 늦은 발견 pre_detection, 원본 OHLCV·shape·anchor·break·HOD/LOD·구조 count·volume·구간 집계·7개 open snapshot·6개 detection horizon 및 first-hour outcome을 보존한다. 결측을 0으로 보간하지 않으며 incomplete aggregate는 NULL이다. cache가 없을 때 Bar에 없는 시가를 만들지 않는다. 공식 minute notional 부재로 NULL을 유지한다.
+- 분봉 event/extrema는 1분 구간 정밀도다. gap 이전의 first break를 확정하지 않으며 분 중간 detection의 exact MFE/MAE는 NULL이다. 창 안의 완전 봉 부분 관측과 이전 완료 봉 extreme→후속 봉 extreme pullback/rebound 정의를 따로 기록한다. 해석 tag·BUY/SELL·점수·확률·패턴 추천 없이 기술통계와 표본 수만 제공한다.
+- 독립 `data/opening_hour_research/opening_hour.db` schema 1과 ET date/research ID별 8 CSV+3 JSON export를 추가했다. 같은 evidence/version은 동일 ID/재현 가능한 export, 바뀐 evidence는 새 dataset으로 보존한다. created_at은 DB 최초 저장 UTC다. source DB/WAL 임시 복사본만 SQLite로 읽어 원본 DB/SHM/cache/export를 변경하지 않는다. Paper는 same day/run/ticker reference ID만 연결한다.
+- Offline **448 통과**: Opening Hour 64, Paper v1 59, Rotation 30, NH 48, Radar/Kiwoom/Dashboard/scheduling/metadata/Validator/audit 247. 신규 전체에서 DB roundtrip/export 결정성·원본 bytes/mtime·WAL/SHM·no REST/WS/NH·CLI 합성 smoke·offscreen UI·collector/Paper 종료 순서를 확인했다. 새 종료 순서 fixture가 ws_factory를 제공하지 않아 최초 1건 실패했고 synthetic provider fixture를 보완 후 신규 64개 전체 통과했다. 기존 구현을 실패에 맞춰 변경하지 않았다.
+- Paper/Rotation/post-exit 동일 fixture 결과는 research 전후 동일하다. `paper/`, `paper_rotation_v2/`, NH execution, Kiwoom provider, 기존 fixtures/tests, runtime/scheduling의 작업 전후 SHA256 동일. PROJECT_DIRECTION.docx SHA256은 `a92ad593d07d54475268c449374d0bbf1581cc55c9a681e74df3c77564e8175b`로 동일하고 방향 MD도 변경하지 않았다. 원본 data/환경 인증값을 입력·출력으로 사용하지 않았으며 실제 Kiwoom/NH/live shadow/보관 실데이터 신규 분석은 미실행이다. git add/commit/push 없음.
+- 최종 `git diff --check`, 현재 버전·상대 링크·15개 신규/갱신 파일의 공백/인증값 패턴 검사 PASS. 임시 설정/DB를 사용한 Regular ENABLED·Capacity OFF의 UI 렌더를 확인했다. 기존 미커밋 변경을 포함한 status는 추적 수정 10개/미추적 항목 15개이며 이번 신규 status 항목은 Opening 모듈·CLI·test 3개다.
+
+## 2026-10-12 — Market Radar v2.5.0 / paper_rotation_v2 / rotation extension schema 1
+
+- 기존 `market_radar/paper/` 7개 파일, v1 fixture/test는 작업 시작 시 SHA256과 동일하게 보존했다. v1 전략·paper schema 1·원본 export를 유지하고, 별도 RotationEngine/RotationStore/PostExitTracker/paired consumer/UI/replay를 추가했다. 사용자 미커밋 NH/Paper/metadata 작업은 보존하며 git add/commit/push는 하지 않았다. PROJECT_DIRECTION.docx SHA256은 `a92ad593d07d54475268c449374d0bbf1581cc55c9a681e74df3c77564e8175b`로 전후 동일하다.
+- 같은 frame 평가시각과 순서가 보존된 FE를 두 전략에 전달한다. v2만 양쪽 TOP10·양쪽 rank/완료 1m/5m return 우위·v1 confirmation·fresh/정상 WS·미거래 조건과 현재 약화 증거를 모두 확인해 **material evidence dominance**로 전환한다. signal < old exit < new entry 시각을 강제하고 새 종목의 과거 tick을 재사용하지 않는다. 각 전략에 1종목·일일 4회·재진입 금지를 독립 적용한다. 확률·실제 주문 구현은 없다.
+- TP/SL/SESSION_END/SWITCH 및 무효 종료 뒤에도 원래 entry/TP/SL 기준의 가격경로·hit와 시각·TP 추가 상승/시간 순서상 반락·SL 회복·deterministic tag를 별도 sidecar에 보존한다. official close까지 기존 보호 입력을 연장하되 슬롯/rank 알고리즘은 유지한다. gap·조기 중지·restart는 INCOMPLETE, SESSION_END 뒤 창은 NO_POST_EXIT_WINDOW이며 후속가격이 decision에 전달되지 않는다.
+- 별도 `paper_rotation_v2/review.db`와 trades/post_exit/marks/switches/comparison CSV 및 daily summary JSON을 추가했다. 동일 시작을 exact identity로 연결하고 v2 chain 수익률·새 종목 MFE/MAE·원래 TP 도달을 보존한다. 새 종목 exit와 exact 동일시각의 원래 종목 가격이 있을 때만 비교 손익을 산출한다. 비용·체결 가능성은 모델링하지 않는다. Baseline v1 / Rotation v2 UI 분리, v2 기본 OFF, Capacity 모두 OFF다.
+- Offline 회귀: Paper v1 **59**, NH **48**, Radar/Kiwoom/Dashboard/scheduling/metadata/Validator/audit 전체 **247**, 신규 rotation **30** 통과(총 **384**). v1 단독 replay와 paired rotation ON/OFF의 baseline 결과 동일, 신규 paired replay 반복 동일, 공유 background consumer 및 offscreen UI 확인. 초기 신규 테스트에서 sidecar 읽기 검사 연결 미종료로 임시 DB 정리 실패 1건을 발견해 명시적 close로 수정 후 통과했다. 실제 live shadow·Kiwoom/NH smoke는 실행하지 않았고 실제 주문 호출 **0건**이다.
+- 이전 v2.4.2의 8/59/48/208 통과, scheduling 5회 반복, 10,000회 metadata 교체 중 일시적 WinError 5 5건 재시도 복구, 원본 data 201개 크기/mtime 보존 사실은 아래 해당 버전 이력에 보존한다. 이번 작업의 원본 data/환경 인증값은 읽거나 편집하지 않았으며 테스트·replay·UI 이미지는 임시 폴더만 사용했다.
+
 버전별 개발·검증 이력을 보존한다. 현재 실행법은 [README](README.md), 기술 계약은 [Market Radar README](market_radar/README.md), 현재 개발 상태는 [CODEX_HANDOFF](CODEX_HANDOFF.md)를 따른다.
 
 날짜는 확인된 Git commit 날짜와 실제 검증 시각을 구분한다. 별도 릴리스 날짜·commit이 확인되지 않은 단계는 임의로 채우지 않는다. 프로그램 버전과 research schema 버전은 별개다. 아래 Known limitations는 각 버전 당시의 상태이며 이후 해결 여부는 다음 버전을 참조한다. 로컬 data 경로는 증거 위치이며 Git에 포함하지 않는다. 공용 tests_summary.json은 후속 실행으로 갱신되므로 과거 테스트 수는 당시 commit의 문서 기록을 근거로 한다.
+
+## 2026-10-08 — Market Radar v2.4.2: Windows metadata 교체 오류 복구
+
+- 수정 전 별도 scheduling 27개×8회는 통과했지만, lifecycle 저장 반복의 910번째 호출에서 `dashboard_run.json.tmp` → `dashboard_run.json`의 `os.replace()` WinError 5를 재현했다. 이전 controller PermissionError와 같은 오류 유형/저장 경로를 확인했으며 외부 점유 프로세스는 특정하지 못했다.
+- controller lifecycle/최종 protocol JSON의 atomic replace에 Windows PermissionError 5/32/33만 25·50·100ms, 최대 3회 재시도를 추가했다. 영구 거부·다른 오류는 실패로 남기고 기존 공개 파일을 보존한다. 안전한 파일명/작업 단계/OS 번호를 오류 이벤트에 추가하며 예외 원문과 전체 경로는 표시하지 않는다. Capacity/scheduling 정책·허용 오차·Paper/NH/전략/schema는 변경하지 않았다.
+- 수정 후 10,000회 연속 저장 중 실제 WinError 5 5회를 모두 복구했다. 신규 metadata 회귀 **8**, Paper **59**, NH **48**, 기존 Radar/Kiwoom/Dashboard/scheduling/Validator **208** 통과. scheduling 27개는 전체 회귀 외 별도 프로세스로 추가 5회 통과했다. 신규 테스트의 SQLite fixture 연결 미종료는 명시적으로 닫도록 수정 후 재검증했다. 실시간 연결/토큰 발급/주문 **0건**, 첫 live shadow는 미실행이다.
+- `.env`·방향 DOCX/MD·NH 및 기존 Paper/runtime/UI/provider/scheduling/Validator 원본 보존. data 201개 파일 크기/mtime와 목록 동일. diff --check·상대 링크·인증값 대조 PASS. 기존 사용자 변경 유지, git add/commit/push 없음.
+
+## 2026-10-08 — Market Radar v2.4.1: Paper 경계 조건 재검토
+
+- Paper DB 복원을 기존 Kiwoom collector lock 확보 후로 옮기고, Paper 저장/종료 후 provider가 잠금을 해제하도록 했다. 시작에 실패한 중복 실행이 다른 실행의 OPEN을 INTERRUPTED로 바꾸는 위험을 제거했다. Capacity는 기존처럼 Paper를 시작하지 않는다.
+- 최초 중지 요청시각을 비동기로 고정하고 중지 뒤 신규 frame/signal과 뒤늦은 tick을 차단했다. 장 종료 직전 수동 중지가 느린 shutdown 때문에 SESSION_END로 바뀌지 않는다. 동일 수신시각의 서로 다른 FE 가격은 순서대로 처리하며 동일 시각·동일 가격 중복만 제외한다. 전략/TP/SL/schema/순위 공식은 변경하지 않았다.
+- Paper **59 통과**, NH **48 통과**, 기존 회귀의 scheduling 외 **181 통과**. scheduling 27개는 최초 및 일부 반복에서 간헐 실패했고 이후 같은 프로세스 5회·별도 프로세스 4회 통과했다. 실패 시 controller PermissionError, Paper OFF Capacity의 PREOPEN_WAIT 대기 실패/ERROR 종료를 관측했다. 정확한 파일 접근 원인은 미확정이며 통과한 반복만으로 해결됐다고 보지 않는다. 별도 추적 과제로 HANDOFF에 남겼다.
+- 합성 replay 재현성 PASS. 실제 네트워크/토큰 발급/주문 0건. NH 파일 캐시 비활성화로 새 probe 프로세스마다 발급 알림이 발생할 수 있음을 문서화했으며 실제 인증값·캐시 설정·.env는 변경하지 않았다. 기존 사용자 변경 보존, git add/commit/push 없음.
+
+## 2026-10-08 — Market Radar v2.4.0 / Paper Trading v1 / paper schema 1
+
+- Experimental baseline strategy `paper_v1_baseline`을 별도 engine/policy/DB/consumer로 추가했다. 양쪽 TOP10 → Emerging → Current의 deterministic priority, 새 완료 1m 봉·양수 1m/5m momentum·watch 가격 초과·freshness·WS gate만 사용한다. RVOL/OR/HOD는 불변 근거로 저장하며 가중 점수/확률/시장 참여자 의도를 생성하지 않는다. **Strategy profitability = not established**.
+- 신호 평가 시각 뒤 첫 유효 Kiwoom FE 수신가격으로 OPEN하고 +15%/-10% 첫 crossing의 관측가격으로 닫는다. 1종목/ET 일일 4회/동일 ticker 재진입 금지, MFE/MAE와 시각, SESSION_END/INVALID/INTERRUPTED 구분·재시작 복원·gap 원인/범위를 저장한다. 신호와 체결에 같은 snapshot을 사용하거나 threshold 가격으로 소급하지 않는다.
+- Paper 탭 Enable 기본 OFF, 실행 전에 선택, Capacity Test 강제 OFF. 기존 WS raw sink와 worker의 확정 ranked rows를 opt-in으로 별도 bounded queue에 전달하며 snapshot UI 큐를 체결용으로 쓰지 않는다. provider/scheduling/slot/cache/rank/research schema 4/Validator 1은 그대로 유지했다. 앱 v2.4.0, Collector v2.1, Master schema 1, NH adapter v1.1.
+- 별도 paper schema 1: sessions/trades/events/marks/horizons. 정확한 entry 이후 관측시각 일치만 post-session horizon에 사용하고 누락은 NULL이다. 전용 CSV/JSON export와 일일 통계, 비용 제외·전액 재투자 가정을 분리한 복리를 제공한다. 기본 계좌·NH 연결은 사용하지 않고 **actual orders = disabled / not implemented**, 실제 주문 호출 **0건**이다.
+- Offline Paper **52**, NH **48**, 기존 Radar/Kiwoom/Dashboard/scheduling/Validator **208/7 suites** 통과. 합성 replay 동일 결과, UI polling 없이 동작하는 consumer의 평가 시각/첫 후속 tick과 offscreen UI 렌더를 확인했다. 합성/임시 DB 검증이며 실제 live shadow·기존 session DB replay·NH 재조회는 실행하지 않았다. 2026-10-07 clock_jump Capacity 자료는 수익성 표본으로 사용하지 않았다.
+- 기존 미커밋 NH 변경을 유지하고 방향 DOCX/MD·.env·원본 DB/export/cache/ZIP을 편집·삭제하지 않았다. git add/commit/push/reset/restore/checkout/clean 없음. 다음 단계는 새 Regular Session의 명시적 live shadow다.
+- diff --check·문서 상대 링크·인증값 대조 PASS. 방향/환경/NH/기존 provider·scheduling·연구 schema·Validator 해시를 보존했다. data 201개 중 200개 크기/mtime 동일, 기존 SHM 1개는 크기 동일/mtime 변동(원인 미확정)이며 복구·정리하지 않았다. Paper DB는 임시 폴더에서만 테스트했고 원래 data에 새 파일을 생성하지 않았다.
+
+## 2026-10-08 — NH read-only adapter v1.1: 해외주식 계좌 조회
+
+- 공식 gbstock openapi.json과 nhplug SDK balance/buyable_amount 예제를 기준으로 독립 계좌 probe를 추가했다. 운영 계좌별 미국/USD 잔고를 연속 조회하며 정상 빈 잔고·명시적 계좌 거절·통신/업무 실패를 구분한다. 매수가능수량은 `pcs_dit="2"`, 원화증거금·지정가 기준과 NH AAPL REST 현재가만 사용한다. 주문 경로와 다른 pcs_dit는 허용하지 않는다.
+- 실제 운영 3개 계좌 모두 잔고 PASS(보유 종목 0·0·1개), AAPL 가격 336.265 USD 기준 매수가능수량 조회 PASS. 각 계좌의 `byn_pbl_qty`/`orr_pbl_qty`/`max_pbl_qty` 모두 0이었다. 원본 계좌·응답은 저장하지 않고 끝 4자리와 이번 응답 순서 구분자만 출력했다. 여러 계좌가 사용 가능하므로 기본 계좌는 선택하지 않았으며 `.env`/`NHPLUG_DEFAULT_ACCOUNT`는 변경하지 않았다.
+- 전송 경로별 실제 횟수: OAuth 1, 계좌목록 1, 잔고 3, 현재가 1, 매수가능수량 3. **실제 주문 0건**, RC 0회. RC/WSS10012는 보류하며 기존 구현을 유지했다. Paper Trading·실주문 및 Kiwoom/Collector/Validator/schema/launcher 변경은 없다.
+- NH offline **48 통과**, 기존 Kiwoom/Radar/Dashboard/scheduling 회귀 **186 통과/6 suites**. 실제 smoke 출력의 인증값·전체 계좌 미노출을 메모리 대조했다. 사용자 미커밋 변경을 보존하고 git add/commit/push하지 않았다.
+- diff --check·상대 링크·인증값 검사 PASS. `.env`·DOCX 해시와 RC 함수 원문 동일. data 201개 중 기존 200개 크기/mtime 동일, 이전에도 관측한 SHM 1개 mtime 변동(크기 동일)은 원인 미확정으로 기록하며 파일을 되돌리지 않았다.
+
+## 2026-10-08 — NH RC 구독 키 감사·재시험
+
+- 기존 구현이 AAPL ticker를 tr_key로 직접 보내지 않고 공식 SDK 종목마스터의 GIC를 사용했음을 확인했다. 공식 gbstock openapi.json의 x-realtime-channels는 RC/7080/gicz15, rc는 미국·중국 지연정보다. 공식 m_gtsstock.h/.mst의 AAPL/USA 행은 하나이며 sGIC 필드 폭 15바이트 중 유효 값 7문자/뒤 공백 8개였다. 공식 SDK의 우측 공백 제거를 유지하고 임의 prefix·padding·rc fallback은 추가하지 않았다.
+- 전송 직렬화 결과가 resolver의 GIC/RC와 일치하는지 검사하고 키 형식/길이·ACK code만 출력하도록 보강했다. 합성 테스트에서 실제 resolver/serializer를 연결해 ticker 직접 전송·모호한 마스터·WSS10012 오분류를 방지했다.
+- AAPL 한 종목만 실제 RC 재시험: connected=true, key_length=7, master_field_width=15, key_is_ticker=false, ACK **WSS10012 재현**, subscribed=false, tick 없음, 해제 전송/close 확인·해제 ACK 미확인. 이용권한/유료시세 약정은 원인 후보이며 확정하지 않았다. 인증 외 REST와 계좌·주문은 재호출하지 않았다.
+- NH offline **34 통과**, Kiwoom/Radar/Dashboard/scheduling 핵심 회귀 **186 통과/6 suites** 재실행. .env·DOCX 해시 유지, data 200개 크기/mtime 동일·동일 SHM 1개 mtime 변동 관측을 기록하며 원본을 복구·정리하지 않았다. 기존 미커밋 변경 보존, add/commit/push 없음.
+
+## 2026-10-08 — 독립 NH Namuh read-only adapter v1
+
+- 공식 nhplug 0.4.1과 Windows TLS용 truststore 0.10.4, websocket-client 1.9.2를 `.venv-paddle`에 추가했다. optional requirements를 분리하고 기존 패키지 전체 upgrade는 하지 않았다. Market Radar 앱 v2.3.0 / Collector v2.1 / Validator 1 / research schema 4 / Master schema 1 유지.
+- OAuth·해외 현재가·계좌목록만 허용하는 REST adapter와 명시적 CLI probe를 추가했다. 전송 계층에도 endpoint allowlist·redirect 차단을 적용하고 주문 메서드는 만들지 않았다. SDK token 파일 캐시·원본 응답 출력은 끄고 계좌는 끝 4자리만 표시한다. GIC는 공식 종목마스터에서 확인하며 가격 필드는 공식 명세의 REST trdprc/RC trdprc_1z17만 사용한다. 대소문자 채널 변환과 지연채널 fallback은 없다.
+- 실제 기본 smoke **PASS**: 인증, AAPL 현재가(마지막 조회 336.75), 계좌목록 6개/운영 유형 3개. 추가 RC WebSocket은 연결 성공 후 **WSS10012 구독 거절로 FAIL**, tick·해제 ACK 미확인, close 확인. 공식 명세는 RC 유료시세 약정을 요구하지만 해당 오류 코드와의 정확한 관계는 미확인이다. 실제 주문 호출 0건, 주문가능수량은 공식 API 존재만 확인했다. Paper Trading/실주문은 미구현.
+- NH 합성 오프라인 **30 통과**, 기존 핵심 회귀 **186 통과/6 suites**(Radar 31, Kiwoom provider 33/quality 33/stability 35, Dashboard 27, scheduling 27). live 출력에서 실제 key/secret/token 값과 전체 계좌 형태가 나오지 않는지 메모리 내 대조했다. pip check와 diff --check 통과. 기존 data 테스트 로그는 덮어쓰지 않았다.
+- .env/DOCX 해시 보존. data 201개 중 200개 크기/mtime 동일, 최근 세션의 `stock_helper_market_kiwoom_v2_1.db-shm` 1개 mtime 변동을 관측했다(크기 동일). 기존 pythonw 실행도 확인했지만 원인은 미확정이며 파일을 되돌리지 않았다. NH 코드에는 기존 data 접근이 없고 기존 scheduling/clock_jump/Kiwoom/Validator 기능을 수정하지 않았다. 시작 HEAD 3adacfd/main ahead 1을 유지하며 add/commit/push하지 않았다.
 
 ## 2026-10-07 문서 정합성 검수 — 사용자 교체 DOCX 기준
 

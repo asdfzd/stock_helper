@@ -18,6 +18,40 @@ from .research.validator import revalidate_session
 from .scheduling import SessionSchedule, SystemClock, validate_protocol_config, LATE_CAPACITY
 
 
+class _MetadataWriteError(OSError):
+    """Only controlled metadata names and OS codes may reach the UI."""
+    def __init__(self, operation, name, cause):
+        super().__init__(f"metadata {operation}: {name}; errno={cause.errno}; "
+                         f"winerror={getattr(cause, 'winerror', None)}")
+
+
+def _write_metadata(path, document):
+    """Atomic publication; bounded retries for transient Windows file contention."""
+    operation = "mkdir"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        operation = "write"
+        temporary = path.with_suffix(path.suffix + ".tmp")
+        temporary.write_text(json.dumps(document, ensure_ascii=False, indent=2), encoding="utf-8")
+        operation = "replace"
+        # Never truncate/rewrite the published file, even if it stays locked.
+        delays = (.025, .05, .1)
+        for attempt in range(len(delays) + 1):
+            try:
+                os.replace(temporary, path)
+                return
+            except PermissionError as exc:
+                if getattr(exc, "winerror", None) not in {5, 32, 33} or attempt == len(delays):
+                    raise
+                time.sleep(delays[attempt])
+    except OSError as exc:
+        raise _MetadataWriteError(operation, path.name, exc) from exc
+
+
+def _error_detail(exc):
+    return str(exc) if isinstance(exc, _MetadataWriteError) else type(exc).__name__
+
+
 class CollectorController:
     def __init__(self, master_path=DEFAULT_MASTER_PATH, provider_factory=create_live_provider, *, clock=None, calendar=None):
         self.master_path = Path(master_path)
@@ -33,6 +67,14 @@ class CollectorController:
         self.connection = {"connected": False, "active_ws": 0}
         self.clock, self.calendar = clock or SystemClock(), calendar
         self.schedule = None
+        self.paper = None
+        self.paper_enabled = False
+        self.paper_path = None
+        self.paper_rotation_enabled = False
+        self.paper_review_path = None
+        self.opening_hour_enabled = False
+        self.opening_hour_path = None
+        self.opening_hour_result = {"status": "OFF"}
 
     @property
     def session_phase(self):
@@ -46,7 +88,8 @@ class CollectorController:
     def running(self):
         return self.busy
 
-    def start(self, config, provider=None, *, fresh_directory=True):
+    def start(self, config, provider=None, *, fresh_directory=True, paper_enabled=False, paper_rotation_enabled=False,
+              opening_hour_enabled=False):
         if self.busy:
             return False
         run_id = uuid.uuid4().hex
@@ -62,6 +105,11 @@ class CollectorController:
             if config.db_path.exists():
                 raise ValueError("Scheduled modes require a new session directory")
         self.config = config
+        self.paper_enabled = bool((paper_enabled or paper_rotation_enabled) and config.collection_mode != "Capacity Test")
+        self.paper_rotation_enabled = bool(paper_rotation_enabled and self.paper_enabled)
+        self.opening_hour_enabled = bool(opening_hour_enabled and config.collection_mode == "Regular Session")
+        self.opening_hour_result = {"status": "ENABLED" if self.opening_hour_enabled else "OFF"}
+        self.paper = None
         self.schedule = None
         self.worker = None
         self._stop.clear()
@@ -86,10 +134,7 @@ class CollectorController:
         if self.schedule:
             self.lifecycle["collection_protocol"] = self.schedule.snapshot()
         root = self.worker.config.data_dir if self.worker else self.config.data_dir
-        root.mkdir(parents=True, exist_ok=True)
-        temporary = root / "dashboard_run.json.tmp"
-        temporary.write_text(json.dumps(self.lifecycle, indent=2), encoding="utf-8")
-        os.replace(temporary, root / "dashboard_run.json")
+        _write_metadata(root / "dashboard_run.json", self.lifecycle)
 
     def _run(self, provider):
         try:
@@ -108,7 +153,13 @@ class CollectorController:
             instance = provider or self.provider_factory(self.config)
             if self.config.collection_mode != "Manual":
                 instance.collection_schedule = self.schedule
-            self.worker = RadarWorker(instance, self.config, schedule=self.schedule)
+            if self.paper_enabled and instance.name == "kiwoom" and instance.mode == "live":
+                from .paper_rotation_v2.runtime import PairedRuntime, DEFAULT_PAPER_PATH
+                self.paper = PairedRuntime(self.config, self.lifecycle["run_id"],
+                    self.paper_path or DEFAULT_PAPER_PATH, clock=self.clock.now,
+                    review_path=self.paper_review_path, rotation_enabled=self.paper_rotation_enabled)
+                self.paper.attach(instance)
+            self.worker = RadarWorker(instance, self.config, schedule=self.schedule, paper=self.paper)
             self._save_lifecycle()
             # Worker owns its normal thread and uses the unchanged graceful close/export path.
             self.worker.start()
@@ -133,6 +184,8 @@ class CollectorController:
                     saved_protocol_state = protocol_state
                 self.worker.thread.join(.05)
             self._sample_connection()
+            if self.paper is not None:
+                self.paper.finish()
             self.state = "ERROR" if self.worker.error else "STOPPING"
             self.lifecycle.update(stopped_at=datetime.now(timezone.utc).isoformat(),
                 clean_shutdown=not bool(self.worker.error), shutdown_elapsed_ms=self.worker.shutdown_elapsed_ms)
@@ -145,6 +198,8 @@ class CollectorController:
             if self.worker and self.worker.running:
                 self.worker.stop(reason="controller_error")
                 self.worker.thread.join()
+            if self.paper is not None:
+                self.paper.finish()
             if self.schedule:
                 self.schedule.stop("startup_error")
                 self.schedule.finish(False)
@@ -154,7 +209,7 @@ class CollectorController:
                     pass
             # Provider exceptions may contain external text; do not expose arbitrary credentials.
             self.events.put(("collector_error", LATE_CAPACITY if str(exc) == LATE_CAPACITY else
-                             f"수집 시작/종료 실패 ({type(exc).__name__}); 로컬 로그 확인"))
+                             f"수집 시작/종료 실패 ({_error_detail(exc)}); 로컬 로그 확인"))
             return
         self.schedule.finish(not bool(self.worker.error))
         # Remain FINALIZING until exports, protocol persistence and Master import finish.
@@ -175,7 +230,7 @@ class CollectorController:
                 self._persist_final_protocol()
             except Exception:
                 pass
-            self.events.put(("import_failed", f"수집 완료, 최종 metadata/Master 등록 실패 ({type(exc).__name__}). Import Existing Session으로 재시도하세요."))
+            self.events.put(("import_failed", f"수집 완료, 최종 metadata/Master 등록 실패 ({_error_detail(exc)}). Import Existing Session으로 재시도하세요."))
         # Validation is downstream of successful export/import. Its failure must never
         # rewrite collector metadata, protocol, source DB, or successful exports.
         validation_items = items or ([dict(day=self.schedule.snapshot()["session_date_et"], run_id=None)]
@@ -189,9 +244,28 @@ class CollectorController:
                 self.events.put(("validated", summary))
             except Exception as exc:
                 self.events.put(("validation_failed", f"Session validation unavailable ({type(exc).__name__}); Revalidate Session으로 재시도하세요."))
+        # Provider and Paper have finished before this optional read-only research job.
+        # No research computation or hook is added to the live market event path.
+        self._analyze_opening_hour()
         self.schedule.phase = final_phase
         self.state = "ERROR" if self.worker.error else "STOPPED"
         # Final protocol was persisted before import. No extra disk write is needed for a phase-only change.
+
+    def _analyze_opening_hour(self):
+        if not self.opening_hour_enabled:
+            return
+        if not self.worker or self.worker.running:
+            raise RuntimeError("Opening research requires a stopped collector")
+        try:
+            from .opening_hour.service import analyze_session
+            from .opening_hour.storage import DEFAULT_DB
+            paper_paths = (self.paper.path, self.paper.review_path) if self.paper is not None else ()
+            self.opening_hour_result = analyze_session(self.worker.config.data_dir,
+                day=self.schedule.snapshot()["session_date_et"], cache_path=self.config.cache_path,
+                paper_paths=paper_paths, output_db=self.opening_hour_path or DEFAULT_DB, calendar=self.calendar)
+        except Exception as exc:
+            # Analysis failure is separate from collection/validation and never changes their evidence.
+            self.opening_hour_result = {"status": "INCOMPLETE", "error": type(exc).__name__}
 
     def _persist_final_protocol(self):
         """Worker has closed SQLite; update only this newly-created run's public metadata."""
@@ -210,9 +284,7 @@ class CollectorController:
             for path in (self.worker.config.data_dir / "export").glob("*/" + name):
                 document = json.loads(path.read_text(encoding="utf-8"))
                 document["collection_protocol"] = protocol
-                temporary = path.with_suffix(".json.tmp")
-                temporary.write_text(json.dumps(document, ensure_ascii=False, indent=2), encoding="utf-8")
-                os.replace(temporary, path)
+                _write_metadata(path, document)
 
     def _sample_connection(self):
         getter = getattr(self.worker.provider, "connection_status", None)

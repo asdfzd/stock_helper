@@ -1,6 +1,6 @@
 # Capacity Test Protocol v1
 
-적용: **Market Radar v2.3.0 / Validator 1 / Collector v2.1 / kiwoom_radar_v2_1 / research schema 4 / Master schema 1**. Dashboard에서 선택하며 기존 CLI `--collect`는 Manual이다.
+적용: **Market Radar v2.6.0 / Opening Hour Research v1 / opening hour schema 1 / Paper v1 / Rotation v2 / rotation extension schema 1 / Validator 1 / Collector v2.1 / kiwoom_radar_v2_1 / research schema 4 / Master schema 1**. Dashboard에서 선택하며 기존 CLI `--collect`는 Manual이다. Capacity 조건은 변경하지 않았으며 Paper v1·Rotation v2·Opening Hour 자동 분석은 모두 강제 OFF다.
 
 | 항목 | 고정 기준 |
 |---|---|
@@ -62,3 +62,17 @@ CLI/보관 세션의 명시적 검증(JSON만 생성, Master 갱신 없음):
 ~~~
 
 Dashboard 종료 후 자동 검증과 CLI 검증을 구분한다. 기존 CLI 수집은 Manual이며 표준 scheduled 비교 세션으로 소급 지정하지 않는다.
+
+## Opening Hour Research v1 검증과 운영
+
+Regular Session에서 명시적으로 옵션을 켜면 collector/Paper 종료 후 기존 자료를 읽어 첫 60분 descriptive dataset을 생성한다. 기본 OFF, Capacity/Manual 자동 OFF이며 기존 수집 호출·WS·backfill·Paper 판단 경로는 유지한다. 분석 자체의 COMPLETE/INCOMPLETE는 60분 OHLCV coverage이며 Session Validator나 수익성 PASS와 다르다.
+
+새 거래일 preopen arm 전에 Regular Session, 기존 max WS/shared cache, Opening Hour 옵션을 확인한다. Paper v1/Rotation v2 동시 shadow는 Paper 탭에서 따로 활성화한다. 공식 close까지 앱·PC를 유지하고 종료 후 validation과 `data/opening_hour_research/export/<ET-date>/<research-id>/quality.json`을 함께 확인한다. 날짜별 연구 폴더를 ZIP 보관해 거래일 간 비교하되 결측·late/Capacity·분봉 시각의 한계를 반영한다. 신규 호출/실제 주문은 0건이다.
+
+개발 검증은 합성 자료·임시 DB/폴더만 사용한다. 정확한 60분 경계/DST·조기폐장, 3m/5m 완전 집계, 0 volume와 결측, 구조·anchor·event 구간 시각, MFE/MAE 및 unaligned detection NULL, 원본 DB/WAL/SHM 보존, DB/CSV 재현성, UI OFF/Capacity 강제 OFF, 종료 순서, REST/WS/NH 호출 차단과 기존 replay 동일성을 검사한다. 실제 세션/cache를 이용한 신규 분석과 live smoke는 별도 운영 검증이다.
+
+~~~powershell
+& .\.venv-paddle\Scripts\python.exe -m unittest tests.opening_hour_research_test -q
+& .\.venv-paddle\Scripts\python.exe -m unittest tests.paper_trading_test tests.paper_rotation_v2_test tests.nhplug_accounts_test tests.nhplug_client_test -q
+& .\.venv-paddle\Scripts\python.exe -m unittest tests.market_radar_test tests.market_radar_patch_test tests.market_radar_audit_test tests.market_radar_dashboard_test tests.market_radar_metadata_test tests.market_radar_schedule_test tests.market_radar_validator_test tests.kiwoom_provider_test tests.kiwoom_quality_test tests.kiwoom_stability_test -q
+~~~
