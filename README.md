@@ -35,7 +35,7 @@
 
 | 구분 | 현재 값 |
 |---|---|
-| Market Radar 앱 버전 | **v2.6.0** (Opening Hour Research v1 추가) |
+| Market Radar 앱 버전 | **v2.6.1** (연구 evidence 보존·표본 감사 보완) |
 | Session Validator | **1** (수집 품질 검증; 전략 판단 아님) |
 | Collector 연구 버전 | **v2.1** |
 | test_version | `kiwoom_radar_v2_1` |
@@ -43,9 +43,9 @@
 | Master schema | **1** |
 | Windows Quick Launch | **v1** (`.venv-paddle` 실행, EXE 패키징 없음) |
 | 독립 NH read-only adapter | **v1.1** (`nhplug 0.4.1`; 잔고·매수가능수량 조회 PASS, RC 보류) |
-| Paper Trading / paper schema | **v1 / 1** (기본 OFF, 실제 주문 disabled / not implemented) |
+| Paper Trading / paper schema | **v1 / 2** (전략 규칙 유지, 기본 OFF, 실제 주문 disabled / not implemented) |
 | Rotation Shadow / rotation extension schema | **v2 / 1** (`paper_rotation_v2`, 별도 DB, 기본 OFF) |
-| Opening Hour Research / schema | **v1 / 1** (`opening_hour_v1`, 세션 종료 후 관찰 연구, 기본 OFF) |
+| Opening Hour Research / schema | **v1.1 / 1** (`opening_hour_v1_1`, 세션 종료 후 관찰 연구, 기본 OFF) |
 
 프로그램 버전과 DB schema 버전은 별도로 관리합니다. 현재 다음 기능을 제공합니다.
 
@@ -82,7 +82,7 @@ Dashboard **Paper Trading** 탭에서 수집 시작 전에 **Enable Paper Tradin
 - 한 번에 1종목, ET 거래일당 OPEN 최대 4회, 동일 ticker 당일 재진입 금지. +15%/-10% 첫 관측 crossing의 실제 관측가격으로 종료하며 목표가 체결을 가정하지 않습니다. 공식 close의 정상 보유분은 마지막 유효가격으로 SESSION_END 처리합니다.
 - disconnect·stale·큐 손실·시각 이상은 DATA_INTEGRITY_INVALID, 수동 중단·재시작은 INTERRUPTED로 구분합니다. 불명확한 exit 가격/return은 NULL이며 정상 성과 통계에서 제외합니다. 재시작 시 진입 횟수·ticker 차단을 유지하고 미완료 WATCHING/신호는 새 관측으로 다시 시작합니다.
 
-첫 Enable 실행 때 별도 `data/paper_trading/paper_trades.db`(paper schema 1)를 생성합니다. 연구 schema 4/cache/Validator는 유지합니다. 종료 후 `data/paper_trading/export/<ET-date>/`에 trades/events/horizons CSV와 summary JSON을 저장합니다. entry evidence는 불변이며 사후 horizon은 정확한 시각의 관측이 있는 경우만 사용하고 없으면 NULL입니다. 자세한 정의는 [기술 README](market_radar/README.md)를 따릅니다.
+첫 Enable 실행 때 별도 `data/paper_trading/paper_trades.db`(paper schema 2)를 생성합니다. 연구 schema 4/cache/Validator는 유지합니다. 종료 후 `data/paper_trading/export/<ET-date>/`에 trades/events/horizons/marks CSV와 summary JSON을 저장합니다. marks는 동일 시각의 다른 가격과 exact duplicate까지 observation_id 도착 순서로 보존합니다. 사후 horizon은 target 이후 기본 30초 안의 첫 실제 관측을 사용하고 표본 시각·offset·관측 ID를 기록하며 없으면 NULL입니다. 보간·pre-target 대체는 없습니다. 기존 schema 1 DB는 자동 수정하지 않고 거부합니다. 별도 복사본의 offline migration이 필요하며 과거 유실 틱은 복구할 수 없습니다. 자세한 정의는 [기술 README](market_radar/README.md)를 따릅니다.
 
 v2.4.1에서는 수집기 잠금을 확보한 뒤에만 Paper 복원을 시작하고 잠금 해제 전에 저장을 마칩니다. 수동 중지는 최초 중지 요청시각으로 기록하며, 같은 수신시각에 들어온 서로 다른 가격도 도착 순서대로 TP/SL에 반영합니다.
 
@@ -99,13 +99,13 @@ v2.4.2에서는 수집 상태 JSON을 교체할 때 발생하는 일시적인 Wi
 
 ## Rotation Shadow v2 / Post-exit review
 
-기존 **Baseline v1은 그대로 보존**합니다. Paper Trading 탭의 **Enable Rotation v2**를 수집 시작 전에 선택하면 같은 시세·평가시각에서 v1과 독립 실행합니다. 기본 OFF이며 Capacity Test에서는 둘 다 실행하지 않습니다. 일반 진입·TP/SL은 v1과 같고, v2만 현재 종목 약화와 새 후보의 모든 **material evidence dominance** 조건을 확인한 뒤 가상 교체합니다. 상승확률은 계산하지 않습니다.
+기존 **Baseline v1 전략 규칙은 그대로 보존**합니다. Paper Trading 탭의 **Enable Rotation v2**를 수집 시작 전에 선택하면 같은 시세·평가시각에서 v1과 독립 실행합니다. 기본 OFF이며 Capacity Test에서는 둘 다 실행하지 않습니다. 일반 진입·TP/SL은 v1과 같고, v2만 현재 종목 약화와 새 후보의 모든 **material evidence dominance** 조건을 확인한 뒤 가상 교체합니다. 상승확률은 계산하지 않습니다.
 
 전환은 signal 이후 기존 종목의 첫 유효 가격으로 exit → 그보다 늦은 새 종목 첫 유효 가격으로 entry입니다. 두 체결에 같은 관측을 쓰지 않으며, 각 전략의 하루 4회·동일 ticker 재진입 금지·1종목 원칙을 유지합니다. 실제 주문은 0건입니다.
 
 Paper를 활성화하면 종료된 v1/v2 ticker도 공식 close까지 별도 추적합니다. 원래 TP/SL 도달, SL 이후 회복, TP 이후 추가 상승·시간 순서상 최대 반락과 근거 tag를 기록합니다. 이 데이터는 사후 review 전용입니다. 시세 공백·조기 중지는 INCOMPLETE로 남기며 미래 가격으로 판단/체결을 보완하지 않습니다.
 
-v1 DB와 export는 유지합니다. 별도 `data/paper_trading/paper_rotation_v2/review.db`와 `export/<ET-date>/`에 두 전략의 `paper_trades.csv`, `paper_post_exit.csv`, 실제 후속 tick 경로, `paper_rotation_comparison.csv`, switch evidence CSV, `paper_daily_summary.json`을 저장합니다. 동일 시작 trade는 v1 종료 수익률과 v2 연결 trade 수익률로 비교하고, exact 동일시각 가격이 있는 경우만 교체 이후 손익 차이를 계산합니다. 필드·공식·NULL 정의는 [기술 README](market_radar/README.md)를 따릅니다.
+v1 거래 규칙과 기존 실데이터는 보존하며 신규 evidence는 paper schema 2입니다. 별도 `data/paper_trading/paper_rotation_v2/review.db`와 `export/<ET-date>/`에 두 전략의 `paper_trades.csv`, `paper_post_exit.csv`, 실제 후속 tick 경로, `paper_rotation_comparison.csv`, switch evidence CSV, `paper_daily_summary.json`을 저장합니다. 동일 시작 trade는 v1 종료 수익률과 v2 연결 trade 수익률로 비교하고, exact 동일시각 가격이 있는 경우만 교체 이후 손익 차이를 계산합니다. 필드·공식·NULL 정의는 [기술 README](market_radar/README.md)를 따릅니다.
 
 ```powershell
 & .\.venv-paddle\Scripts\python.exe -m unittest tests.paper_trading_test tests.paper_rotation_v2_test
@@ -116,11 +116,11 @@ v1 DB와 export는 유지합니다. 별도 `data/paper_trading/paper_rotation_v2
 
 미국 정규장 개장 후 첫 60분에 Radar candidate/discovery에 등장한 후보의 가격·거래량 경로를 **기존 자료로 사후 분석**합니다. `data collection / descriptive research`이며 buy signal, prediction model, profitable pattern을 생성하지 않습니다. Paper v1·Rotation v2 판단과 연결하지 않고, 같은 run/ticker의 거래 reference ID만 읽습니다.
 
-Dashboard에서 **Regular Session**을 선택하고 상단 **Opening Hour Research · 종료 후 분석**을 켠 뒤, 공식 개장 전에 Start Collection으로 arm합니다. 기본 OFF이며 Capacity Test와 Manual에서는 강제 OFF입니다. Paper/Rotation은 Paper Trading 탭에서 별도로 켤 수 있습니다. 공식 close까지 수집하면 collector/Paper 종료·기존 export/Validator가 끝난 뒤 별도 분석을 수행합니다. `OFF / ENABLED / COMPLETE / INCOMPLETE`, 후보 수와 60분 전체 coverage 수를 표시합니다. 새 REST·WS 구독이나 backfill은 추가하지 않습니다.
+Dashboard에서 **Regular Session**을 선택하고 상단 **Opening Hour Research · 종료 후 분석**을 켠 뒤, 공식 개장 전에 Start Collection으로 arm합니다. 기본 OFF이며 Capacity Test와 Manual에서는 강제 OFF입니다. Paper/Rotation은 Paper Trading 탭에서 별도로 켤 수 있습니다. 공식 close까지 수집하면 collector/Paper 종료·기존 export/Validator가 끝난 뒤 별도 분석을 수행합니다. `OFF / ENABLED / COMPLETE / PARTIAL / EMPTY`, 전체/eligible 후보 수와 각각의 60분 coverage를 표시합니다. 처리 오류는 별도 INCOMPLETE입니다. 새 REST·WS 구독이나 backfill은 추가하지 않습니다.
 
 XNYS official open부터 60분, **09:30~10:29 시작의 완료 1분봉 60개**를 사용합니다. 10:30 시작 봉은 제외하고 3분 20개·5분 12개로 집계합니다. cache에 없는 시가, 누락 분, 불완전 집계는 NULL로 보존합니다. 분봉 돌파·고저점 시각은 1분 구간이며, 분 중간에 발견한 후보의 정확한 detection-relative MFE/MAE는 NULL입니다. 해석과 공식은 [기술 문서](market_radar/README.md#opening-hour-research-v1)에 있습니다.
 
-별도 DB는 `data/opening_hour_research/opening_hour.db`, export는 `data/opening_hour_research/export/<ET-date>/<research-id>/`입니다. 날짜별 폴더에 candidates·1m/3m/5m bars·events·time_snapshots·outcomes·volume_segments CSV와 metadata·quality·summary JSON이 생성됩니다. 해당 폴더를 ZIP으로 보관해 다른 거래일과 비교할 수 있습니다. 결측/coverage와 표본 수를 함께 확인합니다.
+별도 DB는 `data/opening_hour_research/opening_hour.db`, export는 `data/opening_hour_research/export/<ET-date>/<research-id>/`입니다. 날짜별 폴더에 candidates·1m/3m/5m bars·events·time_snapshots·outcomes·volume_segments CSV와 metadata·quality·summary JSON이 생성됩니다. v1.1 식별자는 물리 경로를 제외해 같은 자료를 다른 폴더로 복사해도 동일하며 metadata에 절대 사용자 경로를 내보내지 않습니다. 모든 후보를 보존하고 stock_type_policy에 따른 analysis_eligible·제외 사유, all/eligible coverage를 분리합니다. summary median·outcome 표본은 eligible 기준이며 미구독·결측 후보도 분모에 유지합니다. 해당 폴더를 ZIP으로 보관해 다른 거래일과 비교할 수 있습니다.
 
 종료된 과거 세션의 읽기 전용 수동 분석:
 

@@ -1,11 +1,14 @@
 """Separate paper schema. Never opens a research/cache/account database."""
 import csv
 import json
+import math
 from pathlib import Path
 import sqlite3
 from statistics import mean, median
 
 from ..engine import HORIZONS
+from ..config import CONFIG
+from ..evidence_io import copied_database
 from ..models import instant, utc
 from datetime import timedelta
 from . import PAPER_SCHEMA_VERSION
@@ -22,8 +25,20 @@ FIELDS = ("trade_id radar_run_id session_date_et strategy_version ticker state w
 
 
 class PaperStore:
-    def __init__(self, path):
+    def __init__(self, path, *, result_tolerance_seconds=CONFIG.result_tolerance_seconds):
         self.path = Path(path)
+        self.result_tolerance_seconds = float(result_tolerance_seconds)
+        if not math.isfinite(self.result_tolerance_seconds) or self.result_tolerance_seconds < 0:
+            raise ValueError("Invalid paper result tolerance")
+        # Inspect copies, including WAL, before touching any existing database.
+        if self.path.exists() and self.path.stat().st_size:
+            with copied_database(self.path) as check:
+                tables = {r[0] for r in check.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+                version = check.execute("PRAGMA user_version").fetchone()[0]
+                if tables and (version != PAPER_SCHEMA_VERSION or "paper_trades" not in tables):
+                    raise ValueError(f"Unsupported paper schema {version}; schema {PAPER_SCHEMA_VERSION} required. "
+                                     "Preserve the original; offline migration to a separate copy is required. "
+                                     "Legacy discarded ticks cannot be recovered.")
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(self.path, timeout=5)
         self.db.row_factory = sqlite3.Row
@@ -43,10 +58,14 @@ class PaperStore:
             CREATE TABLE IF NOT EXISTS paper_trade_events(
                 event_id INTEGER PRIMARY KEY, trade_id TEXT, timestamp_utc TEXT, event_type TEXT, evidence_json TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS paper_trade_marks(
-                ticker TEXT, timestamp_utc TEXT, price REAL NOT NULL, session_date_et TEXT,
-                PRIMARY KEY(ticker,timestamp_utc));
+                observation_id INTEGER PRIMARY KEY AUTOINCREMENT, radar_run_id TEXT NOT NULL,
+                ticker TEXT, timestamp_utc TEXT, price REAL NOT NULL, session_date_et TEXT);
+            CREATE INDEX IF NOT EXISTS paper_mark_sample ON paper_trade_marks(
+                radar_run_id,session_date_et,ticker,timestamp_utc,observation_id);
             CREATE TABLE IF NOT EXISTS paper_horizons(
                 trade_id TEXT, horizon TEXT, target_utc TEXT, price REAL, return_pct REAL, missing_reason TEXT,
+                sample_timestamp_utc TEXT, sample_offset_seconds REAL, sample_selection TEXT,
+                sample_observation_id INTEGER, tolerance_seconds REAL NOT NULL,
                 PRIMARY KEY(trade_id,horizon));
             CREATE UNIQUE INDEX IF NOT EXISTS paper_one_open ON paper_trades((1)) WHERE state='OPEN';
             CREATE UNIQUE INDEX IF NOT EXISTS paper_no_reentry ON paper_trades(session_date_et,ticker) WHERE entry_price IS NOT NULL;
@@ -95,12 +114,13 @@ class PaperStore:
         result["compounding_assumption"] = "all capital reinvested in each valid closed trade; excludes invalid trades and costs"
         return result
 
-    def horizons(self, day):
-        """Post-session only, exact received-time match. No interpolation/grace/proxy.
+    def record_mark(self, run_id, ticker, at, price, day):
+        """Keep every valid received observation, including exact duplicates, in arrival order."""
+        self.db.execute("INSERT INTO paper_trade_marks(radar_run_id,ticker,timestamp_utc,price,session_date_et) "
+                        "VALUES(?,?,?,?,?)", (run_id, ticker, utc(instant(at)), price, day))
 
-        Reuse Radar horizon durations but not FIRST_DETECTED-anchored result prices.
-        Marks after exit are observation evidence only, never fed back into decisions.
-        """
+    def horizons(self, day):
+        """Review only: first post-target observation within tolerance; no interpolation/grace."""
         for trade in self.entered(day):
             if not trade["exit_reason"]:
                 continue
@@ -108,18 +128,27 @@ class PaperStore:
                 if seconds > 1800:
                     continue
                 target = utc(instant(trade["entry_price_at"])+timedelta(seconds=seconds))
-                row = self.db.execute("SELECT price FROM paper_trade_marks WHERE ticker=? AND timestamp_utc=?",
-                                      (trade["ticker"], target)).fetchone()
-                self.db.execute("INSERT OR REPLACE INTO paper_horizons VALUES(?,?,?,?,?,?)",
-                    (trade["trade_id"], label, target, row[0] if row else None,
-                     (row[0]/trade["entry_price"]-1)*100 if row else None, None if row else "no_exact_observation"))
+                deadline = utc(instant(target)+timedelta(seconds=self.result_tolerance_seconds))
+                row = self.db.execute("SELECT * FROM paper_trade_marks WHERE radar_run_id=? AND session_date_et=? "
+                    "AND ticker=? AND timestamp_utc>=? AND timestamp_utc<=? "
+                    "ORDER BY timestamp_utc,observation_id LIMIT 1",
+                    (trade["radar_run_id"], day, trade["ticker"], target, deadline)).fetchone()
+                self.db.execute("INSERT OR REPLACE INTO paper_horizons VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                    (trade["trade_id"], label, target, row["price"] if row else None,
+                     (row["price"]/trade["entry_price"]-1)*100 if row else None,
+                     None if row else "no_post_target_observation_within_tolerance",
+                     row["timestamp_utc"] if row else None,
+                     (instant(row["timestamp_utc"])-instant(target)).total_seconds() if row else None,
+                     "first_post_target", row["observation_id"] if row else None, self.result_tolerance_seconds))
 
-    def export(self, day, folder):
+    def _export_tables(self, day, folder, tables):
         folder = Path(folder)
         folder.mkdir(parents=True, exist_ok=True)
-        for table in ("paper_trades", "paper_trade_events", "paper_horizons"):
-            query = (f"SELECT * FROM {table} WHERE session_date_et=?" if table == "paper_trades" else
+        for table in tables:
+            query = (f"SELECT * FROM {table} WHERE session_date_et=?" if table in {"paper_trades", "paper_trade_marks"} else
                      f"SELECT * FROM {table} WHERE trade_id IN (SELECT trade_id FROM paper_trades WHERE session_date_et=?)")
+            if table == "paper_trade_marks":
+                query += " ORDER BY observation_id"
             cursor = self.db.execute(query, (day,))
             target = folder/(table+".csv")
             temporary = target.with_suffix(".csv.tmp")
@@ -128,6 +157,10 @@ class PaperStore:
                 writer.writerow([d[0] for d in cursor.description])
                 writer.writerows(cursor)
             temporary.replace(target)
+
+    def export(self, day, folder):
+        folder = Path(folder)
+        self._export_tables(day, folder, ("paper_trades", "paper_trade_events", "paper_horizons", "paper_trade_marks"))
         target = folder/"summary.json"
         temporary = target.with_suffix(".json.tmp")
         temporary.write_text(json.dumps(self.summary(day), ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")

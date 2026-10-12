@@ -1,6 +1,6 @@
-# Market Radar v2.6.0 — Opening Hour Research v1 / Paper v1 + Rotation v2
+# Market Radar v2.6.1 — Opening Hour Research v1.1 / Paper v1 + Rotation v2
 
-현재 **Market Radar v2.6.0 / Opening Hour Research v1 / opening hour schema=1 / Paper Trading v1 / paper schema=1 / Rotation v2 / rotation extension schema=1 / Validator 1 / Collector v2.1 / test_version=kiwoom_radar_v2_1 / research schema=4 / master schema=1**의 기술 문서다. 프로그램 소개·설치는 [루트 README](../README.md), 현재 작업 상태는 [CODEX_HANDOFF](../CODEX_HANDOFF.md), 버전별 검증 이력은 [CHANGELOG](../CHANGELOG.md)를 따른다. Kiwoom 수집기에는 주문/계좌 기능이 없고, 별도 NH read-only probe만 계좌목록·잔고·매수가능수량을 조회한다. 실제 주문/자동매매 기능은 없다.
+현재 **Market Radar v2.6.1 / Opening Hour Research v1.1 / opening hour schema=1 / Paper Trading v1 / paper schema=2 / Rotation v2 / rotation extension schema=1 / Validator 1 / Collector v2.1 / test_version=kiwoom_radar_v2_1 / research schema=4 / master schema=1**의 기술 문서다. 프로그램 소개·설치는 [루트 README](../README.md), 현재 작업 상태는 [CODEX_HANDOFF](../CODEX_HANDOFF.md), 버전별 검증 이력은 [CHANGELOG](../CHANGELOG.md)를 따른다. Kiwoom 수집기에는 주문/계좌 기능이 없고, 별도 NH read-only probe만 계좌목록·잔고·매수가능수량을 조회한다. 실제 주문/자동매매 기능은 없다.
 
 NH 어댑터 v1.1은 `execution/nhplug_client.py`와 `execution/nhplug_accounts.py`, 명시적 CLI는 `tools/nhplug_probe/probe.py`와 `tools/nhplug_probe/accounts.py`, optional 의존성은 `requirements-nhplug.txt`다. Kiwoom discovery/research와 분리된 execution-price/account 조회용이며 Collector/순위/schema/Validator에 연결하지 않는다. 공식 nhplug 0.4.1의 OAuth·REST와 종목마스터 파서를 사용한다. REST `Output_0.trdprc`, 기존 실시간 `RC`의 `body.trdprc_1z17`만 가격으로 사용하며 GIC는 공식 마스터의 `sSymbol/sNationCode/sGIC`로 확인한다. SDK HTTP 전송에도 인증·현재가·계좌목록·잔고·매수가능수량 allowlist와 redirect 차단을 적용한다. 원본 계좌는 메모리에서 마스킹하며 토큰 파일 캐시와 SDK 진단 출력은 차단한다. RC/WSS10012는 보류 상태로 이번 계좌 작업에서 변경·재시험하지 않았다. 상세 범위·실행법은 [루트 README](../README.md)를 따른다.
 
@@ -12,7 +12,7 @@ NH 어댑터 v1.1은 `execution/nhplug_client.py`와 `execution/nhplug_accounts.
 
 ## Paper Trading v1 — experimental shadow test
 
-v2.4.1 경계 조건 보완: `attach()`는 WS hook만 준비하고 `provider.connect()`가 기존 collector lock을 얻은 뒤 `start()`가 Paper DB 복원을 시작한다. 중지 요청은 UI에서 대기하지 않고 최초 요청시각을 고정한다. worker는 Paper 큐/DB 마무리를 기다린 뒤 provider를 닫아 잠금을 해제한다. 따라서 실패한 중복 실행이 기존 OPEN을 INTERRUPTED로 바꾸지 않으며, 느린 종료가 수동 중지를 SESSION_END로 바꾸지 않는다. 동일 FE 수신시각의 서로 다른 가격은 도착 순서대로 관리하고 동일 시각·동일 가격의 중복만 생략한다. exact-time horizon mark는 그 시각의 첫 유효 가격이다.
+v2.4.1 경계 조건 보완: `attach()`는 WS hook만 준비하고 `provider.connect()`가 기존 collector lock을 얻은 뒤 `start()`가 Paper DB 복원을 시작한다. 중지 요청은 UI에서 대기하지 않고 최초 요청시각을 고정한다. worker는 Paper 큐/DB 마무리를 기다린 뒤 provider를 닫아 잠금을 해제한다. 따라서 실패한 중복 실행이 기존 OPEN을 INTERRUPTED로 바꾸지 않으며, 느린 종료가 수동 중지를 SESSION_END로 바꾸지 않는다. 동일 FE 수신시각의 서로 다른 가격은 도착 순서대로 관리한다. v2.6.1에서도 연속된 동일 시각·동일 가격의 live decision 중복 생략은 그대로이며, 저장 evidence에는 exact duplicate까지 모두 남긴다.
 
 `paper/engine.py`의 상태 기계와 `paper/policy.py`의 `ExperimentalBaselinePolicyV1`을 별도로 둔다. strategy는 `paper_v1_baseline`, **actual orders = disabled / not implemented**, **strategy profitability = not established**다. NH 모듈/주문 endpoint를 import하거나 호출하지 않는다.
 
@@ -24,21 +24,23 @@ WATCHING 시작 이후 끝난 새 완료 1분봉, 양수 completed return_1m/ret
 
 OPEN마다 관측 return·최대/최저 가격과 시각을 갱신한다. MFE=(최대 관측가격/진입가−1)×100(0 이상), MAE=(최저 관측가격/진입가−1)×100(0 이하), 진입가격도 범위에 포함한다. TP=entry×1.15, SL=entry×0.90을 최초 넘은 유효 tick 가격으로 종료한다. 정상 공식 close는 마지막 유효 관측가격/실제 수신시각과 SESSION_END를 저장한다. 수동 중지·restart는 INTERRUPTED, disconnect/stale/역행/큐 overflow/처리 지연은 DATA_INTEGRITY_INVALID다. gap 시작·끝과 원인을 남기고 불명확한 exit 가격/return은 NULL이다. 기존 freshness 제한(`max_data_delay_seconds`, 기본 90초)을 사용하며 consumer 2초 초과 처리 지연·5초 초과 실행 공백·2초 초과 UTC/monotonic 불일치는 해당 Paper run을 중지한다. 이미 발생한 crossing을 봉/후속 가격으로 채우지 않는다.
 
-`data/paper_trading/paper_trades.db`의 `PRAGMA user_version=1`을 사용하며 `paper_sessions`, `paper_trades`, `paper_trade_events`, `paper_trade_marks`, `paper_horizons`를 둔다. 운영 연구 DB에 ALTER하지 않는다. 거래 단계마다 트랜잭션으로 저장하며 불변 entry evidence·priority·rank·sources·momentum·RVOL/OR/HOD·품질 및 evidence에서만 만든 deterministic reason을 보존한다. OPEN 확정 때만 하루 4회/ticker 차단에 포함하며 재시작에도 DB에서 복원한다. 재시작 OPEN과 미완료 WATCHING/신호는 INTERRUPTED로 남기고 새 관측부터 시작한다. 기본 Enable 상태는 저장하지 않는다.
+`data/paper_trading/paper_trades.db`의 `PRAGMA user_version=2`을 사용하며 `paper_sessions`, `paper_trades`, `paper_trade_events`, `paper_trade_marks`, `paper_horizons`를 둔다. 운영 연구 DB에 ALTER하지 않는다. 거래 단계마다 트랜잭션으로 저장하며 불변 entry evidence·priority·rank·sources·momentum·RVOL/OR/HOD·품질 및 evidence에서만 만든 deterministic reason을 보존한다. OPEN 확정 때만 하루 4회/ticker 차단에 포함하며 재시작에도 DB에서 복원한다. 재시작 OPEN과 미완료 WATCHING/신호는 INTERRUPTED로 남기고 새 관측부터 시작한다. 기본 Enable 상태는 저장하지 않는다.
 
-세션 종료 후 entry 기준 +30s/+1m/+3m/+5m/+10m/+30m을 별도 marks에서 **정확한 timestamp 일치**로만 분석한다. Radar `HORIZONS`의 기간을 재사용하되 FIRST_DETECTED 기준 결과를 entry 기준 결과로 바꾸어 쓰지 않는다. exact 관측이 없으면 NULL/`no_exact_observation`; 보간·목표 전후 대체 없음. 이 방식은 missing이 많을 수 있다. 독립 v1 모듈은 구독 보호를 연장하지 않는다. v2.5.0 Dashboard의 별도 post-exit observer는 아래처럼 공식 close까지 보호를 요청한다.
+세션 종료 후 entry 기준 +30s/+1m/+3m/+5m/+10m/+30m을 별도 marks에서 분석한다. v2.6.1의 `paper_trade_marks`는 AUTOINCREMENT `observation_id`, run/date/ticker/수신시각/가격을 보존하며 동일 시각 복수 가격과 exact duplicate를 버리지 않는다. DB 순서는 해당 engine의 live tick 처리 순서다. marks CSV도 observation_id 순서이며 entry/exit 판단은 사후 evidence를 읽지 않는다.
+
+Horizon은 같은 run/date/ticker의 `[target, target + result_tolerance_seconds]`에서 timestamp → observation_id 순 첫 실제 표본(`first_post_target`)이다. 기본 30초이며 runtime CONFIG 값을 전달한다. `target_utc`, `sample_timestamp_utc`, `sample_offset_seconds`, `sample_selection`, `sample_observation_id`, `tolerance_seconds`, price/return/missing_reason을 DB·CSV에 저장한다. 표본이 없으면 가격·return·표본 필드는 NULL/`no_post_target_observation_within_tolerance`다. 보간·최고가격 탐색·pre-target grace를 사용하지 않는다. Radar `HORIZONS` 기간만 재사용하며 FIRST_DETECTED 결과나 전략 판단을 바꾸지 않는다. 독립 v1 모듈은 구독 보호를 연장하지 않으며 Dashboard의 기존 post-exit observer가 아래처럼 공식 close까지 보호한다.
 
 일일 summary의 entry 수/TP/SL/SESSION_END/invalid를 분리하고 TP/SL win rate 분모에는 TP+SL만 쓴다. return·MFE·MAE 평균/중앙값은 정상 종료 거래만 사용한다. 복리는 해당 정상 거래마다 전액 재투자 가정이며 거래비용/호가/slippage/invalid 기간의 수익은 포함하지 않는다. export는 paper 전용 폴더의 CSV/JSON이다. 합성 replay는 재현성 확인이며 실수익/실제 체결 검증이 아니다. live shadow는 후속으로 별도 실행한다.
 
 ## Paper Rotation v2 / post-exit sidecar
 
-`paper/`의 v1 engine/policy/storage/runtime/UI/replay와 기존 fixture/test는 수정하지 않는다. Dashboard는 `paper_rotation_v2/runtime.py`의 단일 직렬 consumer를 연결한다. 같은 frame 평가시각·FE 수신 이벤트를 먼저 v1, 다음 v2로 전달하며 DB·position·WATCHING·일일 카운터·ticker 금지는 독립이다. Rotation은 기본 OFF, 선택하면 v1도 함께 실행한다. Paper 활성화 시 post-exit review는 v1에도 적용한다. Capacity에서는 두 전략과 sidecar를 시작하지 않는다. 잠금 확보·stop fencing·bounded queue·gap 처리는 기존 v1과 같은 규칙이다. sidecar 장애는 v1 판단을 변경하지 않고 별도 ERROR를 표시한다.
+`paper/`의 v1 진입·청산 정책과 기존 replay fixture를 유지한다. v2.6.1은 저장 evidence와 사후 표본만 보완했다. Dashboard는 `paper_rotation_v2/runtime.py`의 단일 직렬 consumer를 연결한다. 같은 frame 평가시각·FE 수신 이벤트를 먼저 v1, 다음 v2로 전달하며 DB·position·WATCHING·일일 카운터·ticker 금지는 독립이다. Rotation은 기본 OFF, 선택하면 v1도 함께 실행한다. Paper 활성화 시 post-exit review는 v1에도 적용한다. Capacity에서는 두 전략과 sidecar를 시작하지 않는다. 잠금 확보·stop fencing·bounded queue·gap 처리는 기존 v1과 같은 규칙이다. sidecar 장애는 v1 판단을 변경하지 않고 별도 ERROR를 표시한다.
 
 v2의 일반 진입/TP/SL은 v1 코드를 재사용한다. OPEN 중 새 후보는 양쪽 TOP10, 양쪽 rank가 현재보다 우수, 같은 완료 cutoff의 1m/5m return이 모두 더 큼, v1 WATCHING 이후 새 완료 봉·양수 momentum·watch 가격 돌파 확인, fresh/WS 정상, 당일 미거래를 모두 만족해야 한다. 현재는 rank >10 또는 1m/5m return ≤0 중 하나가 필요하다. 현재 row/수치/rank가 NULL이면 비교 근거 부족으로 전환하지 않는다. 후보 선택 동률 순서는 v1과 동일하다. 이름은 **material evidence dominance**이며 상승확률·점수는 계산하지 않는다. RVOL/OR/HOD와 순위 공식은 변경하지 않는다.
 
 `switch_signal_at`은 실제 평가시각이다. 그보다 늦은 현재 ticker 첫 유효 FE로 `SUPERIOR_CANDIDATE_SWITCH`/`rotation_exit_price`를 기록한다. 이어 **exit 시각보다 엄격히 늦은** 새 ticker 첫 유효 FE로 `rotation_entry_price`를 기록한다. exit 전 받은 새 ticker 가격과 exit와 같은 수신시각의 가격은 재사용하지 않는다. pending 전환 중 gap/invalid/stale/restart/종료는 취소·무효 기록하며 가상 체결가를 보완하지 않는다. 정상 entry와 rotation entry를 합해 ET 하루 4회, 동시 OPEN 1개, 동일 ticker 재진입 금지다.
 
-Baseline DB `data/paper_trading/paper_trades.db`와 paper schema 1은 유지한다. 별도 `data/paper_trading/paper_rotation_v2/review.db`는 paper schema 1의 거래 테이블을 독립 인스턴스로 재사용하고 **rotation extension schema 1** (`rotation_metadata.version`)의 details/switches/review_trades/post_exit/marks를 추가한다. sidecar에 baseline DB를 지정하면 쓰기 전에 거부한다. baseline 거래의 복사본과 v2 거래는 strategy+trade ID로 분리하고 baseline 원본은 수정하지 않는다.
+Baseline DB `data/paper_trading/paper_trades.db`와 별도 `data/paper_trading/paper_rotation_v2/review.db`는 각각 paper schema 2를 사용한다. sidecar는 **rotation extension schema 1** (`rotation_metadata.version`)의 details/switches/review_trades/post_exit/marks를 추가하며 baseline DB를 지정하면 쓰기 전에 거부한다. 기존 schema 1 파일은 DB/WAL 임시 복사본으로 검사한 뒤 migration 필요 오류로 거부하고 원본을 자동 변경하지 않는다. 이 패치에는 자동 migration이 없으며 별도 복사본의 offline migration이 필요하다. 과거 첫 틱 이외의 유실 관측은 재구성하지 않는다. 작업 전 실제 data에는 Paper/Opening DB가 없음을 확인했다. 거래 규칙과 strategy version은 유지한다.
 
 모든 실제 OPEN 이력 ticker는 기존 provider `set_result_tracking`의 보호 입력을 통해 official close까지 유지한다. 슬롯 상한/배정 알고리즘/순위는 그대로이며 v1·v2가 같은 확장된 시세 스트림을 받는다. 구독·연결·수집 중단으로 가격이 없으면 생성하지 않는다. 종료 후 첫 엄격히 늦은 유효 tick부터 close 미만까지 원본 가격/수신시각/관측 순서를 저장한다. heartbeat가 조기폐장 포함 official close에서 추적을 끝낸다. 조기 중단·restart·invalid·stale·WS gap은 `INCOMPLETE`와 사유, 세션 종료 trade의 이후 창은 `NO_POST_EXIT_WINDOW`다. `OBSERVED_TO_CLOSE`도 관측 범위의 정상 완료이며 모든 시장 체결의 수집을 보증하지 않는다.
 
@@ -101,15 +103,17 @@ Outcome은 open/detection→10:30 return, 두 기준 MFE/MAE, first-hour high/lo
 
 ### 저장·재현성·품질
 
-기본 `data/opening_hour_research/opening_hour.db`, `PRAGMA user_version=1`, feature_version=`opening_hour_v1`이다. 독립 `opening_hour_sessions/candidates/bars/events/snapshots/outcomes/segments` 테이블에 공통 조회 필드와 전체 detail JSON을 저장한다. 기존 research schema 4, Paper schema 1, rotation extension schema 1, Master schema 1은 변경하지 않는다. 다른 종류/버전의 출력 DB는 쓰기 전에 거부한다.
+기본 `data/opening_hour_research/opening_hour.db`, `PRAGMA user_version=1`, feature_version=`opening_hour_v1_1`이다. 독립 `opening_hour_sessions/candidates/bars/events/snapshots/outcomes/segments` 테이블에 공통 조회 필드와 전체 detail JSON을 저장한다. JSON 의미 변경은 feature version으로 구분하며 기존 v1 dataset을 재작성하지 않는다. research schema 4, rotation extension schema 1, Master schema 1은 유지하고 Paper evidence만 schema 2다. 다른 종류/버전의 출력 DB는 쓰기 전에 거부한다.
 
-metadata는 ET date, radar_run_id, test_version, source DB/cache/Paper 경로, source fingerprint, bar/calendar policy, 원본 collection mode/compliance와 종료 시각을 담는다. DB의 `created_at`은 실제 최초 저장 UTC이고 재실행에도 보존한다. 생성 벽시각은 재현 가능한 export에서 제외한다. 동일 evidence/version은 같은 research ID로 idempotent 저장하며, 다른 cache/evidence는 새 ID로 보존한다. 원본 Radar lifecycle에 run ID가 없는 legacy 자료는 원본 identity+첫 batch 시각의 deterministic ID를 사용한다.
+metadata는 ET date, radar_run_id, test_version, source fingerprint, cache identity, bar/calendar/stock_type policy, 원본 collection mode/compliance와 종료 시각을 담는다. 물리 source DB/cache/Paper 경로는 분석 중 입력 위치 확인에만 사용하고 fingerprint·metadata에서 제외한다. schema 1의 기존 source_cache_path 열도 신규 dataset에는 NULL이다. 논리 evidence 내용과 feature version으로 research_id를 산출하므로 동일 source/cache를 다른 root로 복사해도 ID·export는 같다. 실제 내용이 바뀌면 새 ID다. DB의 `created_at`은 최초 저장 UTC로 보존하고 재현 가능한 export에서 제외한다. 원본 lifecycle에 run ID가 없으면 identity+첫 batch 시각의 deterministic ID를 사용한다.
 
 export는 `<output-db parent>/export/<ET-date>/<research-id>/` 기본값에 candidates.csv, bars_1m.csv, bars_3m.csv, bars_5m.csv, events.csv, time_snapshots.csv, outcomes.csv, volume_segments.csv, metadata.json, quality.json, summary.json이다. 기존 Radar export/Review ZIP에 섞지 않으며 날짜별 연구 폴더를 별도 ZIP으로 보관한다. CLI는 [루트 실행법](../README.md#opening-hour-research-v1)을 따른다.
 
-quality는 expected/actual/stored 1m rows, missing minute 및 OHLCV 불완전 수, 완전60분 후보/불완전 후보를 구분한다. `full_1m_coverage_rate`=완전60분 후보/전체 후보, `observed_1m_row_rate`=유효HLC 분/기대 분, `complete_ohlcv_1m_rate`=완전OHLCV 분/기대 분이다. 3m/5m rate는 전체 기대 집계봉 중 완전봉 비율이다. detection price와 endpoint outcome availability도 기록하며 단위는 0~1, 표본 0이면 비율 NULL이다. COMPLETE는 후보가 있고 모두 60분 OHLCV가 있을 때만 부여하며 전략/프로토콜 판정이 아니다.
+모든 raw candidate/discovery를 유지하고 `analysis_eligible`, `analysis_exclusion_reasons`, `analysis_stock_type_policy`를 저장한다. candidate type_policy → source identity stock_type_policy → CONFIG 기본값 순으로 기존 `excluded_type` 정책을 적용한다. common_and_unknown은 common/unknown/type_unknown을 포함하고 확인된 ETF/ETN/warrant/other를 제외한다. all은 전체 유형을 포함한다. 구독 여부·봉 결측 자체로 후보를 제거하지 않으며 discovery tracking state도 보존한다.
 
-summary는 개수·coverage·open→60분 return/MFE/MAE median과 각 표본 수, 양/음/동일 outcome count, 최초 확인 출처별 표본 수만 제공한다. 한 후보가 여러 출처에 속할 수 있다. BUY/SELL, composite score, 상승확률, 의도 추정 tag, 패턴 추천/최적화는 없다. Capacity/Manual/late evidence의 원래 protocol 제약도 그대로 남는다.
+quality/summary는 `all_candidate_count`, `eligible_candidate_count`, `excluded_candidate_count`, `exclusion_reason_counts`, `all_coverage`, `eligible_coverage`를 구분한다. 호환용 candidate_count와 quality 최상위 coverage 필드는 all 기준이다. 각 coverage의 기대 1m 분모는 해당 후보 수×60이다. full_1m_coverage_rate는 완전60분 후보 비율, observed_1m_row_rate는 유효HLC 분 비율, complete_ohlcv_1m_rate는 완전OHLCV 분 비율이며 3m/5m도 각각의 기대봉을 분모로 쓴다. 표본 0이면 비율 NULL이다. COMPLETE는 해당 후보 모두 60분 OHLCV 완전, PARTIAL은 실제 관측이 있지만 불완전, EMPTY는 실제 유효 1m 관측 없음이다. 전체/eligible 상태를 따로 남기며 UI 전체 상태는 all 기준이다. 처리 예외의 INCOMPLETE와 구별하고 전략/프로토콜 판정으로 쓰지 않는다.
+
+summary의 open→60분 return/MFE/MAE median과 각 표본 수, `eligible_outcome_sample_count`, 양/음/동일 outcome count, 최초 확인 출처별 표본 수는 eligible 기준이다. 결측은 표본 수에 섞지 않고 coverage 분모에 유지한다. 제외 후보의 개별 outcome도 export에 남는다. 한 후보가 여러 출처에 속할 수 있다. BUY/SELL, composite score, 상승확률, 의도 추정 tag, 패턴 추천/최적화는 없다. Capacity/Manual/late evidence의 원래 protocol 제약도 그대로 남는다.
 
 ## Architecture / Provider
 

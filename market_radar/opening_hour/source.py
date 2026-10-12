@@ -1,13 +1,11 @@
 """Read finalized evidence via temporary DB/WAL copies; never open originals with SQLite."""
-from contextlib import closing, contextmanager
 from datetime import datetime, timedelta
 import hashlib
 import json
 from pathlib import Path
-import shutil
-import sqlite3
-import tempfile
 
+from ..evidence_io import copied_database
+from ..config import CONFIG
 from ..models import ET, instant, utc
 from ..providers.kiwoom_calendar import ExchangeCalendar
 from ..providers.kiwoom_cache import POLICY, number
@@ -21,27 +19,10 @@ def digest(value):
     return hashlib.sha256(encoded(value).encode("utf-8")).hexdigest()
 
 
-@contextmanager
-def copied_database(path):
-    path = Path(path).resolve(strict=True)
-    sources = [path, Path(str(path) + "-wal")]
-    def stamps():
-        return [(p.stat().st_size, p.stat().st_mtime_ns) if p.exists() else None for p in sources]
-    before = stamps()
-    with tempfile.TemporaryDirectory(prefix="opening_hour_read_") as folder:
-        target = Path(folder)/path.name
-        shutil.copyfile(path, target)
-        if sources[1].exists():
-            shutil.copyfile(sources[1], Path(str(target) + "-wal"))
-        if before != stamps():
-            raise ValueError("Source changed during copy; retry after collection stops")
-        with closing(sqlite3.connect(target.as_uri() + "?mode=ro", uri=True)) as db:
-            db.row_factory = sqlite3.Row
-            db.execute("PRAGMA query_only=ON")
-            db.execute("BEGIN")
-            yield db
-        if before != stamps():
-            raise ValueError("Source changed during analysis; retry after collection stops")
+def logical_evidence(evidence):
+    """Paths locate input files; they are never part of a research dataset identity."""
+    return {k: v for k, v in evidence.items() if k not in {
+        "source_db_path", "source_cache_path", "source_paper_paths", "source_fingerprint", "_operational"}}
 
 
 def tables(db):
@@ -106,6 +87,8 @@ def read_session(session_dir, *, day=None, cache_path=None, paper_paths=(), cale
                     c = candidates.setdefault(ticker, dict(ticker=ticker, exchange=item.get("exchange"),
                         candidate_first_detected_at=record[0], candidate_sources=item.get("sources"),
                         source_ranks=item.get("source_ranks"), detection_basis="batch_candidate_universe",
+                        symbol_type=item.get("type", "type_unknown"), type_policy=item.get("type_policy"),
+                        symbol_type_evidence=item.get("symbol_type_evidence"),
                         excluded_symbol_type=item.get("excluded_symbol_type"), source_history=[]))
                     c["source_history"].append(dict(at=record[0], sources=item.get("sources")))
             # Bar has no open in the current Radar model. Preserve HLCV without guessing O.
@@ -131,14 +114,28 @@ def read_session(session_dir, *, day=None, cache_path=None, paper_paths=(), cale
                         candidate_first_detected_at=r["first_seen_utc"], candidate_sources=None, source_ranks=None,
                         candidate_sources_session_evidence=unpack(r.get("candidate_sources")),
                         detection_basis="discovery_first_seen", excluded_symbol_type=r.get("excluded_symbol_type"),
+                        symbol_type=r.get("symbol_type") or (existing or {}).get("symbol_type", "type_unknown"),
+                        type_policy=(existing or {}).get("type_policy"),
+                        symbol_type_evidence=unpack(r.get("symbol_type_evidence")) or (existing or {}).get("symbol_type_evidence"),
                         source_history=existing["source_history"] if existing else [])
+                if r["ticker"] in candidates:
+                    c = candidates[r["ticker"]]
+                    c["candidate_tracking_state"] = r.get("candidate_tracking_state")
+                    c["discovery_symbol_type_evidence"] = dict(symbol_type=r.get("symbol_type"),
+                        excluded_symbol_type=r.get("excluded_symbol_type"),
+                        evidence=unpack(r.get("symbol_type_evidence")))
+                    if c.get("symbol_type") in {None, "unknown", "type_unknown"} and r.get("symbol_type"):
+                        c["symbol_type"] = r["symbol_type"]
+                    if r.get("excluded_symbol_type"):
+                        c["excluded_symbol_type"] = r["excluded_symbol_type"]
         ranked = [dict(r) for r in db.execute("SELECT * FROM radar_candidates WHERE session_date=? ORDER BY first_detected_utc,ticker", (day,))] if "radar_candidates" in names else []
         for r in ranked:
             if _inside(r["first_detected_utc"], start, end) and r["ticker"] not in candidates:
                 candidates[r["ticker"]] = dict(ticker=r["ticker"], exchange=r.get("exchange"),
                     candidate_first_detected_at=r["first_detected_utc"], candidate_sources=None,
                     candidate_sources_session_evidence=unpack(r.get("candidate_sources")),
-                    source_ranks=None, detection_basis="radar_candidate", source_history=[])
+                    source_ranks=None, detection_basis="radar_candidate", source_history=[],
+                    symbol_type=r.get("symbol_type"), symbol_type_evidence=unpack(r.get("symbol_type_evidence")))
         first_batch = db.execute("SELECT MIN(timestamp_utc) FROM radar_batches").fetchone()[0]
         run_id = lifecycle.get("run_id") or digest(dict(identity=identity, first_batch=first_batch))[:32]
         for ticker, c in candidates.items():
@@ -207,12 +204,14 @@ def read_session(session_dir, *, day=None, cache_path=None, paper_paths=(), cale
     evidence = dict(session_date_et=day, radar_run_id=run_id, test_version=identity.get("test_version"),
         research_schema_version=metadata.get("schema_version"), source_db_path=str(source), source_cache_path=str(cache),
         source_paper_paths=[str(Path(p).resolve()) for p in paper_paths], cache_identity=cache_identity,
+        stock_type_policy=identity.get("stock_type_policy", CONFIG.stock_type_policy),
+        stock_type_policy_basis="source_identity" if "stock_type_policy" in identity else "default_config",
         bar_policy=POLICY, calendar_source=calendar.source, regular_open_utc=session.open_utc,
         regular_close_utc=session.close_utc, opening_hour_end_utc=utc(end),
         collection_mode=protocol.get("collection_mode", protocol.get("mode", "unknown")),
         protocol_compliant=protocol.get("protocol_compliant"), source_observed_until=observed_until, warnings=warnings,
         source_lifecycle_stopped_at=lifecycle.get("stopped_at"), candidates=[candidates[t] for t in sorted(candidates)])
-    evidence["source_fingerprint"] = digest(evidence)
+    evidence["source_fingerprint"] = digest(logical_evidence(evidence))
     return evidence
 
 

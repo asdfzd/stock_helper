@@ -4,7 +4,7 @@
 
 ## 현재 버전과 연구 단계
 
-- **Market Radar v2.6.0 / Opening Hour Research v1 / opening hour schema 1 / Paper Trading v1 / paper schema 1 / Rotation v2 / rotation extension schema 1 / Validator 1 / Collector v2.1 / test_version=kiwoom_radar_v2_1 / research schema 4 / Master schema 1 / Windows Quick Launch v1**.
+- **Market Radar v2.6.1 / Opening Hour Research v1.1 / opening hour schema 1 / Paper Trading v1 / paper schema 2 / Rotation v2 / rotation extension schema 1 / Validator 1 / Collector v2.1 / test_version=kiwoom_radar_v2_1 / research schema 4 / Master schema 1 / Windows Quick Launch v1**.
 - **Phase A 마무리 ~ Phase B 시작**. 실데이터 수집은 시작됐고 2026-10-06 ET 표준 150-slot Capacity 세션의 검증 결과가 있다. 여러 거래일의 표준 full-session/1주 축적 완료나 전략 확정을 뜻하지 않는다.
 - 최종 목표는 시장 후보 → 검증 조건 → 기존 Stock Helper 가격구조 분석 → 데이터 기반 단기매매 의사결정 보조다. Current Leaders/Emerging은 후보 탐색의 두 축이며 향후 검증된 Candidate Rank와 구분한다. 자동주문은 현재 기본 목표가 아니다.
 - 기존 Current/Emerging 공식, RVOL/NULL, 보호 추적, result sampling, provider 및 OCR/매입가/반등가/벽/Toss/halt는 유지한다. launcher로 바탕화면 Stock Helper 또는 launch_stock_helper.cmd를 사용한다. 상세 실행법은 [README](README.md).
@@ -37,12 +37,12 @@
 
 ## 문서 원본과 검증 범위
 
-- 사용자가 교체한 **2026-10-07 기준 PROJECT_DIRECTION.docx가 source of truth**다. MD는 누락된 의미를 보완했고 START_HERE의 읽는 순서를 따른다. DOCX를 수정·재생성하지 않는다.
-- 현재 DOCX SHA256: a92ad593d07d54475268c449374d0bbf1581cc55c9a681e74df3c77564e8175b. 이번 Opening Hour 작업 전후 동일하며 DOCX/MD 방향은 변경하지 않았다.
+- 사용자가 교체한 **2026-10-12 기준 PROJECT_DIRECTION.docx가 source of truth**다. MD는 같은 의미의 mirror로 보존하며 START_HERE의 읽는 순서를 따른다. 두 파일을 수정·재생성하지 않는다.
+- 현재 DOCX SHA256: eb06f5add0fde0f5fecc424e00977932831d2f6d3279f10e9d67fe2c947641ef. MD SHA256: 50029336dea7d83563c4912d74a34509c8da35f7f3cf551e2d0ef496b0df840c. 이번 작업의 tick 보존·표본 감사·전체/eligible 분리와 방향이 일치한다.
 - RESEARCH_BASIS의 7개 연구 축은 DOCX와 일치한다. 정확한 citation은 **출처 검증 필요**이며 논문명·저자·URL을 만들지 않았다.
-- 현재 offline 검증: Opening Hour **64**, Paper v1 **59**, Rotation **30**, NH **48**, Radar/Kiwoom/Dashboard/scheduling/metadata/Validator/audit **247**, 총 **448 통과**. 모두 합성 입력·mock·임시 저장소다. 과거 rotation 384개와 metadata 실패·반복 검증·data 보존 이력은 CHANGELOG에 보존한다.
-- 동일 fixture의 baseline/rotation switches/post-exit 결과는 research 분석 전후 동일하다. 신규 테스트에서 60분·집계·결측·시각 정밀도·MFE/MAE·원본 DB/WAL/SHM 보존·DB roundtrip·export 재현성·UI OFF/Capacity·실제 background 종료 순서를 확인했다. CLI 구조 smoke도 임시 합성 DB만 사용했다. 실제 Kiwoom/NH 네트워크·live shadow·보관 실데이터 신규 분석·RC smoke는 실행하지 않았다. actual order call **0**, 수익성 검증이 아니다.
-- `paper/`, `paper_rotation_v2/`, `execution/`, `providers/`, 기존 v1/v2 fixture/test, runtime/scheduling 및 방향 DOCX/MD 등 38개 파일의 SHA256은 작업 시작 시와 동일하다. `.env`/인증값/원본 data를 이 작업의 입력·출력으로 사용하지 않았다. 순위·연구 schema 4·Validator 변경 없음. `git diff --check`, 문서 상대 링크·현재 버전 일치·신규/갱신 파일 인증값 패턴 검사 PASS. 실제 인증값을 읽어 대조한 검사는 아니다. 임시 설정/DB로 offscreen UI의 Regular ENABLED·Capacity OFF도 렌더 검수했다.
+- 현재 offline 검증: 신규 evidence **31**, Opening Hour **64**, Paper v1 **59**, Rotation **30**, NH **48**, Radar/Kiwoom/Dashboard/scheduling/metadata/Validator/audit **247**, 총 **479 통과**(기존 448 전부 재실행). 합성 입력·mock·임시 저장소다. 동시 실행 첫 Radar 묶음에서 기존 UI 테스트의 임시 DB 정리에 WinError 32가 1건 발생했고, 해당 코드 변경 없이 독립 재실행한 247개가 통과했다. 이전 검증 이력은 CHANGELOG에 둔다.
+- checkpoint 6658927의 전체 baseline/rotation trades·summary·switches·post-exit·comparison replay 결과와 동일하다. 신규 테스트에서 같은 수신시각 TP/SL crossing·중복 보존·horizon 표본 감사·legacy DB/WAL 무변경 거부·경로 독립 ID·metadata 경로 미노출·eligible/all 분리를 검증했다. 기존 60분 계산·종료 순서·CLI 합성 smoke·offscreen UI 회귀도 통과했다. 실제 Kiwoom/NH 네트워크·live shadow·보관 실데이터 신규 분석·RC smoke는 미실행이다. 새 REST/WS subscription/NH order **0**, 수익성 검증이 아니다.
+- 실제 data **214개 / 5,813,926,042 bytes**의 SHA256·크기·mtime 및 보호 파일 21개의 값은 작업 전후 동일하다. 보호 범위는 사용자가 교체한 방향 DOCX/MD, Paper policy, Rotation policy/engine, Kiwoom provider, NH execution, Radar engine/calculations/config다. .env/인증값은 읽거나 수정하지 않았다. 순위·연구 schema 4·Validator 변경 없음. 문서 상대 링크·현재 버전·21개 신규/갱신 파일 인증값 패턴·git diff --check 최종 검사 PASS다. 인증값 패턴 검사는 실제 비밀값과 대조한 검사가 아니다.
 
 ## Opening Hour Research v1 현재 상태
 
@@ -50,8 +50,8 @@
 - Dashboard 상단 옵션은 기본 OFF, Regular Session 전용, Capacity/Manual 강제 OFF다. 자동 분석은 collector/Paper 종료와 기존 export/Master/Validator 이후에만 실행된다. 자체 실패는 INCOMPLETE로 격리한다. live strategy input/hook을 추가하지 않고 Paper 거래 reference ID만 같은 day/run/ticker로 읽는다.
 - XNYS official open~open+60분, 09:30~10:29 시작 1m 60개 → 3m 20개/5m 12개. 첫 60분 unique candidate/discovery는 TOP10/구독/Paper 여부와 무관하게 포함한다. 실제 cache 시가를 읽고 늦은 발견 전 봉은 pre_detection으로 구분한다. unknown/missing/불완전 집계는 NULL이며 거래량 0으로 메우지 않는다.
 - anchor/돌파/HOD·LOD·HH·HL·LH·LL·volume·구간 합계·+3/5/10/15/30/45/60 snapshot과 두 기준 excursion/outcome을 보존한다. event/extrema는 1분 구간, intrabar 선후는 알 수 없다. 분 중간 detection의 정확 MFE/MAE는 NULL이며 완전 포함 봉의 부분 관측만 별도 필드다. pinned usa06011의 공식 minute notional 부재로 NULL을 유지한다.
-- 별도 `data/opening_hour_research/opening_hour.db` / schema 1 / feature `opening_hour_v1`. 기본 export는 같은 부모의 `export/<ET-date>/<research-id>/`에 8 CSV+metadata/quality/summary JSON이다. 동일 입력의 export가 재현되며 다른 evidence는 새 ID로 보존한다. actual created_at은 DB의 최초 생성 시각으로 유지한다. 실제 data에는 개발용 DB/export를 생성하지 않았다.
-- COMPLETE는 60분 OHLCV coverage 상태다. 기술통계·표본 수만 제공하며 buy signal/prediction model/profitable pattern/score/probability를 만들지 않는다. 원본 Capacity/late/non-compliant 표기는 유지한다. 수식·정밀도·NULL 조건은 [기술 README](market_radar/README.md#opening-hour-research-v1), 운영/CLI는 [README](README.md#opening-hour-research-v1)에 둔다.
+- 별도 `data/opening_hour_research/opening_hour.db` / schema 1 / feature `opening_hour_v1_1`. 기본 export는 같은 부모의 `export/<ET-date>/<research-id>/`에 8 CSV+metadata/quality/summary JSON이다. 물리 source 경로를 fingerprint·metadata에서 제외한다. 같은 논리 evidence를 다른 root로 복사해도 ID/export가 동일하며 실제 내용 변경은 새 ID로 보존한다. 기존 v1 dataset과 최초 created_at은 재작성하지 않는다. 실제 data에는 개발용 DB/export를 생성하지 않았다.
+- 모든 후보를 보존하고 기존 stock_type_policy에 따라 analysis_eligible·제외 사유를 기록한다. all/eligible 개수·coverage·제외 사유별 수를 분리하며 median/outcome 표본은 eligible 기준이다. 미구독·결측 자체로 후보를 제외하지 않는다. COMPLETE/PARTIAL/EMPTY는 각각 완전 coverage/일부 관측/관측 없음이며 처리 오류의 INCOMPLETE와 구별한다. 기술통계·표본 수만 제공하며 buy signal/prediction model/profitable pattern/score/probability를 만들지 않는다. 원본 Capacity/late/non-compliant 표기는 유지한다. 수식·정밀도·NULL 조건은 [기술 README](market_radar/README.md#opening-hour-research-v1), 운영/CLI는 [README](README.md#opening-hour-research-v1)에 둔다.
 
 ## Paper Trading v1 현재 상태
 
@@ -61,7 +61,7 @@
 - `paper_v1_baseline`은 **experimental shadow test**, **strategy profitability = not established**다. 양쪽 TOP10 → Emerging → Current, 그 안에서 Emerging rank → Current rank → ticker 순이다. 기존 슬롯 배정·rank 공식은 변경하지 않는다.
 - WATCHING 이후 실제 새 완료 1m 봉, 양수 1m/5m return, watch 가격 초과·freshness·정상 WS가 필요하다. NULL이면 진입하지 않으며 RVOL/OR/HOD는 불변 evidence로만 저장한다. Signal은 실제 평가 시각, OPEN은 그보다 늦은 첫 유효 FE 수신가격이다. 30초 snapshot을 tick proxy로 쓰지 않는다.
 - 동시 OPEN 1개·ET 일일 4회·동일 ticker 재진입 금지. +15%/-10% crossing 관측가격, 정상 official close의 SESSION_END, gap의 DATA_INTEGRITY_INVALID, 중단/restart의 INTERRUPTED를 구분한다. 재시작은 DB의 count/ticker 차단을 복원하며 미완료 watch/signal도 중단 기록 후 새 관측부터 시작한다.
-- 별도 `data/paper_trading/paper_trades.db` / paper schema 1. 현재 작업에서는 임시 DB로만 테스트했고 실제 data에 Paper DB를 생성하지 않았다. entry evidence/summary·gap 범위·MFE/MAE를 저장하고 종료 뒤 exact-time horizon과 CSV/JSON summary를 생성한다. 가격은 로컬 수신시각 기준이고 비용·spread·slippage·실제 체결 가능성은 모델링하지 않는다.
+- 별도 `data/paper_trading/paper_trades.db` / paper schema 2. 동일 시각 복수 가격·exact duplicate도 monotonic observation_id로 보존한다. live 중복 처리/entry/exit 결정 규칙은 유지한다. 사후 horizon은 같은 run/date/ticker에서 target 이후 tolerance(기본 Radar와 같은 30초) 안의 첫 timestamp/arrival 표본이며 표본시각·offset·관측 ID·선택 정책을 DB/CSV에 남긴다. 보간·pre-target 사용 없음, 누락은 NULL/명시적 사유다. 실제 data에 개발용 Paper DB를 생성하지 않았다. 가격은 로컬 수신시각이며 비용·spread·slippage·실제 체결 가능성은 모델링하지 않는다.
 - **Actual orders = disabled / not implemented**. NH import/호출 없음. 기존 2026-10-07 clock_jump 세션은 수익성 표본으로 사용하지 않았고 실제 DB replay도 수행하지 않았다. 실행법은 README를 따른다.
 
 ## Rotation v2 / post-exit review 현재 상태
@@ -69,7 +69,7 @@
 - 사용자 요청에 따라 독립 실험 `paper_rotation_v2`를 추가했다. v1 baseline은 변경·삭제하지 않는다. Dashboard Paper 탭에서 Baseline v1과 Rotation v2를 구분하며 v2 기본 OFF, 선택하면 v1도 실행한다. Capacity 모두 강제 OFF다.
 - 같은 직렬 시세·평가시각을 두 독립 engine/DB에 전달한다. v2 normal confirmation은 v1을 재사용하고, 새 후보의 양쪽 TOP10·양쪽 rank/완료 momentum 우위·fresh/WS 정상·당일 미거래 및 현재 약화 증거를 모두 요구한다. NULL/누락 rank는 근거 부족으로 전환하지 않는다. 이름은 material evidence dominance이고 상승확률은 없다.
 - switch signal보다 늦은 기존 ticker 첫 유효 FE로 exit, exit보다 늦은 새 ticker 첫 유효 FE로 entry다. 같은 관측 재사용 없음. 각 전략의 일일 4회·재진입 금지·OPEN 1개를 별도로 유지한다. gap/invalid/중단/restart는 pending switch를 취소하고 미확인 체결가격은 NULL이다.
-- v1 DB/export/schema 보존. 별도 `data/paper_trading/paper_rotation_v2/review.db`에 v2 거래·전환 근거·v1 복사본·post-exit 집계와 실제 tick을 저장한다. 원래 entry/TP/SL, extrema/return, TP/SL hit+시각, TP 추가 상승/반락, SL 회복 및 evidence tag를 제공한다. official close까지 기존 보호 입력을 연장한다. 조기중지/공백은 INCOMPLETE이고 SESSION_END의 이후 창은 NO_POST_EXIT_WINDOW다. 추적 결과는 판단 입력이 아니다.
+- 별도 `data/paper_trading/paper_rotation_v2/review.db`에 v2 거래·전환 근거·v1 복사본·post-exit 집계와 실제 tick을 저장한다. 두 DB의 공통 Paper evidence는 schema 2이며 rotation extension은 1이다. marks/horizons CSV를 sidecar export에도 추가한다. 원래 entry/TP/SL, extrema/return, TP/SL hit+시각, TP 추가 상승/반락, SL 회복 및 evidence tag를 제공한다. official close까지 기존 보호 입력을 연장한다. 조기중지/공백은 INCOMPLETE이고 SESSION_END의 이후 창은 NO_POST_EXIT_WINDOW다. 추적 결과는 판단 입력이 아니다.
 - 동일 시작 trade는 exact run/ticker/signal/entry 시각·가격으로 연결한다. v1 종료수익률과 v2 chain 복리, old ticker의 switch 이후 TP, 새 ticker MFE/MAE를 별도 CSV로 보존한다. 동일시각 old 가격이 있을 때만 aligned 차이를 계산하고 없으면 NULL이다. 가격/비용/수익률 가정과 모든 필드는 기술 README에 둔다.
 
 ## 독립 NH read-only adapter v1.1
@@ -83,6 +83,8 @@
 - NH probe를 별도 프로세스로 다시 실행하면 파일 캐시가 꺼져 있어 새 토큰 발급/보안 알림이 발생할 수 있다. 같은 프로세스의 유효 토큰은 재사용한다. 이번 재검토는 코드·오프라인 테스트만 수행했으며 발급/주문 호출 0건이다. 안전한 실행 간 토큰 재사용은 아직 구현하지 않았다.
 
 ## 남은 제약
+
+- 실제 Paper/Opening DB는 작업 시작 시 없었다. legacy Paper schema 1은 원본 DB/WAL 복사 검사 후 거부하며 자동 migration하지 않는다. 사용 전 별도 복사본의 offline migration이 필요하고 과거 동일시각 유실 틱은 복원할 수 없다. 첫 live에서는 schema 2 marks/horizon과 Opening all/eligible coverage·표본 수·metadata를 확인해야 한다.
 
 - controller metadata 교체의 일시적 Windows 접근 거부는 25·50·100ms의 제한된 재시도로 복구한다. 영구 거부·임시 파일 작성 실패·기타 I/O 실패는 감추지 않고 파일명/작업 단계/OS 번호를 표시한다. 외부 점유 프로세스는 미확정이며 장기 실운영의 무오류를 보장하지 않는다. scheduling/Capacity 정책과 허용 오차는 변경하지 않았다.
 
@@ -100,8 +102,8 @@
 
 ## Git 상태와 작업 보존
 
-이번 추가 범위는 `opening_hour/`, `tools/opening_hour_research/`, 신규 test, controller/UI의 종료 후 연결, 앱 버전 및 문서다. 기존 미커밋 Paper/Rotation/NH/metadata/runtime 변경은 모두 보존했다. `paper/`, `paper_rotation_v2/`, `execution/`, `providers/`의 파일은 한 바이트도 변경하지 않았다.
+기준 HEAD는 GitHub checkpoint `66589272e013644a94d2e206c4cddbcfa1951383`(v2.6.0)다. 시작 시 미커밋 변경은 사용자가 교체한 PROJECT_DIRECTION.docx/MD 두 파일뿐이며 그대로 보존한다. 이번 범위는 공통 evidence 복사 검사, Paper 저장/표본/runtime 설정 전달, Opening 식별자/집계, UI 표기, 신규/기존 테스트 기대값과 버전·문서다.
 
-작업 시작 때 있던 추적 변경 10개와 미추적 Paper/Rotation/NH/test 파일을 보존했다. 이번에는 opening_hour 디렉터리·CLI 디렉터리·test 3개 status 항목을 추가했다. NH client/probe/test/requirements, .env.example, Paper/Rotation runtime 및 market_radar/runtime.py는 이번 작업에서 변경하지 않았다. 현재 상태는 `git status --short --branch`로 확인한다.
+새 파일은 `market_radar/evidence_io.py`, `tests/research_evidence_quality_test.py`다. Paper policy·Rotation engine/policy·기존 replay fixture·NH 실행 코드·Kiwoom provider·collector runtime은 유지한다. 현재 상태는 `git status --short --branch`로 확인한다. .env/인증값을 읽거나 수정하지 않았다.
 
 기존 scheduling/Kiwoom provider/slot/ranking/RVOL/Validator/cache/schema/launcher 코드는 변경하지 않았다. .env·원본 evidence를 편집하거나 Git에 추가하지 않았다. 이번 작업에서 git add/commit/push 및 사용자 변경 reset/restore/checkout/clean은 하지 않는다.

@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-10-12 — Market Radar v2.6.1 / Paper schema 2 / opening_hour_v1_1
+
+- GitHub checkpoint `66589272e013644a94d2e206c4cddbcfa1951383` 기준의 연구 evidence 보존 보완이다. Paper v1 후보/진입/TP/SL, Rotation material evidence dominance, Opening 60분 계산식·경계, Current/Emerging 순위와 수집 정책은 유지했다.
+- Paper marks에 monotonic AUTOINCREMENT observation_id와 run ID를 두어 동일 시각 복수 가격·exact duplicate를 모두 도착 순서로 보존한다. live의 연속 exact duplicate 판단 생략은 유지한다. 종료 후 horizon은 같은 run/date/ticker의 target 이후 tolerance 안 첫 timestamp/observation_id 표본이며 Radar와 같은 기본 30초를 사용한다. sample timestamp/offset/selection/ID/tolerance·NULL 사유를 DB/CSV에 남기고 보간·pre-target·최고가격 탐색은 하지 않는다. Baseline/sidecar export에 marks/horizons를 보존한다.
+- Paper 공통 schema는 1→2, rotation extension은 1 유지다. 기존 schema 1은 DB/WAL 임시 복사 검사 후 migration 필요 오류로 거부하며 자동 변경하지 않는다. 별도 복사본 offline migration은 후속이고 유실된 틱은 복원하지 않는다. 작업 전 data에서 실제 Paper/Opening DB가 없음을 확인했다. 공통 복사 검사 helper를 분리해 기존 source 검사도 동일 방식으로 유지한다.
+- Opening feature는 `opening_hour_v1`→`opening_hour_v1_1`, DB schema는 1 유지다. 물리 source DB/cache/Paper 경로를 logical fingerprint·metadata에서 제외하고 동일 자료의 root 이동에도 ID·export를 유지한다. 내용 변경은 새 ID이며 기존 feature dataset을 덮어쓰지 않는다. source_cache_path 열은 신규 dataset에서 NULL이다.
+- 모든 raw 후보·제외 유형·미구독·결측을 보존하고 기존 stock_type_policy로 analysis_eligible/제외 사유를 기록한다. all/eligible/excluded 수·사유별 수·양쪽 coverage를 분리하며 outcome median/표본은 eligible 기준이다. 미구독·결측을 분모에서 제거하지 않는다. COMPLETE/PARTIAL/EMPTY를 관측 coverage로 정의하고 처리 오류 INCOMPLETE와 구별한다. Dashboard는 all/eligible 수와 full coverage를 표시한다.
+- Offline **479 통과**: 신규 evidence 31 + 기존 448(Opening 64, Paper 59, Rotation 30, NH 48, Radar/Kiwoom/UI/scheduling/Validator/audit 247). 같은시각 TP/SL·중복·표본 선택·WAL 보존·경로 이동·metadata·eligible/all 및 checkpoint replay 전체 결과 동일을 검증했다. 첫 병렬 회귀의 기존 slow-fetch UI 테스트에서 임시 DB 정리 WinError 32가 1건 있었고, 코드 변경 없이 247개 묶음 독립 재실행 PASS다. 실제 REST/WS subscription/order **0**, live smoke·보관 데이터 신규 분석은 미실행이다.
+- 실제 data 214개(5,813,926,042 bytes)의 SHA256/크기/mtime와 보호 코드·방향 문서 21개가 전후 동일하다. 사용자 교체본 PROJECT_DIRECTION.docx SHA256 `eb06f5add0fde0f5fecc424e00977932831d2f6d3279f10e9d67fe2c947641ef`, MD `50029336dea7d83563c4912d74a34509c8da35f7f3cf551e2d0ef496b0df840c`를 보존했다. .env/실제 인증값은 읽거나 수정하지 않았으며 git add/commit/push/reset/restore/checkout/clean도 실행하지 않았다.
+
+- 최종 git diff --check·상대 링크·현재 버전·수정/추가 21개 파일의 인증값 패턴 검사 PASS. 사용자 방향 파일 2개를 제외한 작업 범위는 추적 수정 19개와 미추적 신규 2개다.
+
 ## 2026-10-12 — Market Radar v2.6.0 / Opening Hour Research v1 / opening hour schema 1
 
 - 기존 candidate/discovery·완료 1m·shared minute cache를 read-only 분석하는 `opening_hour_v1`을 추가했다. 기본 OFF/Regular Session 전용이며 collector/Paper 종료 후에만 실행한다. Capacity/Manual 자동 OFF, 종료된 과거 자료는 별도 CLI로 명시적으로 분석한다. 추가 REST·WS subscription·backfill·실제 주문 **0건**, live strategy/ranking 입력 변경 없음.

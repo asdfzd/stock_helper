@@ -246,7 +246,8 @@ class RotationTests(unittest.TestCase):
         folder = self.root/"export"
         self.review.export_review(SESSION.date, folder, self.base.summary(SESSION.date))
         expected = {"paper_trades.csv", "paper_post_exit.csv", "paper_post_exit_marks.csv",
-                    "paper_rotation_comparison.csv", "paper_rotation_switches.csv", "paper_daily_summary.json"}
+                    "paper_rotation_comparison.csv", "paper_rotation_switches.csv", "paper_daily_summary.json",
+                    "paper_trade_marks.csv", "paper_horizons.csv"}
         self.assertEqual({p.name for p in folder.iterdir()}, expected)
         text = (folder/"paper_trades.csv").read_text(encoding="utf-8")
         self.assertIn("paper_v1_baseline", text)

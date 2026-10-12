@@ -326,7 +326,7 @@ class CalculationTests(unittest.TestCase):
 
     def test_no_candidates_no_fake_zero_median(self):
         result = analyze(evidence([]))
-        self.assertEqual(result["quality"]["status"], "INCOMPLETE")
+        self.assertEqual(result["quality"]["status"], "EMPTY")
         self.assertIsNone(result["summary"]["median_60m_mfe"])
         self.assertIsNone(result["quality"]["full_1m_coverage_rate"])
 

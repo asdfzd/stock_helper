@@ -127,7 +127,7 @@ class PaperRuntime:
     def _run(self):
         store = engine = None
         try:
-            store = PaperStore(self.path)
+            store = PaperStore(self.path, result_tolerance_seconds=self.config.result_tolerance_seconds)
             engine = PaperEngine(store, self.run_id, enabled=True, collection_mode=self.config.collection_mode,
                                  max_age=self.config.max_data_delay_seconds, started_at=utc(self.clock()))
             self.ready.set()

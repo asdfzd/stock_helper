@@ -59,11 +59,11 @@ class PairedRuntime(PaperRuntime):
     def _run(self):
         store = engine = review = None
         try:
-            store = PaperStore(self.path)
+            store = PaperStore(self.path, result_tolerance_seconds=self.config.result_tolerance_seconds)
             engine = PaperEngine(store, self.run_id, enabled=True, collection_mode=self.config.collection_mode,
                                  max_age=self.config.max_data_delay_seconds, started_at=utc(self.clock()))
             try:
-                review = RotationStore(self.review_path)
+                review = RotationStore(self.review_path, result_tolerance_seconds=self.config.result_tolerance_seconds)
                 engine = PairedEngine(engine, review, rotation_enabled=self.rotation_enabled, started_at=utc(self.clock()))
             except Exception:
                 self.sidecar_error = True

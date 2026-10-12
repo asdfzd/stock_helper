@@ -1,27 +1,26 @@
 """Sidecar database: baseline DB/schema/files are never migrated or rewritten."""
 import csv
-from contextlib import closing
 import json
 from pathlib import Path
-import sqlite3
 
 from ..paper.engine import encode
 from ..paper.storage import PaperStore, FIELDS
+from ..evidence_io import copied_database
 from . import ROTATION_SCHEMA_VERSION, STRATEGY_VERSION, SWITCH_REASON
 
 
 class RotationStore(PaperStore):
-    def __init__(self, path):
+    def __init__(self, path, **kwargs):
         path = Path(path)
         if path.exists() and path.stat().st_size:
-            with closing(sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)) as check:
+            with copied_database(path) as check:
                 tables = {r[0] for r in check.execute("SELECT name FROM sqlite_master WHERE type='table'")}
                 if "rotation_metadata" not in tables:
                     raise ValueError("Rotation requires its own sidecar database")
                 version = check.execute("SELECT version FROM rotation_metadata").fetchone()
                 if not version or version[0] != ROTATION_SCHEMA_VERSION:
                     raise ValueError("Unsupported rotation schema")
-        super().__init__(path)
+        super().__init__(path, **kwargs)
         self.db.executescript("""
             CREATE TABLE IF NOT EXISTS rotation_metadata(version INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS rotation_details(trade_id TEXT PRIMARY KEY, detail_json TEXT NOT NULL);
@@ -80,6 +79,7 @@ class RotationStore(PaperStore):
         from .tracking import POST_FIELDS
         folder = Path(folder)
         folder.mkdir(parents=True, exist_ok=True)
+        self._export_tables(day, folder, ("paper_trade_marks", "paper_horizons"))
         trades = [t for t in self.documents("review_trades") if t["session_date_et"] == day]
         posts = [t for t in self.documents("paper_post_exit") if t["session_date_et"] == day]
         switches = [t for t in self.documents("rotation_switches") if t["session_date_et"] == day]

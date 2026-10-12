@@ -284,7 +284,7 @@ class PaperTests(unittest.TestCase):
         self.store = PaperStore(self.path)
         trade = self.store.entered(SESSION.date)[0]
         self.assertEqual(trade["entry_price"], 11.1)
-        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 1)
+        self.assertEqual(self.store.db.execute("PRAGMA user_version").fetchone()[0], 2)
 
     def test_export_and_summary_exclude_invalid(self):
         self.opened()
@@ -295,7 +295,7 @@ class PaperTests(unittest.TestCase):
         self.assertIsNone(summary["average_return_pct"])
         self.assertIsNone(summary["tp_sl_win_rate"])
 
-    def test_exact_horizons_only_after_finish(self):
+    def test_horizons_only_after_finish(self):
         self.opened()
         self.engine.on_tick("TEST", 13, stamp(423))
         self.engine.on_tick("TEST", 14, stamp(452.001))
@@ -305,7 +305,7 @@ class PaperTests(unittest.TestCase):
         self.assertEqual(len(horizons), 6)
         self.assertEqual(horizons[0]["price"], 14)
         self.assertIsNone(horizons[1]["price"])
-        self.assertEqual(horizons[1]["missing_reason"], "no_exact_observation")
+        self.assertEqual(horizons[1]["missing_reason"], "no_post_target_observation_within_tolerance")
 
     def test_actual_orders_zero_and_no_broker_import(self):
         self.opened()

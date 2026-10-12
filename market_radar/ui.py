@@ -226,8 +226,10 @@ class RadarPanel(QWidget):
         if status == "OFF" and self.opening_hour_enable.isChecked():
             status = "ENABLED"
         quality = result.get("quality", {})
-        self.opening_hour_status.setText(f"{status} · candidates {quality.get('candidate_count', '-')} · "
-            f"full coverage {quality.get('candidates_with_full_60m', '-')}")
+        self.opening_hour_status.setText(f"{status} · all {quality.get('all_candidate_count', '-')} / "
+            f"eligible {quality.get('eligible_candidate_count', '-')} · full coverage all "
+            f"{quality.get('all_coverage', {}).get('candidates_with_full_60m', '-')} / eligible "
+            f"{quality.get('eligible_coverage', {}).get('candidates_with_full_60m', '-')}")
         self.opening_hour_status.setToolTip(result.get("export_path") or result.get("error", "세션 종료 후 생성"))
 
     def start(self, provider=None, *, fresh_directory=None):

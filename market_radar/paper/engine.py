@@ -168,8 +168,7 @@ class PaperEngine:
                     self._state(price_at)
                 return
             if ticker in self.interests():
-                self.store.db.execute("INSERT OR IGNORE INTO paper_trade_marks VALUES(?,?,?,?)",
-                                      (ticker, price_at, price, self.session.date))
+                self.store.record_mark(self.run_id, ticker, price_at, price, self.session.date)
             if not active or ticker != active["ticker"]:
                 return
             last = active.get("last_price_at")

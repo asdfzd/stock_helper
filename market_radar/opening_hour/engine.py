@@ -1,4 +1,4 @@
-"""Pure descriptive calculations on completed minutes. No provider or Paper imports.
+"""Pure descriptive calculations on completed minutes. No provider calls or Paper imports.
 
 Times of extrema/breaks are minute intervals, never claimed as exact tick times.
 Pullback/rebound compare a prior completed bar's running extreme with a later bar.
@@ -11,7 +11,9 @@ from statistics import median
 
 from ..models import ET, instant, utc
 from . import FEATURE_VERSION, SCHEMA_VERSION, SNAPSHOT_MINUTES, DETECTION_MINUTES
-from .source import digest
+from .source import digest, logical_evidence
+from ..config import CONFIG
+from ..providers.kiwoom_types import excluded_type
 
 PRICE_FIELDS = ("open", "high", "low", "close", "volume")
 STRUCTURE_FIELDS = ("higher_high", "higher_low", "lower_high", "lower_low")
@@ -329,9 +331,7 @@ def analyze_candidate(candidate, start):
                 bars=minutes+three+five, events=events, snapshots=snapshots, outcome=outcome, segments=segments)
 
 
-def analyze(evidence):
-    start = instant(evidence["regular_open_utc"])
-    analyzed = [analyze_candidate(dict(c, session_date_et=evidence["session_date_et"]), start) for c in evidence["candidates"]]
+def coverage(analyzed):
     all_minutes = [b for c in analyzed for b in c["bars"] if b["timeframe"] == "1m"]
     count = len(analyzed)
     full = sum(c["outcome"]["full_60m"] for c in analyzed)
@@ -344,20 +344,58 @@ def analyze(evidence):
         complete_ohlcv_1m_rate=sum(b["aggregate_complete"] for b in all_minutes)/(60*count) if count else None,
         candidate_detection_price_available_rate=sum(finite(c["candidate"].get("candidate_first_detected_price")) for c in analyzed)/count if count else None,
         opening_hour_outcome_available_rate=sum(c["outcome"]["return_open_to_10_30"] is not None for c in analyzed)/count if count else None,
-        rates_unit="fraction_0_to_1", status="COMPLETE" if count and full == count else "INCOMPLETE",
-        warnings=evidence.get("warnings", []))
+        rates_unit="fraction_0_to_1")
+    quality["status"] = ("COMPLETE" if count and full == count else
+                         "PARTIAL" if quality["actual_1m_rows"] else "EMPTY")
     for timeframe, expected in (("3m", 20), ("5m", 12)):
         complete = sum(b["aggregate_complete"] for c in analyzed for b in c["bars"] if b["timeframe"] == timeframe)
         quality["complete_"+timeframe+"_rate"] = complete/(expected*count) if count else None
-    returns = [c["outcome"]["return_open_to_10_30"] for c in analyzed if c["outcome"]["return_open_to_10_30"] is not None]
-    summary = dict(candidate_count=count, coverage=quality, positive_outcome_count=sum(r > 0 for r in returns),
+    return quality
+
+
+def eligibility(candidate, default_policy):
+    policy = candidate.get("type_policy") or default_policy
+    if policy not in {"common_and_unknown", "all"}:
+        raise ValueError("Unsupported source stock_type_policy")
+    kind = candidate.get("symbol_type", candidate.get("type")) or "type_unknown"
+    # Missing subscription/bars do not remove a strategy-eligible discovery from the denominator.
+    excluded_by_type = excluded_type(kind, policy)
+    excluded = policy != "all" and (candidate.get("excluded_symbol_type") or excluded_by_type)
+    reasons = (["stock_type_policy:"+kind if excluded_by_type else "source_excluded_symbol_type"]
+               if excluded else [])
+    return dict(analysis_eligible=not bool(excluded), analysis_exclusion_reasons=reasons,
+                analysis_stock_type_policy=policy, symbol_type=kind)
+
+
+def analyze(evidence):
+    evidence = logical_evidence(evidence)
+    evidence.setdefault("stock_type_policy", CONFIG.stock_type_policy)
+    evidence.setdefault("stock_type_policy_basis", "default_config")
+    evidence["source_fingerprint"] = digest(evidence)
+    start = instant(evidence["regular_open_utc"])
+    policy = evidence.get("stock_type_policy", CONFIG.stock_type_policy)
+    analyzed = [analyze_candidate(dict(c, session_date_et=evidence["session_date_et"],
+                **eligibility(c, policy)), start) for c in evidence["candidates"]]
+    eligible = [c for c in analyzed if c["candidate"]["analysis_eligible"]]
+    counts = dict(all_candidate_count=len(analyzed), eligible_candidate_count=len(eligible),
+                  excluded_candidate_count=len(analyzed)-len(eligible),
+                  exclusion_reason_counts=dict(sorted(Counter(reason for c in analyzed
+                    for reason in c["candidate"]["analysis_exclusion_reasons"]).items())))
+    all_coverage, eligible_coverage = coverage(analyzed), coverage(eligible)
+    quality = dict(all_coverage, **counts, all_coverage=all_coverage, eligible_coverage=eligible_coverage,
+                   warnings=evidence.get("warnings", []))
+    returns = [c["outcome"]["return_open_to_10_30"] for c in eligible if c["outcome"]["return_open_to_10_30"] is not None]
+    summary = dict(candidate_count=len(analyzed), **counts, coverage=quality,
+        all_coverage=all_coverage, eligible_coverage=eligible_coverage,
+        outcome_population="analysis_eligible with observed outcome; missing values remain NULL",
+        eligible_outcome_sample_count=len(returns), positive_outcome_count=sum(r > 0 for r in returns),
         negative_outcome_count=sum(r < 0 for r in returns), flat_outcome_count=sum(r == 0 for r in returns),
-        source_sample_counts=dict(sorted(Counter(s for c in analyzed for s in c["candidate"].get("candidate_sources") or []).items())),
+        source_sample_counts=dict(sorted(Counter(s for c in eligible for s in c["candidate"].get("candidate_sources") or []).items())),
         interpretation="data collection / descriptive research; no signal, prediction, profitability or pattern selection",
         new_rest_calls=0, new_ws_subscriptions=0, actual_nh_order_calls=0)
     for field, label in (("return_open_to_10_30", "median_open_to_60m_return"),
                          ("opening_hour_mfe_from_open", "median_60m_mfe"), ("opening_hour_mae_from_open", "median_60m_mae")):
-        values = [c["outcome"][field] for c in analyzed if c["outcome"][field] is not None]
+        values = [c["outcome"][field] for c in eligible if c["outcome"][field] is not None]
         summary[label] = median(values) if values else None
         summary[label+"_sample_count"] = len(values)
     metadata = {k: v for k, v in evidence.items() if k != "candidates"}
