@@ -264,7 +264,10 @@ class PaperEngine:
                                       (encode(self.store.summary(self.session.date)), self.run_id, self.session.date))
 
     def view(self):
-        return dict(status=self.status, strategy=STRATEGY_VERSION, trades=len(self._entries()),
+        # One read per view, also when _state persists it during a tick. Keep the
+        # snapshot local: later ticks/transactions must always see fresh rows.
+        entries = self._entries()
+        return dict(status=self.status, strategy=STRATEGY_VERSION, trades=len(entries),
                     active=dict(self.active) if self.active else None, evidence=dict(self.latest_row) if self.latest_row else None,
-                    recent=self.store.entered(self.session.date)[-10:] if self.session else [],
-                    summary=self.store.summary(self.session.date) if self.session else {}, actual_order_calls=0)
+                    recent=entries[-10:],
+                    summary=self.store.summary(self.session.date, entries=entries) if self.session else {}, actual_order_calls=0)

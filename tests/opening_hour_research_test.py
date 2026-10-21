@@ -569,7 +569,12 @@ class IsolationTests(unittest.TestCase):
         controller.schedule=SimpleNamespace(snapshot=lambda:dict(session_date_et=SESSION.date))
         with patch("market_radar.opening_hour.service.analyze_session",side_effect=ValueError("not for UI")):
             controller._analyze_opening_hour()
-        self.assertEqual(controller.opening_hour_result,{"status":"INCOMPLETE","error":"ValueError"})
+        result = controller.opening_hour_result
+        self.assertEqual((result['status'], result['error']), ('INCOMPLETE', 'ValueError'))
+        self.assertEqual(result['diagnostics']['exception']['phase'], 'opening_analysis')
+        saved = json.loads((controller.config.data_dir/'opening_hour_diagnostics.json').read_text())
+        self.assertEqual(saved, result['diagnostics'])
+        self.assertNotIn('not for UI', json.dumps(saved))
         self.assertEqual(controller.state,"STOPPED")
 
     def test_controller_runs_analysis_only_after_provider_and_paper_finish(self):

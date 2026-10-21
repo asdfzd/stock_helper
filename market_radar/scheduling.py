@@ -28,6 +28,7 @@ class SessionSchedule:
         self.reasons = []
         now = self.clock.now()
         self.last_wall, self.last_mono = now, self.clock.monotonic()
+        self.started_mono = None  # Observed gate opening; no reconstructed timestamp.
         self.open = self.close = self.stop_at = self.prepare_at = None
         self.data = dict(collection_mode=config.collection_mode, mode=config.collection_mode,
             protocol_name={"Manual": "manual_diagnostic", "Capacity Test": "capacity", "Regular Session": "weekly_regular"}[config.collection_mode],
@@ -107,6 +108,7 @@ class SessionSchedule:
                     self.phase = "PREOPEN_WAIT"
                 else:
                     self.phase = "REGULAR_LIVE"
+                    self.started_mono = mono
                     delay = (now - self.open).total_seconds() * 1000 if self.open else None
                     self.data.update(actual_start=utc(now), actual_regular_start_utc=utc(now), start_delay_ms=delay)
                     if self.open and not self.data["ready_before_open"]:

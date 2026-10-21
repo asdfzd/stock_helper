@@ -70,11 +70,13 @@ class CollectorController:
         self.paper = None
         self.paper_enabled = False
         self.paper_path = None
+        self.paper_telemetry_path = None
         self.paper_rotation_enabled = False
         self.paper_review_path = None
         self.opening_hour_enabled = False
         self.opening_hour_path = None
         self.opening_hour_result = {"status": "OFF"}
+        self.operational_diagnostics = None
 
     @property
     def session_phase(self):
@@ -123,6 +125,10 @@ class CollectorController:
 
     def stop(self):
         if self.busy and self.state in {"STARTING", "RUNNING"} and not self._stop.is_set():
+            if self.operational_diagnostics is not None:
+                from .run_diagnostics import call_path, worker_state
+                self.operational_diagnostics.record('controller_stop', self.session_phase,
+                    caller=call_path(), workers=worker_state(self))
             self._stop.set()
             if self.schedule:
                 self.schedule.stop("user_requested")
@@ -157,7 +163,8 @@ class CollectorController:
                 from .paper_rotation_v2.runtime import PairedRuntime, DEFAULT_PAPER_PATH
                 self.paper = PairedRuntime(self.config, self.lifecycle["run_id"],
                     self.paper_path or DEFAULT_PAPER_PATH, clock=self.clock.now,
-                    review_path=self.paper_review_path, rotation_enabled=self.paper_rotation_enabled)
+                    review_path=self.paper_review_path, rotation_enabled=self.paper_rotation_enabled,
+                    telemetry_path=self.paper_telemetry_path)
                 self.paper.attach(instance)
             self.worker = RadarWorker(instance, self.config, schedule=self.schedule, paper=self.paper)
             self._save_lifecycle()
@@ -194,6 +201,10 @@ class CollectorController:
             self._save_lifecycle()
             self.events.put(("collector_finished", self.worker.error or "정상 종료 · final export 완료"))
         except Exception as exc:
+            if self.operational_diagnostics is not None:
+                from .failure_evidence import exception_evidence
+                self.operational_diagnostics.record('controller_exception', self.session_phase,
+                    error=True, exception=exception_evidence(exc, 'controller'))
             self.state = "ERROR"
             if self.worker and self.worker.running:
                 self.worker.stop(reason="controller_error")
@@ -256,16 +267,32 @@ class CollectorController:
             return
         if not self.worker or self.worker.running:
             raise RuntimeError("Opening research requires a stopped collector")
+        from .failure_evidence import exception_evidence, safe_path, path_present, write_diagnostics
+        from .opening_hour.storage import DEFAULT_DB
+        output = self.opening_hour_path or DEFAULT_DB
+        diagnostics = dict(diagnostic_schema=1, paths={'output_db': safe_path(output)})
         try:
             from .opening_hour.service import analyze_session
-            from .opening_hour.storage import DEFAULT_DB
             paper_paths = (self.paper.path, self.paper.review_path) if self.paper is not None else ()
             self.opening_hour_result = analyze_session(self.worker.config.data_dir,
                 day=self.schedule.snapshot()["session_date_et"], cache_path=self.config.cache_path,
-                paper_paths=paper_paths, output_db=self.opening_hour_path or DEFAULT_DB, calendar=self.calendar)
+                paper_paths=paper_paths, output_db=output, calendar=self.calendar, diagnostics=diagnostics)
         except Exception as exc:
             # Analysis failure is separate from collection/validation and never changes their evidence.
+            diagnostics.update(status='INCOMPLETE', error=type(exc).__name__,
+                               output_database_present=path_present(output))
+            if 'exception' not in diagnostics:
+                diagnostics['exception'] = exception_evidence(exc, 'opening_analysis')
             self.opening_hour_result = {"status": "INCOMPLETE", "error": type(exc).__name__}
+        diagnostics.update(run_id=self.lifecycle.get('run_id'),
+                           session_date=self.schedule.snapshot()['session_date_et'])
+        self.opening_hour_result['diagnostics'] = diagnostics
+        # New evidence beside this run's lifecycle, even if the output directory failed.
+        try:
+            write_diagnostics(self.worker.config.data_dir/'opening_hour_diagnostics.json', diagnostics)
+        except Exception as exc:
+            # Keep both errors in memory; missing durable evidence blocks safe preservation.
+            diagnostics['persistence_exception'] = exception_evidence(exc, 'write_opening_diagnostics')
 
     def _persist_final_protocol(self):
         """Worker has closed SQLite; update only this newly-created run's public metadata."""

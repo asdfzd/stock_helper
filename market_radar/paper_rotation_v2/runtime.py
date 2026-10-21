@@ -59,12 +59,12 @@ class PairedRuntime(PaperRuntime):
     def _run(self):
         store = engine = review = None
         try:
-            store = PaperStore(self.path, result_tolerance_seconds=self.config.result_tolerance_seconds)
+            store = PaperStore(self.path, result_tolerance_seconds=self.config.result_tolerance_seconds, metrics=self.metrics)
             engine = PaperEngine(store, self.run_id, enabled=True, collection_mode=self.config.collection_mode,
                                  max_age=self.config.max_data_delay_seconds, started_at=utc(self.clock()))
             try:
-                review = RotationStore(self.review_path, result_tolerance_seconds=self.config.result_tolerance_seconds)
-                engine = PairedEngine(engine, review, rotation_enabled=self.rotation_enabled, started_at=utc(self.clock()))
+                review = RotationStore(self.review_path, result_tolerance_seconds=self.config.result_tolerance_seconds, metrics=self.metrics)
+                engine = PairedEngine(engine, review, rotation_enabled=self.rotation_enabled, started_at=utc(self.clock()), metrics=self.metrics)
             except Exception:
                 self.sidecar_error = True
                 if review:
@@ -75,17 +75,21 @@ class PairedRuntime(PaperRuntime):
             last_wall, last_mono = self.clock(), time.monotonic()
             while not self.done.is_set() or not self.queue.empty():
                 now, mono = self.clock(), time.monotonic()
+                publish_required = False
                 if self.overflow.is_set():
                     engine.gap(utc(now), "paper_queue_overflow")
+                    publish_required = True
                     self.error = True
                     self.overflow.clear()
                 if self.input_failure.is_set():
                     engine.gap(utc(now), "paper_input_unavailable")
+                    publish_required = True
                     self.error = True
                     self.input_failure.clear()
                 # Sleep/resume or wall-clock changes make event ordering unverifiable.
                 if mono-last_mono > 5 or abs((now-last_wall).total_seconds()-(mono-last_mono)) > 2:
                     engine.gap(utc(now), "application_gap_or_clock_jump")
+                    publish_required = True
                     self.error = True
                 last_wall, last_mono = now, mono
                 try:
@@ -93,6 +97,7 @@ class PairedRuntime(PaperRuntime):
                 except queue.Empty:
                     item = None
                 if not self.error and item:
+                    publish_required = True
                     kind, *args = item
                     if kind == "frame":
                         evaluation_at = utc(self.clock())
@@ -123,8 +128,14 @@ class PairedRuntime(PaperRuntime):
                     # cannot be overtaken by a stale/end-of-session decision.
                     if self.queue.empty():
                         engine.heartbeat(heartbeat_at)
+                        publish_required = True
                         self.last_heartbeat = mono
-                self._publish(engine)
+                # Keep interests/protected tickers immediate after every action;
+                # reuse the published state only when no engine action occurred.
+                if publish_required:
+                    self._publish(engine)
+                elif self.metrics:
+                    self.metrics.complete(self.error)
                 if self.error:
                     with self.lock:
                         self.state["status"] = "ERROR · paper data gap; restart required"
@@ -162,3 +173,5 @@ class PairedRuntime(PaperRuntime):
                 review.close()
             if store:
                 store.close()
+            if self.metrics:
+                self.metrics.close()

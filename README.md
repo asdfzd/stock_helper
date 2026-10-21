@@ -31,17 +31,29 @@
 
 필요한 데이터가 없으면 지표는 NULL로 남깁니다. 누락 분을 거래량 0으로 채우지 않으며 VWAP는 현재 NULL입니다. EOD/D+1~D+3는 일봉 기반 provisional 또는 future pending 상태를 구분합니다.
 
+## 수집 테스트 화면 (v2.6.5)
+
+Market Radar를 열면 **수집 테스트** 탭이 먼저 표시됩니다. Live Radar, Session History, Candidate History, Paper Trading은 그대로이며 기존 세부 설정·Replay·Import·검증 도구는 **수집 상세 설정** 탭에 있습니다.
+
+1. Collection Mode에서 **첫 1시간 (65분)** 또는 **일반 Regular Session**을 직접 선택합니다. 새 GUI 설정의 Max WS 기본은 150이며 기존 저장된 값과 명시적 설정은 유지합니다. 첫 1시간 선택은 기존 Regular/150/Paper/Rotation/Opening 설정을 사용합니다.
+2. **PC 자동 종료 없이 테스트**는 기본 체크입니다. 실제 주문은 항상 OFF이며 계좌/주문 연결을 추가하지 않습니다. 수집 시작은 기존 Controller 하나만 실행합니다.
+3. 현재 단계·연결·WS·최근 snapshot/후보 집계·실제 수집 경과·UTC 예정 시각·남은 시간을 확인합니다. 값이 없으면 미확인입니다. Paper/Rotation 상태와 연구 실패, ZIP 보존 판정은 별도로 표시합니다.
+4. **수집 중지**는 예약/수집을 취소합니다. **PC 종료만 취소**는 수집과 후처리를 계속합니다. 결과 폴더/ZIP 폴더를 열거나 **진단 결과 확인**에서 기존 JSON의 오류·clock·stop caller를 읽습니다. 파일 읽기는 버튼을 누를 때만 실행하며 새 Paper DB 조회나 로그 시스템을 만들지 않습니다.
+
+첫 1시간은 개장 전 예약이 필요합니다. `late_launch`는 명시적으로 표시하며 일반 세션으로 자동 전환하지 않습니다. 일반 Regular Session의 조기 수동 종료는 FULL SESSION 성공이 아닙니다. ZIP 검증 표시는 보존 당시 기록이며 진단 버튼의 존재 확인과 재검증을 혼동하지 않습니다. 실장 v2.6.5 운용 안정성과 실제 종료는 아직 별도 검증이 필요합니다. 기존 EXE에는 이번 소스 화면이 반영되지 않았습니다.
+
 ## Current Version
 
 | 구분 | 현재 값 |
 |---|---|
-| Market Radar 앱 버전 | **v2.6.1** (연구 evidence 보존·표본 감사 보완) |
+| Market Radar 앱 버전 | **v2.6.5 소스 GUI** (수집 테스트 기본 탭; 기존 EXE 미반영) |
 | Session Validator | **1** (수집 품질 검증; 전략 판단 아님) |
 | Collector 연구 버전 | **v2.1** |
 | test_version | `kiwoom_radar_v2_1` |
 | Research schema | **4** |
 | Master schema | **1** |
 | Windows Quick Launch | **v1** (`.venv-paddle` 실행, EXE 패키징 없음) |
+| 독립 One Hour Research Runner | **v1.0.1 소스 / 테스트 EXE v1.0.1** (별도 TEST 폴더; 기존 v1.0.0 보존; manifest/summary 1, diagnostic 1, quality policy 2) |
 | 독립 NH read-only adapter | **v1.1** (`nhplug 0.4.1`; 잔고·매수가능수량 조회 PASS, RC 보류) |
 | Paper Trading / paper schema | **v1 / 2** (전략 규칙 유지, 기본 OFF, 실제 주문 disabled / not implemented) |
 | Rotation Shadow / rotation extension schema | **v2 / 1** (`paper_rotation_v2`, 별도 DB, 기본 OFF) |
@@ -62,6 +74,8 @@
 2026-10-06 ET 표준 **150-slot** 보관 세션을 Validator로 재검증했습니다. **WARN**이며 protocol·무결성·capacity는 PASS, 최대 Active 106/150·saturation 70.67%·미배정 0건입니다. RVOL 0%와 stale·결과 결측 등은 분석 제약입니다. 한 세션으로 150을 영구 최적값으로 확정하지 않으며 CONFIG/저장 설정을 자동 변경하지 않습니다. [현재 개발 상태](CODEX_HANDOFF.md), [영구 검증 이력](CHANGELOG.md)을 참고하세요.
 
 ## 문서 안내
+
+단축 수집은 기존 Market Radar GUI의 **첫 1시간 수집 + ZIP 검증 + PC 자동 종료** 옵션을 사용합니다. 독립 OneHourResearch.exe는 실행하지 않습니다. 기존 독립 실행기 소스·배포는 보존하며 ZIP·품질 검증 함수만 재사용합니다. 자세한 사용법과 배포 제약은 아래 GUI 통합 안내를 참고하세요.
 
 새 개발 대화는 [START_HERE](START_HERE.md)에서 시작합니다. 최상위 방향은 [PROJECT_DIRECTION](PROJECT_DIRECTION.md), 연구 가설과 출처 확인 수준은 [RESEARCH_BASIS](RESEARCH_BASIS.md)를 따릅니다. 현재는 Phase A 마무리~Phase B 시작으로, 고정 슬롯의 Regular Session을 preopen arm해 공식 close까지 비교 가능한 데이터를 축적합니다. 1주는 첫 분석 표본입니다. Capacity 비교를 추가할 때에는 **Capacity Test / Max WS 지정 / preopen arm → open+65분 자동 종료**를 사용합니다. 기존 20/50/100은 새로운 표준 통제 비교로 소급 지정하지 않습니다. 자세한 기준은 [TEST_PROTOCOL](TEST_PROTOCOL.md)을 따릅니다.
 
@@ -253,6 +267,55 @@ PASS는 검사 범위에서 중대한 문제가 확인되지 않았다는 뜻입
 **Import Existing Session**은 원본 연구 DB가 있는 폴더를 선택합니다. 거래일별로 등록하고 같은 세션 재가져오기는 중복 대신 결과를 갱신합니다. 기존 원본은 읽기 전용이며 Master는 `data/market_radar/master.db`입니다. 과거 자료의 실제 실행시간·정상 종료를 확인할 구조화 정보가 없으면 관측 구간·unknown으로 표시합니다.
 
 종목을 더블클릭하면 Candidate History에 +30s부터 D+3까지의 상태·결과를 표시하고 Stock Helper로 선택 신호를 전달합니다. 기존 분석 카드가 있으면 그 카드로 이동하며, 없으면 ticker를 클립보드에 준비합니다. 자동 화면 캡처는 실행하지 않습니다. v2.2의 100-slot 보관 실장 세션은 검산했으며, v2.2.1 shared cache 실장 검증과 EXE 배포 검증은 별도입니다.
+
+### 첫 1시간 수집 + ZIP 검증 + PC 자동 종료 (GUI 통합 v4)
+
+**기존 Stock Helper → Market Radar 안의 기능**입니다. OneHourResearch.exe를 실행하지 않으며 현재 Dashboard의 CollectorController 한 개만 사용합니다. 첫 1시간 옵션은 기본 OFF이며 `PC 자동 종료 없이 테스트`는 기본 ON입니다. 실제 종료는 사용자가 테스트 체크를 해제해야 활성화됩니다.
+
+1. 개장 전에 Market Radar의 **수집 테스트 → 첫 1시간 (65분)**을 선택합니다. 기존 체크박스는 수집 상세 설정에 있습니다. 가능하면 개장 30분 전에 준비합니다.
+2. Regular Session / Max WS=150 / Paper v1·Rotation v2·Opening Hour ON이 자동 적용됩니다. 실제 주문은 OFF(기존대로 미구현)입니다. 다른 모드로 돌아가려면 체크를 해제하면 이전 GUI 설정이 복원됩니다.
+3. 첫 검증은 기본 선택된 **PC 자동 종료 없이 테스트**를 유지합니다. 이것은 실제 수집·실제 ZIP 검증을 수행하는 운영 테스트이며 합성 데이터 모드가 아닙니다.
+4. **수집 시작**(상세 설정의 Start Collection)을 한 번 누릅니다. 같은 Collector가 진행 중이면 시작을 거부합니다. 다른 Stock Helper/OneHourResearch 프로세스 또는 수집 잠금·프로세스 확인 오류도 차단하며 기존 프로세스를 종료하지 않습니다.
+5. 수집 테스트에서 UTC 예정 시각·현재 상태·ZIP을 확인하고 **결과 폴더 열기 / 진단 결과 확인**을 사용합니다. 수집 상세 설정에는 KST 시각과 전체 ZIP 경로도 있습니다.
+6. **PC 종료만 취소**는 수집·후처리를 계속하며 Windows 종료만 해제합니다. **Stop Collection**은 수집 예약/수집을 취소하고 PC 종료도 차단합니다. 창 닫기는 수집 취소로 기록하고 정상 정리를 기다립니다. OS 취소 실패 시 경고와 재시도 버튼을 유지합니다.
+
+| 기준 | 미국 ET | KST 서머타임 | KST 표준시 |
+|---|---|---|---|
+| 공식 개장 | 09:30 | 22:30 | 23:30 |
+| 첫 60분 | 09:30~10:30 | 22:30~23:30 | 23:30~다음 날 00:30 |
+| 정상 stop 요청 | 10:35 | 23:35 | 다음 날 00:35 |
+| 종료 예약 허용 시작 | 10:40 이후 | 23:40 이후 | 다음 날 00:40 이후 |
+| 실제 PC 종료의 가장 이른 시각 | 10:41 | 23:41 | 다음 날 00:41 |
+
+날짜와 시간은 기존 XNYS `exchange_calendars` 일정과 America/New_York 시간대를 사용합니다. 휴일·주말은 다음 거래일, 조기폐장은 공식 close를 유지합니다. 장중에 늦게 실행한 첫 1시간 모드는 `late_launch`로 거부합니다. 개장+70분은 제한 시간이 아니라 **가장 이른 종료 예약 시각**입니다. 후처리가 늦으면 정상 완료까지 기다리며 강제로 worker를 죽이지 않습니다. [NYSE 공식 일정](https://www.nyse.com/trade/hours-calendars)을 기준으로 하는 정규장입니다.
+
+기본 결과 경로는 `<Data root>/market_radar_one_hour/run_<UUID>/`입니다. 기본 Data root에서는 `data/market_radar_one_hour/` 아래에 생성됩니다.
+
+- 정상: `one_hour_research_<ET-date>_<run-id>_v2.zip`
+- 실패: `one_hour_diagnostic_<ET-date>_<run-id>_v2.zip` 및 `one_hour_run_summary.json`
+- 신규 실행별 원본: `radar/`, `paper_v1/`, `rotation_v2/`, `opening_hour/`. 자동 실행에서는 Paper/Rotation/Opening DB를 실행별로 격리합니다. 일반 모드의 저장 경로는 변경하지 않습니다. 기존 shared historical cache와 Master import 정책은 그대로 사용합니다.
+- 실패 ZIP은 `FAILED`와 실패 사유·품질·누락·분석 가능 범위를 유지합니다. 연구 결과와 `preservation_status`/`shutdown_eligible`은 별도 판정이며, 검증된 진단 ZIP과 원본을 안전하게 보존했다면 자동 종료가 가능합니다. DB가 만들어지기 전 시작 거부이거나 안전한 ZIP을 만들 수 없으면 요약/원본만 보존하며 ZIP 생성 실패를 성공으로 바꾸지 않습니다.
+- ZIP에는 allowlist CSV/JSON, 오류 근거·원본 보존 manifest와 선택적 처리 시간 계측만 포함하고 DB/WAL/cache/log/.env/계좌·인증정보는 포함하지 않습니다. 기존 원본을 삭제하지 않습니다.
+
+자동 종료는 계획된 개장~65분 수집 또는 호출 근거가 보존된 시계 이상 중지, 정상 Collector 종료, 모든 worker/provider/DB·GUI 파일 작업 완료, 원본 보존 해시, 필수 증거가 있는 정상 또는 진단 ZIP의 CRC/SHA256/파일·날짜·run ID 검증, 파일 flush, 사용자 활성화와 개장+70분 경과를 요구합니다. 미시작·늦은 시작·사용자 취소·원인 미상 중단·원본 손실·필수 증거 누락·ZIP 검증 실패는 차단합니다. Paper/Rotation 오류와 coverage 부족은 연구 FAILED로 남기며 그 자체로 종료를 차단하지 않습니다. 기존 Regular Validator의 조기 종료 FAIL도 보존합니다.
+
+v2.6.5는 예약 대기부터 수집·후처리·종료 대기까지 supervisor 스레드의 Windows 절전 방지 요청을 유지하고 정상/예외/취소 정리 때 해제합니다. 전원 설정을 변경하지 않으며 수동 절전·종료, 배터리/전원 상실을 막지 않습니다. 기본 테스트 모드도 이 요청을 사용합니다.
+
+`diagnostics/runtime.json`은 최초 오류, 단계, 중지 호출 위치, wall/monotonic 차이, Paper/Rotation 오류와 worker 상태, 보존·종료 결과를 atomic/fsync로 남깁니다. 보존 시작 시 고정한 `diagnostics/collection.json`만 ZIP과 원본 해시 검증에 넣고 이후 상태는 runtime에 남깁니다. 저장 실패는 메모리에도 유지하며 종료를 차단합니다. 완전한 디스크 고장이나 프로세스 강제 종료 직전 기록까지 보장하지 않습니다.
+
+v2.6.5는 정시 개장한 실행에서 짧은 전진 보정이 관측되면 연구를 FAILED로 유지하면서 진단용 Radar 원본 수집을 계속할 수 있습니다. 기존 2초 clock_jump 검사는 유지하며, 두 관측 간 wall/monotonic 간격이 각각 5초 이내이고 양의 차이가 2초를 넘는 경우만 후보입니다. 기존 수집 오류·원본 유실·연결 gap·취소가 없고 Paper fail-closed 요청과 영속 진단이 가능해야 합니다. 이 분류는 Windows 정상 동기화의 확정 판정이 아닙니다. 역행·큰 전진·5초 초과 관측 공백·monotonic 이상은 계속 중지합니다. 수집 종료는 공식 UTC open+65분과 실제 개장 gate의 monotonic+3,900초를 모두 요구합니다. +3.532428초 보정이면 실제 종료 wall 시각도 기준보다 그만큼 늦을 수 있으며 원본 timestamp를 수정하지 않습니다. 첫 60분 Opening과 공식 close는 그대로이고 해당 실행을 정상 65분 비교 표본으로 승격하지 않습니다. 반복 보정은 같은 경과시간 기한을 유지하며 관측 불확실 구간과 이후 로컬 시각 구간을 diagnostics에 남깁니다. `clock_jump`/`scheduler_gap_or_resume`의 호출 근거와 모든 원본·export·ZIP 보존이 검증된 경우에만 조건부 종료를 허용합니다. UTC open+70분과 최초 monotonic 기한을 모두 지키며 시계 역행은 기한을 늦춥니다. 후처리 후 추가 보정이 감지되면 최소 60초 안정 대기를 추가합니다. supervisor/GUI가 멈추거나 죽으면 새 종료 요청을 보장할 독립 watchdog은 없으므로 PC가 켜진 채 남을 수 있습니다. 이미 OS에 수락된 예약은 프로세스 종료 후에도 남을 수 있습니다.
+
+GUI는 **연구 정상 / 정상 ZIP 저장 / PC 종료 가능**, **연구 오류 / 검증된 진단 ZIP 저장 / PC 종료 가능**, **저장·검증 오류 또는 취소 / PC 종료 차단**을 구분합니다. 종료 없는 테스트에서는 두 연구 결과 모두 Windows 명령을 실행하지 않습니다.
+
+2026-10-16 소스 안정화: Opening 분석은 실제 TEMP에서 DB/WAL 복사량과 여유 공간을 검사하고, 단계·errno/WinError·안전한 stack 위치를 `radar/opening_hour_diagnostics.json`에 남깁니다. Opening DB 생성 전 실패에 한해 이 진단 근거와 나머지 필수 원본/exports가 검증되면 실패 진단 ZIP을 보존합니다. 빈 DB는 만들지 않으며 Opening INCOMPLETE와 연구 FAILED는 유지합니다. 정확한 과거 OSError 원인은 미확정이고 Paper 2초 지연은 미해결입니다. 다음 실제 실행은 소스를 다시 연 뒤 **PC 자동 종료 없이 테스트**로 확인해야 하며, 이번 검증은 합성 오프라인 검사입니다.
+
+quality policy 2의 구독 확인/경계/미구독 분모와 전체 95%·종목별 90%·연속 결측 최대 2분 기준은 연구 판정에 그대로 적용합니다. ZIP 복사본의 의심스러운 설명 값만 정제하고 원본 해시·행/열·변환을 manifest에 기록합니다. 가격·분봉·연구 지표를 통과하도록 변경하지 않습니다.
+
+다음 실제 첫 1시간 실행에는 `paper_v1/paper_performance.json`이 추가됩니다. 큐 대기/최대 적체, Paper·Rotation, SQL·commit의 평균/p95/p99/최대를 분리합니다. 원시 시세/인증값/SQL 본문은 기록하지 않고 최근 64개 및 최초 오류 주변 시각만 보존합니다. 이벤트별 SQL/commit/엔진 단계 집계와 첫 gap의 정확한 오류 코드·시각도 기록합니다. 중첩 단계는 합산하지 않습니다. 기존 2초 오류 제한과 전략·DB 저장 정책은 유지합니다.
+
+조건을 통과하면 시스템 경로의 `shutdown.exe /s /f /t 60`을 한 번 요청합니다. 예약 후에는 GUI **PC 종료만 취소** 또는 `shutdown.exe /a`로 취소할 수 있습니다. 강제 종료는 다른 앱도 닫으므로 이 옵션을 선택한 운영 PC에서는 미저장 작업을 남기지 않아야 합니다. OS 명령 대기는 10초로 제한하고 결과가 불확실하면 취소를 시도합니다. 취소 실패 시 예약이 남아 있을 수 있습니다. [Microsoft 명령 문서](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/shutdown).
+
+**배포 상태:** 소스 GUI는 v2.6.5이며 기존 launcher는 `.venv-paddle`에서 `live_ui.py`를 실행합니다. 이미 떠 있는 GUI는 자동 적용을 보장하지 않습니다. 실행 중인 수집기를 중단하거나 재시작하지 않았습니다. `dist/StockHelper/StockHelper.exe`는 재빌드하지 않았으므로 새 기능이 없습니다. 기존 EXE 경로와 `.env`·실제 data를 보존한 별도 배포 작업이 필요합니다. 현재 상태로 당일 무인 자동 종료가 준비됐다고 판단하지 마세요. v2.6.5 소스는 기존 창을 정상적으로 닫은 뒤 launcher로 다시 열어 버전을 확인해야 적용됩니다. 실제 시장에서 새 계측과 FAILED 보존 후 자동 종료까지의 동작은 아직 미검증입니다. 이번 작업은 현재 소스 실행 경로를 대상으로 하며 EXE 배포가 필요한 경우 별도 경로 재빌드·검증이 필요합니다.
 
 ## 관리자 권한 Windows EXE 빌드
 

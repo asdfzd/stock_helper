@@ -19,10 +19,17 @@ DEFAULT_PAPER_PATH = APP_ROOT / "data" / "paper_trading" / "paper_trades.db"
 
 
 class PaperRuntime:
-    def __init__(self, config, run_id, path=DEFAULT_PAPER_PATH, *, clock=None, queue_size=10000):
+    def __init__(self, config, run_id, path=DEFAULT_PAPER_PATH, *, clock=None, queue_size=10000, telemetry_path=None):
         self.config, self.run_id, self.path = config, run_id, path
         self.clock = clock or (lambda: datetime.now(timezone.utc))
-        self.queue = queue.Queue(queue_size)
+        self.metrics = None
+        self.io_thread = None
+        if telemetry_path is not None:
+            from .telemetry import Timings, TimedQueue
+            self.metrics = Timings(telemetry_path)
+            self.queue = TimedQueue(queue_size, self.metrics)
+        else:
+            self.queue = queue.Queue(queue_size)
         self.done = threading.Event()
         self.ready = threading.Event()
         self.overflow = threading.Event()
@@ -77,6 +84,9 @@ class PaperRuntime:
         """Called only after provider.connect acquired the existing collector lock."""
         if self.thread is not None or self.done.is_set():
             return
+        if self.metrics:
+            self.metrics.start()
+            self.io_thread = self.metrics.thread
         self.thread = threading.Thread(target=self._run, name="paper-shadow", daemon=False)
         self.thread.start()
         self.ready.wait(5)
@@ -123,29 +133,38 @@ class PaperRuntime:
         self.interests = frozenset(engine.interests())
         with self.lock:
             self.state = value
+        if self.metrics:
+            self.metrics.complete(self.error)
 
     def _run(self):
         store = engine = None
         try:
-            store = PaperStore(self.path, result_tolerance_seconds=self.config.result_tolerance_seconds)
+            store = PaperStore(self.path, result_tolerance_seconds=self.config.result_tolerance_seconds, metrics=self.metrics)
             engine = PaperEngine(store, self.run_id, enabled=True, collection_mode=self.config.collection_mode,
                                  max_age=self.config.max_data_delay_seconds, started_at=utc(self.clock()))
+            if self.metrics:
+                from .telemetry import measured_engine
+                engine = measured_engine(engine, self.metrics, "paper")
             self.ready.set()
             self._publish(engine)
             last_wall, last_mono = self.clock(), time.monotonic()
             while not self.done.is_set() or not self.queue.empty():
                 now, mono = self.clock(), time.monotonic()
+                publish_required = False
                 if self.overflow.is_set():
                     engine.gap(utc(now), "paper_queue_overflow")
+                    publish_required = True
                     self.error = True
                     self.overflow.clear()
                 if self.input_failure.is_set():
                     engine.gap(utc(now), "paper_input_unavailable")
+                    publish_required = True
                     self.error = True
                     self.input_failure.clear()
                 # Sleep/resume or wall-clock changes make event ordering unverifiable.
                 if mono-last_mono > 5 or abs((now-last_wall).total_seconds()-(mono-last_mono)) > 2:
                     engine.gap(utc(now), "application_gap_or_clock_jump")
+                    publish_required = True
                     self.error = True
                 last_wall, last_mono = now, mono
                 try:
@@ -153,6 +172,7 @@ class PaperRuntime:
                 except queue.Empty:
                     item = None
                 if not self.error and item:
+                    publish_required = True
                     kind, *args = item
                     if kind == "frame":
                         evaluation_at = utc(self.clock())
@@ -183,8 +203,14 @@ class PaperRuntime:
                     # cannot be overtaken by a stale/end-of-session decision.
                     if self.queue.empty():
                         engine.heartbeat(heartbeat_at)
+                        publish_required = True
                         self.last_heartbeat = mono
-                self._publish(engine)
+                # Every engine action still publishes interests/state immediately.
+                # An idle timeout or already-failed drain cannot change the engine.
+                if publish_required:
+                    self._publish(engine)
+                elif self.metrics:
+                    self.metrics.complete(self.error)
                 if self.error:
                     with self.lock:
                         self.state["status"] = "ERROR · paper data gap; restart required"
@@ -213,3 +239,5 @@ class PaperRuntime:
             self.ready.set()
             if store:
                 store.close()
+            if self.metrics:
+                self.metrics.close()

@@ -4,10 +4,14 @@ from .tracking import PostExitTracker
 
 
 class PairedEngine:
-    def __init__(self, baseline, review_store, *, rotation_enabled=False, started_at=None):
+    def __init__(self, baseline, review_store, *, rotation_enabled=False, started_at=None, metrics=None):
         self.baseline, self.review_store = baseline, review_store
         self.rotation = RotationEngine(review_store, baseline.run_id, enabled=rotation_enabled,
             max_age=baseline.max_age, started_at=started_at)
+        if metrics:
+            from ..paper.telemetry import measured_engine
+            self.baseline = measured_engine(self.baseline, metrics, "paper")
+            self.rotation = measured_engine(self.rotation, metrics, "rotation")
         self.tracker = PostExitTracker(review_store, baseline.max_age)
         self.review_error = False
 

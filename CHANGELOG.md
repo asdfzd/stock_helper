@@ -1,5 +1,133 @@
 # Changelog
 
+## 2026-10-22 — Market Radar v2.6.5 / 수집 테스트 기본 탭과 소스 동기화
+
+- `수집 테스트`를 기본 탭으로 추가하고 기존 네 탭·상세 수집 설정을 유지했다. Collection Mode/Max WS/Paper/Rotation/Opening/no_shutdown은 원래 위젯과 같은 상태다. 새 GUI Regular/150 기본과 저장값 유지, 실제 주문OFF·PC 자동 종료 기본OFF. 같은 Controller와 cached Paper view를 사용하며 GUI timer의 Paper SQL/추가 Collector는 없다.
+- 실제 phase/연결/WS/최근 count/elapsed/UTC 일정/countdown, Paper/Rotation 오류, 최초 오류·queue wait, 연구/ZIP 보존/PC 종료 판정을 구분한다. late_launch 자동 우회 없이 안내한다. 결과·ZIP 폴더와 allowlist JSON 진단 읽기는 사용자 버튼으로만 실행한다. 미확인·쓰기 실패·읽기 실패를 성공으로 표시하지 않는다.
+- 전체 오프라인 **732/732 PASS, FAIL/ERROR/SKIP0**, 기존 Stock Helper main scripts **12/12 exit0**, GUI 경계 28/28 PASS(전체와 중복). 1366×768/1920×1080용 client 영역 배치·한글 캡처와 추가 SQL0 검사, 과거 실장 진단 ZIP35항목/원본hash41 재검증 PASS. 근거: build/collection_gui_20261022의 JSON/log/PNG. 실장 원본 FAILED/BLOCKED 유지.
+- 첫 전체 실행 731개는 718 PASS/ERROR13. 12개는 synthetic worker가 DB/cache 종료 후에도 running=True였던 fixture 오류로 실제 Controller guard가 차단했다. 합성 collection 종료를 후처리 전에 반영하고 busy는 후처리까지 유지했다. 나머지 WinError5 atomic replace 1건은 최종 재실행에서 재현되지 않았으며 점유 주체/원인 미확정이다. 제품 안전 검사/쓰기 정책은 완화하지 않았다. 초기 GUI 1개 검사에서 숫자 표시 기대값 FAIL과 stub teardown ERROR가 겹쳤고 수정 후 통과했다.
+- 기존 누적 운영 안정화·계측·Paper view/publish 최적화와 GUI 변경을 명시적 파일 목록으로 소스 관리한다. `.gitignore`와 staged 검사로 보고서/실장 DB/cache/WAL/SHM/log/ZIP/build/venv/EXE를 제외한다. 방향 DOCX는 기존 tracked blob을 유지한다. 실제 Kiwoom/API/주문/Windows 종료·예약·EXE 빌드 없음. 실장 무인 운용·Paper 병목 해소는 별도 검증이다.
+
+## 2026-10-22 — Market Radar v2.6.5 / GUI integration 4 / 시계 전진 보정 후 원본 지속
+
+- 기존 2초 clock_jump/5초 gap 검사를 유지하면서, 정시 개장한 첫65분 GUI 실행의 짧은 전진 보정 후보만 진단용 Radar 원본을 계속 수집한다. 양쪽 관측 간격 ≤5초와 양의 차이 >2초, 정상 writer/provider·원본 유실 없음·Paper fail()·영속 진단을 요구한다. 역행·큰 전진·긴 관측 공백·monotonic 이상·사용자 취소는 안전 중지한다. 정상 NTP임을 인증하지 않는다.
+- 개장 gate의 추가 monotonic 관측으로 3,900초 경과와 UTC 예정 stop을 함께 확인한다. 반복 보정으로 기한을 앞당기거나 다시 시작하지 않는다. 실제 wall timestamp와 불확실 구간/후속 clock epoch를 고정 diagnostics 및 ZIP summary에 보존한다. 연구 FAILED·clock_jump/기존 Validator FAIL을 유지하고, 기존 DB/재export/ZIP/원본 검증 뒤에만 조건부 PC 종료를 허용한다.
+- 기존 절전·기록·PC 종료만 취소·실제 종료 기본 OFF·open+70분 양쪽 gate를 보존했다. Paper/Rotation consumer·engine·storage·telemetry, provider/rank, DB/schema/journal/commit·2초 gate·WS150은 변경하지 않았다. 최초 Paper queue wait 2009.582ms 병목은 미해결이다. watchdog·EXE 재빌드·실제 API/주문/수집/Windows 종료는 수행하지 않았다.
+- 오프라인 검증 근거: build/clock_continuity_20261022. 확대 회귀 **629/629 PASS**, 최종 경계 **148/148 PASS**, 각각 FAIL/ERROR/SKIP 0. 마지막 active worker 조건 및 70분 직전 보정은 최종 경계 실행으로 재검증했다. 원본 582개 SHA/mtime 동일, A/B 정상65분 동일·보정 시300→3900초(합성), Paper/Paired 전체 논리 DB 등16비교 PASS. 초기 테스트 선택의 존재하지 않는 클래스 2회, 테스트 SQL 열 이름 오류 1회, 합성 원본 DB 직접 조회가 WAL inventory를 바꿔 보존 gate가 정상 차단한 1회와 재시도는 단일 작업 보고서에 기록한다. 원본 조회는 copied_database로 고쳤고 integrity 검사는 완화하지 않았다.
+
+
+## 2026-10-22 — Market Radar v2.6.4 / GUI integration 3 / 무인 운용 안전 경계
+
+- 10/21 조기 종료 조사: Kernel-General 이벤트 1/RecordId812205의 +3.5324284초 wall 보정과 44ms 뒤 stop을 대조했다. clock_jump 감지는 유지했다. 실제 supervisor 호출 trace 부재는 추론 한계로 기록했고, Paper 오류 뒤 Collector batch를 확인했다. 최초 지연의 queue wait/processing은 2009.582/259.231ms다. 실장 ZIP 35개 entry와 원본 41개를 재검증했으며 원래 FAILED/BLOCKED 판정을 승격하지 않았다.
+- 영구 run 진단, 최초 오류/중지 호출 경로/시계 차이/worker 상태/보존·OS 결과, fsync+atomic replace, sticky 쓰기 실패 차단을 추가했다. 고정 collection.json만 ZIP 원본으로 삼고 runtime.json은 후속 상태를 보존한다. Paper 계측은 이벤트별 단계 통계와 최초 gap 코드/시각을 추가했다. 새로운 중복 비용은 확정되지 않아 전략/처리 최적화는 하지 않았다.
+- supervisor 스레드의 실행 구간에만 Windows 절전 요청을 유지한다. PC 종료만 취소와 수집 취소를 분리하고 실제 종료 기본 비활성화. 알려진 clock interruption은 clean 종료·writer 완료·원본/재export/ZIP 검증 후에만 실패 진단 종료를 허용한다. open+70 UTC/최초 monotonic 기한, 보정 후 안정 대기, 최종 OS 경계 재검사를 유지한다. 미시작/사용자 취소/unknown crash/보존 실패/남은 writer는 차단한다. watchdog은 미구현이다.
+- 앱 버전만 2.6.4로 갱신했다. Paper2/research4/Opening1/Rotation extension1/archive2 schema, 2초 기준/FIFO/commit/WS150/실제 주문 정책은 유지한다. 독립 runner success-only 정책과 EXE는 유지한다. 관련 회귀 514 PASS, 최종 경계 95 PASS, Paper 독립성 1 PASS(중복 포함), FAIL/ERROR/SKIP 0. 계측 A/B 4쌍의 이벤트별 상태/논리 DB 16비교 PASS. 원본/기존 변경 425개 SHA/mtime 동일. 근거는 build/unattended_20261021의 JSON/log다. 초기 67개 검사 중 1개는 새 runtime 진단 파일을 원본 불변 검사로 묶은 기대값 오류였고, 연구 원본 검사는 유지한 채 수정 후 재실행했다. 실제 API/주문/Windows 종료/재수집/EXE 빌드는 실행하지 않았다.
+
+## 2026-10-21 — 이전 HANDOFF의 Paper 조사 및 publish 개선 기록 보존
+
+- **2026-10-21 장중 Paper 오류 조사 / PARTIAL**: `data/20261021_014425_586dc5d6`(ET 10/20)의 두 Paper DB에서 **16:57:05.501237 UTC, WORX, paper_processing_delay**를 확인했다. 각각 17개 WATCH 이력·950 marks·진입 0이며 동일 오류다. 두 DB 세션은 종료 때 CLOSED, GUI 최상위만 runtime.error로 ERROR를 표시하므로 Rotation CLOSED를 정상 처리 완료로 해석하면 안 된다. 앞선 NNNN stale_gap은 90초 freshness 초과로 watch만 무효화한 별도 사건이다.
+- 일반 수집의 상세 telemetry는 비활성화되어 enqueue/dequeue·queue p95/p99·SQL/commit 지연은 복원 불가다. 원시 FE와 marks 순서 대조 및 장중 합성 시나리오에서는 판단 회귀를 확인하지 못했다. 이번에는 **생산 코드·전략·2초 gate를 수정하지 않았다**. 관련 **488개 unittest PASS, FAIL/ERROR/SKIP 0**, 장중 합성 A/B **12개 비교 PASS**(이전 publish 최적화 전/현재, 실행24회). 근거는 `build/paper_gap_20261021_024109/`와 단일 `CODEX_LAST_TASK_REPORT.md`에 있다. 다음 일반 장중 검증에는 기존 계측을 명시적으로 연결하는 최소 후속 작업이 먼저 필요하며, 이번 작업에서는 계측 기능도 임의 확장하지 않았다.
+
+- **2026-10-21 Paper publish 후속 개선 / PARTIAL**: 이전 같은 호출 내 entries 재사용을 유지하고, 두 consumer에서 엔진 동작 없는 idle/error drain의 DB publish만 생략했다. tick/frame/gap/heartbeat/finish 직후 상태·interests·보호 정보 발행은 유지한다. `entered()`의 기존 NULL 필터를 SQL로 앞당겨 미진입 행과 Rotation 상세 JSON을 읽지 않는다. 전략·2초 gate·FIFO·commit/schema 변경은 없다. 고정 Paired view 1,000회 SELECT는 이전 14,000→6,000에 이어 이번 6,000→4,000이다. 2.25초 WATCHING idle publish 19→2, error idle 19→0. 관측 밀도 수정 후 4회 중 2회 전량 처리/2회 지연 실패이며 수정 전도 1회 전량 처리되어, 실행 변동과 실장 안정성은 미확정이다.
+- 관련 **488개 일괄 PASS, FAIL/ERROR/SKIP 0**. 결정론적 전체 DB/상태와 이벤트마다 interests/protection 동일, 두 runtime의 idle·오류·stale heartbeat·finish 비교 및 40 tick/60ms 입력의 DB/공개 상태/commit 횟수 동일성을 확인했다. 실제 수집/API/Windows 종료/EXE 빌드는 수행하지 않았다. 이번 근거는 `build/paper_publish_20261021_004858/`와 `CODEX_LAST_TASK_REPORT.md`, 직전 484개 검사/첫 중복 조회 개선 근거는 변경하지 않은 `build/paper_queue_20261020_235440/`다. 게임 병행은 기본 실장 안정화 이후 별도 과제다.
+
+- 당시 main/HEAD는 6895584e10903be80d480b67250926ac5ab780a4였다. 장중 조사 보존 기준 648개 및 publish 작업 619개 원본/검증 파일의 비교는 각각 build/paper_gap_20261021_024109/preservation_after.json과 build/paper_publish_20261021_004858/preservation_after.json에 있다. 두 작업 모두 실제 API/주문/Windows 종료/EXE 빌드·git add/commit/push를 하지 않았다.
+
+
+## 2026-10-16 — v2.6.3 소스 Opening 오류 진단 / 실패 증거 보존 안정화
+
+- Opening 분석에 한해 실제 TEMP 볼륨에서 DB+WAL 복사량과 max(64MiB, 10%) 여유분을 검사한다. 공간 부족·실제 OSError의 단계, errno/WinError, 정제 stack 위치와 연쇄 예외를 새 run의 `radar/opening_hour_diagnostics.json`에 atomic 저장한다. 자유형 메시지·소스 줄·locals는 제외하고 임시 파일은 자신의 생성분만 정리한다. 기존 연구 identity·DB schema·수집/전략 정책은 유지한다.
+- 정상 ZIP 필수 15종을 유지한다. `opening_failed_before_database_v1` 진단 정책만 Opening DB 부재 + 동일 run/date의 영속 오류 근거를 허용하며, manifest에 부재와 export omissions를 명시한다. 필수 Radar/Paper/Rotation 원본·integrity·identity·재export 비교·CRC/SHA·개인정보·provenance 검증 실패는 운영 완료를 차단한다. 연구 FAILED와 보존 VERIFIED를 분리하고 최초 publisher/진단 재시도 예외를 각각 보존한다. 빈 DB 생성이나 원본 수정은 없다.
+- 최초 회귀 109개 중 108 PASS/1 FAIL은 새 진단 필드에 대한 이전 기대값이었다. 확대 277개 중 276 PASS/1 FAIL은 Controller 전체 바이트 불변 검사였다. 허용된 Opening 후처리 함수만 비교 예외로 하고 나머지 Controller·전략·스케줄 비교를 유지했다. 최종 영향 범위 **169 PASS, FAIL/ERROR/SKIP 0**. 새 실패·공간·archive 회귀는 22개이며 합성 DB, 모의 디스크 오류, mock OS만 사용했다. 근거: `build/opening_preservation_20261016_040342/`.
+- 10월 15일 정확한 OSError는 미확정이며 디스크 부족은 유력한 추정이다. Paper 2초 지연은 별도 후속 작업이다. 실제 원본 run/cache는 재분석·ZIP 재생성하지 않았고 live·주문·Windows 종료·EXE 재빌드·Git commit/push를 하지 않았다. v2.6.3 표시와 기존 EXE를 유지하며 수정은 재시작한 소스에만 적용된다.
+
+## 2026-10-15 — Market Radar v2.6.3 / GUI integration 2 / archive schema 2
+
+- 연구 판정과 안전한 운영 종료 판정을 분리했다. Paper/Rotation/coverage FAIL은 그대로 보존한다. 계획된 65분 수집, clean shutdown, worker/DB 종료, 필수 증거·원본 해시·ZIP 검증·flush, 사용자 활성화와 open+70분을 만족하면 검증된 FAILED 진단 ZIP도 PC 종료를 허용한다. 취소·미시작·중도 중단·필수 증거/원본/ZIP 오류는 차단한다. 종료 없는 테스트와 `/a` 실패 경고·한 번만 요청하는 동작을 유지한다.
+- 실제 10월 14일 run 폴더는 `run_804c9f63ce6348c3802c767d88b87469`이며 요청문 경로의 누락 문자와 Controller run ID `7f569cbc615448aabf91695ef8fe6605`를 대조했다. 9,282 snapshots / 116 candidates, clean shutdown, WS peak 133·slot unavailable 0·WS gap/raw drop 0을 확인했다. Paper marks 105개, 진입 0개, 09:31:35.633873 ET의 processing delay와 마지막 가격 이후 2.200초 간격을 확인했다. 이 차이는 당시 큐 대기 실측값이 아니다.
+- 10월 13일은 09:31:02.553447 ET의 같은 오류, Paper marks 479개·진입 0개였다. 두 날 모두 원시 가격 prefix와 기록 가격의 순서·시각·값이 일치한다. 원시 508/113 tick 재생에서 2초 오류는 재현되지 않아 CPU/디스크/SQL/스케줄링 근본 원인은 미확정이다. 최초 13일 replay의 sidecar_error 1회는 재검사와 최종 재생에서 재현되지 않았으며 결과 파일을 숨기지 않았다. 운영 2초 gate·SQLite journal/synchronous·전략은 바꾸지 않았다.
+- opt-in bounded 계측으로 실제 수신/등록/꺼냄/처리 완료 시각, queue wait/depth/peak, v1/v2 처리, SQL 실행·행 읽기·실제 commit을 기록한다. 평균/최대/count는 관측값이며 live p95/p99는 고정 크기 1.08 비율 histogram의 상한 근사다. 첫 오류 주변 64개를 보존하고 5초마다 별도 writer로 저장하며 종료 시 join한다. 일반 Regular/Capacity/독립 runner는 계측 기본 OFF다.
+- CSV 누락은 TC 회사명 `TOKEN CAT LIMITED SPON ADS EACH REP 4800`의 TOKEN 오탐이었다. candidates 1행/snapshots 8행/Opening 후보 1행의 설명 JSON(Opening은 두 열)이 걸렸다. 원본은 보존하고 ZIP 복사본의 해당 설명 값만 `[REDACTED]`로 바꾼다. strict scanner를 그대로 적용하며 실제 인증값도 제거/차단한다. 가격·식별·분봉은 수정하지 않는다. 행/열·원본 SHA256·변환·보존 경로를 manifest에 남긴다.
+- 실제 장애 복사본에서 **35개 항목, 누락 0개**의 v2 진단 ZIP을 생성했다. 로컬 원본 39개 해시와 정제 결과를 재검증했으며 연구는 FAILED, 보존은 VERIFIED다. 실제 worker 상태는 역사적 lifecycle을 재구성한 offline 검증이며 당시 OS 종료를 재현한 것이 아니다. 정상 합성 ZIP도 35개 항목으로 별도 검증했다.
+- Opening all 325/eligible 289/full 60m 49, 실제 분봉 7,378개, RVOL 1.4329%, stale opportunity 20.5784%를 그대로 유지한다. 발견 후 eligible 10,935분은 구독 확인 5,577/경계 209/미구독 5,149분이며, 구독 확인 OHLCV 4,238/5,577=75.9907%다. 명시적 슬롯 부족은 0분이다. 캐시 분봉 부족을 WS 틱 유실이나 슬롯 부족으로 바꾸지 않는다.
+- 오프라인 unittest **642개 고유 검사 통과**(641개 격리 일괄 실행 + 기본 경로를 확인하는 읽기 전용 1개 별도 실행), 실패/오류/skip 0. 기존 main 회귀 스크립트 **12개 exit 0**. 정상 합성 ZIP·실제 장애 복사본의 진단 ZIP을 CRC/SHA256/identity/원본 해시로 검증했다. 계측을 켠 실제 PairedRuntime·SQLite·writer 스레드 합성 smoke도 통과했다. 실제 API/Windows 종료 호출은 0회다. 최종 취소 상태 보완 후 OS 경계·GUI 19개, 정제 내역 순서 보완 후 보존·민감정보·계측 17개를 추가 재실행해 모두 통과했다. 보관 폴더의 두 ZIP도 새 Python 프로세스에서 다시 검증했다.
+- 첫 전체 실행은 642개 중 639개 통과였다. 1개는 격리 APP_ROOT와 원래 기본 경로 비교 차이, 1개는 허용된 Controller 계측 연결의 바이트 변경 검사, 1개는 합성 Controller의 Opening 후처리 일시적 INCOMPLETE였다. 기본 경로는 원래 경로의 읽기 전용 검사로 분리했고 Controller 비교는 계측 연결 두 추가부만 제외한 나머지 전체 바이트를 계속 확인한다. Opening 검사는 단독·최종 전체 재실행에서 통과했으며 원인이 확정되지 않아 제품 코드를 추정 수정하지 않았다. 기존 GUI main 테스트의 120초 대기는 sandbox 밖 소스 폴더에 임시 폴더를 만들던 경로였고 테스트 scratch만 격리해 해결했다.
+- 원본 84개(run DB/WAL/SHM/CSV/log/ZIP와 두 cache DB), `.env`, PROJECT_DIRECTION DOCX/MD SHA256을 전후 대조했다. 작업 시작 시 PID 20688/24264를 확인했고 직접 중단/재시작하지 않았다. 최종 조회에서는 해당 앱 프로세스가 보이지 않았으며 종료 원인은 확인하지 않았다. 소스 실행 경로는 launcher → .venv-paddle → live_ui.py이며 기존 EXE는 재빌드/덮어쓰기하지 않았다. 현재 창에 자동 적용됐거나 오늘 무인 종료가 검증됐다고 주장하지 않는다. Git add/commit/push 없음. 결과와 재현 스크립트: `build/market_radar_one_hour/verification_20261015/`.
+
+
+## 2026-10-14 — Market Radar v2.6.2 / GUI 첫 1시간 자동 실행 integration 1
+
+- 기존 Market Radar GUI의 기본 OFF 체크박스와 종료 없는 테스트 옵션. Regular/150/Paper/Rotation/Opening ON, 실제 주문 OFF. 동일 Controller 한 개를 사용하며 독립 EXE 실행 없음.
+- open+65분 정상 stop, 후처리·ZIP이 늦어지면 대기. 성공/worker·파일 종료/ZIP 재검증 및 open+70분의 UTC·monotonic 조건 후 `shutdown.exe /s /f /t 60` 한 번 요청. `/a` 취소 실패·불확실한 OS 결과·상태 기록 실패의 pending을 보존한다. OS 명령 대기는 10초다.
+- Runner v1.0.1 artifacts/diagnostics/quality policy 2를 그대로 재사용한다. 구독 표본 coverage 기준·기존 Regular Validator FAIL을 유지하며 성공/FAILED 진단 ZIP을 구분한다. 기존 Collector/strategy/schedule/storage/Validator와 runner 코드는 변경하지 않았다.
+- GUI 설정 원복·별도 실행 DB·중복 실행 방지·취소/닫기·GUI 파일 작업 대기. StockHelper.spec의 Kiwoom 계약/시간대/달력 data 포함과 psutil 의존성을 명시했다.
+- 기존 unittest 회귀 597개와 신규 GUI 통합 테스트 28개(총 625개 고유 검사)를 여러 실행에 걸쳐 통과했다. 별도 Stock Helper 회귀 main 스크립트 12개도 exit 0이다. 최초 전체 실행은 619개 중 618개 통과, 1개는 테스트 APP_ROOT 격리 때문에 기본 경로 비교가 실패했다. 해당 읽기 전용 경로 검사를 원래 경로에서 재실행해 1/1 통과했다(실제 data 쓰기 차단 유지). 최종 변경 후 신규 28개와 Dashboard 27개를 다시 실행해 55/55 통과(31.032초), 실패/오류/skip 0. GUI 한글 렌더링·기본 OFF·옵션 적용/복원도 확인했다. 실제 시장 수집·Windows 종료·EXE 재빌드는 수행하지 않았다. 검증 로그/JSON/GUI 캡처는 `build/market_radar_one_hour/verification_20261014/`에 보관한다. 실행 중인 기존 pythonw 프로세스를 유지했고 StockHelper.exe를 재빌드하지 않았다.
+
+### 이전 HANDOFF의 독립 실행기 검증 근거 보존
+
+## 독립 One Hour Research Runner v1.0.1 소스 / 테스트 EXE v1.0.1
+
+- 첫 실제 실행은 ET 2026-10-13, dist/OneHourResearch/data/one_hour_runner/run_ed65d7836036428e803dbe2bc35e6140, controller run_id=57600423f8434165bfb7e00b8c3e35c5이다. 09:31:02.553447 ET에 Paper/Rotation WATCHING이 paper_processing_delay로 INVALIDATED됐고 c.paper.error가 최종 ZIP 전 검사를 차단했다. Radar는 예정된 10:35까지 수집·정상 종료했다. 거래 진입은 0건이며 오류 세션을 정상 0거래로 해석하지 않는다.
+- **기존 Market Radar v2.6.1, Paper/Rotation 엔진·runtime·저장 설정·전략·2초 제한은 변경하지 않았다.** 실행기 영역에 재생 측정 도구와 실패 진단 ZIP을 추가하고 품질 정책을 2로 보완했다. [운영·측정 안내](tools/one_hour_runner/README.md).
+- 실제 입력 508개 tick을 복사본에서 수신 순서·간격대로 재생했다. 기존 DELETE와 별도 실험 DB의 WAL/FULL 모두 508개를 순서대로 처리했으며 자연적인 2초 초과는 재현되지 않았다. 기본 큐 대기 평균/p95/p99/max=49.059/217.822/342.665/431.606ms, Paper/Rotation commit 평균=3.224/3.289ms였다. 저장 비용은 확인했으나 당시 CPU·디스크·Radar/REST 부하와 enqueue 시각이 없어 근본 병목은 미확정이다. WAL은 운영에 적용하지 않았다.
+- quality policy 2는 전체 후보 관측 범위와 실제 구독 표본을 분리한다. 기존 4,230/10,500분(40.29%)은 유지한다. 10,500분 중 구독 확인 5,154분/경계 167분/미구독 5,179분이며 명시적 슬롯 부족 근거는 0분이다. 구독 확인 구간의 OHLCV 3,943/5,154분(76.50%)도 기준 미달이다. 전체 95%·종목별 90%·연속 결측 2분 기준을 구독 확인 분모에 유지하고 종목별 fresh receipt도 검사한다. 미구독을 장애나 슬롯 부족으로 단정하지 않는다.
+- Paper/Rotation 및 export 검증 실패는 별도 one_hour_diagnostic ZIP으로 보존한다. FAILED/자동 종료 불가, 오류 이벤트·원래 Validator·범위·누락 목록과 allowlist CSV/JSON만 포함한다. CRC/SHA256/identity·민감정보 검사 후 공개하며 DB/WAL/cache/로그/.env는 제외한다. Paper/Rotation 플래그뿐 아니라 공개 view의 Rotation ERROR도 검사한다. 진단 ZIP은 성공 ZIP 검증을 통과하지 못하고 PC 종료로 이어지지 않는다.
+- 실제 장애 자료의 별도 복사본에서도 진단 ZIP 34개 항목을 생성·재검증했다. [진단 ZIP](build/one_hour_runner/stabilization_20261014_005110/actual_incident_copy/one_hour_diagnostic_2026-10-13_57600423f8434165bfb7e00b8c3e35c5.zip). 원본 run 폴더에는 추가 출력하지 않았다. sidecar_error의 당시 메모리 값은 미기록이므로 복원 진단에는 null로 남겼다.
+- 최신 배포 검증 근거: [빌드·597개 회귀·EXE smoke·보존 기록](build/one_hour_runner/predeploy_v1_0_1_20261014_020318/). 기존 Market Radar 관련 479(82.141초), runner 118(기존 96+신규 22, 200.625초), 총 597/597 통과, 실패/오류/skip 0. 추가로 EXE에서 추출한 실행기 코드로 118/118 통과했다. 실제 socket/Windows shutdown 경계를 차단한 합성 검증이며 live 검증이 아니다. 이전 안정화 측정·검증 이력은 CHANGELOG에 보존한다.
+- 최신 EXE는 `dist/OneHourResearch_v1_0_1_TEST/OneHourResearch.exe`, SHA256 `d5fb809ccf683417648ffad5729f677c076d2b9fe527191568f0111d7c866bff`다. 기존 build.ps1/spec/requirements와 Python 코드를 수정하지 않고 별도 작업 폴더의 임시 spec으로 COLLECT 이름·프로젝트 위치·replay_profile hidden import만 지정했다. 내장 실행기 소스 11개(entry 포함)와 현재 소스의 code object가 일치하며 프로젝트 모듈 55개도 대조했다. GPU/OCR 의존성·인증파일·실제 데이터는 포함하지 않았다.
+- 새 EXE GUI/headless dry-run은 모두 exit 0, COMPLETE_NO_SHUTDOWN, 정상 ZIP 36개 항목과 내부 Review 8개 항목 검증 PASS다. EXE 추출 코드의 별도 합성 실패 5경로(Paper/Rotation/품질/ZIP 쓰기/ZIP 검증)를 확인했고, 앞의 3경로는 34개 항목 FAILED 진단 ZIP을 보존한다. 모든 실패 경로에서 종료 요청 0건이다. 실패 주입은 외부 harness이며 배포 EXE의 실패 CLI 모드가 아니다.
+- 프로그램 v1.0.1 / manifest·summary 1 / diagnostic 1 / quality policy 2. 기존 `dist/OneHourResearch/`의 v1.0.0 SHA256 `cbbe5f1ea4b605c93cae0cdc1dffbe516153979c5c12b98cb3101cd05a13de42`, 실제 데이터·방향 문서·바로가기는 보존한다. 이번 빌드 작업은 안내·상태 문서 5개만 갱신하며 원본/소스 전후 비교는 `final_validation.json`에 기록한다.
+- 다음 운영 작업: 운영자가 새 EXE 폴더의 인증을 별도로 설정하고 개장 30분 전까지 **`--no-shutdown`**으로 첫 실제 시장 테스트를 진행한다. 기존 cache/data/.env는 복사하지 않았으므로 새 폴더는 별도 수집 환경이다. v1.0.1 실제 시장 수집, 지연 장애 해소, 실제 Windows 종료는 미검증이다. 이번 작업에서 실제 API·자동 종료·commit/push는 실행하지 않았다.
+
+
+## 2026-10-14 — One Hour Research Runner v1.0.1 별도 EXE 재빌드·배포 전 검증
+
+- 기존 `dist/OneHourResearch/`의 v1.0.0 EXE와 실제 수집 데이터를 보존하고 `dist/OneHourResearch_v1_0_1_TEST/OneHourResearch.exe`를 생성했다. SHA256 `d5fb809ccf683417648ffad5729f677c076d2b9fe527191568f0111d7c866bff`. Python 코드·기존 build.ps1/spec/requirements는 변경하지 않았다. 별도 build 작업 폴더의 임시 spec에서 프로젝트 위치·COLLECT 이름·독립 replay_profile hidden import만 지정했다.
+- 고정 의존성의 전용 최소 venv로 빌드했다. 내장 실행기 소스 11개(entry 포함)의 code object가 현재 소스와 일치하며 프로젝트 모듈 55개도 대조했다. diagnostics·quality policy 2·replay_profile이 포함됐다. GPU/PaddleOCR/EasyOCR/Torch, .env, 원본 DB/cache/export/log/ZIP은 배포에서 제외했다. 수집된 인증값을 읽어 비교하지 않고 빌드 입력·파일 목록·알려진 민감 literal 패턴을 검사했다.
+- 전체 회귀 **597/597 통과**: Market Radar 관련 479(82.141초), runner 118(기존 96+신규 22, 200.625초), 실패/오류/skip 0. 추가로 EXE에서 추출한 실행기 코드의 회귀 **118/118 통과**, 실제 network/Windows shutdown 시도 0.
+- 실제 EXE GUI/headless `--dry-run`은 각각 exit 0. 독립 cwd와 정리한 환경에서 동작하고 모듈 경로는 배포 폴더 안이었다. GUI STARTING→ARMED→COLLECTING→FINALIZING→COMPLETE_NO_SHUTDOWN 표시와 캡처를 확인했다. 각각 정상 ZIP 36개 항목, 내부 Review ZIP 8개 항목, SHA256/CRC/날짜/ID/allowlist/내부·외부 동일성 검증 PASS. v1.0.1·quality policy 2·합성 자료·자동 종료 비활성화를 확인했다. 원래 full-session Validator FAIL은 그대로 보존한다.
+- EXE 추출 코드에 합성 Paper 오류·Rotation 오류·품질 미달을 주입해 각각 34개 항목 FAILED 진단 ZIP을 생성·재검증했다. 오류 원인·원래 Validator·자동 종료 불가 상태를 보존하며 정상 ZIP 검증기는 이를 거부한다. ZIP 쓰기·검증 실패에는 ZIP을 공개하지 않고 ERROR를 유지했다. 5경로 모두 mock 종료 요청 0, 실제 API/종료/.env 읽기 0. 실패 주입은 외부 harness이며 배포 EXE의 별도 실패 CLI가 아니다.
+- 근거는 `build/one_hour_runner/predeploy_v1_0_1_20261014_020318/`의 package_audit/project_code_audit, 회귀 JSON, exe_smoke_results, frozen_failure_results 및 final_validation.json에 보관한다. 기존 배포·실제 데이터·방향 DOCX/MD·바탕화면 바로가기는 보존한다. 이번 작업의 프로젝트 변경은 안내·상태 문서 5개뿐이며 기존 미커밋 변경을 보존했다.
+- 첫 실제 시장 테스트는 새 배포 폴더에서 운영자가 인증을 별도로 설정한 뒤 `--no-shutdown`으로 실행한다. Regular Session/150 WS/Paper v1/Rotation v2/Opening Hour/XNYS open+65분 조건은 유지한다. v1.0.1의 실제 시장 안정성, 기존 Paper 지연의 해소, 실제 Windows 종료는 검증하지 않았다. 실제 API·Windows 종료·git add/commit/push를 실행하지 않았다.
+
+## 2026-10-14 — One Hour Research Runner v1.0.1 소스 안정화
+
+- 2026-10-13 ET 실제 실행에서 09:31:02.553447 paper_processing_delay와 진단 ZIP 누락을 조사했다. 원시 tick과 Paper marks 479개가 순서·시각·가격까지 일치하며 이후에도 수신은 지속됐다. 다음 원시 tick과 오류의 차이 2.047033초는 기록 대조값이며 당시 큐 대기 실측값은 아니다.
+- offline replay_profile을 추가해 기존 PairedRuntime/엔진과 508 tick을 복사본에서 재생하고 enqueue/queue/dequeue·Paper·Rotation·SQL read/write·실제 commit의 평균/p95/p99/max를 측정했다. 기본 DELETE와 실험 WAL/FULL 모두 508개를 순서대로 처리했고 자연적인 2초 장애는 재현되지 않았다. 기본 큐 대기 49.059/217.822/342.665/431.606ms, WAL 비교 10.670/50.445/146.188/160.546ms다. 저장 비용은 확인됐지만 당시 CPU/디스크/Radar 부하가 없어 근본 병목은 미확정이다. WAL은 운영에 적용하지 않았다.
+- quality policy 2는 미구독/구독 경계/발견 전/증거 미상/구독 중 캐시 부족을 분리하며 슬롯 부족은 명시적 근거만 인정한다. 전체 후보 4,230/10,500분(40.29%)은 범위 정보로 보존한다. 구독 5,154분/경계 167분/미구독 5,179분, 구독 중 완전 OHLCV 3,943분(76.50%)으로 이번 자료는 여전히 FAIL이다. 구독 확인 분모의 전체 95%·종목별 90%·연속 결측 2분과 종목별 fresh receipt 검사를 유지한다.
+- Paper/Rotation 또는 검증 실패에 별도 FAILED 진단 ZIP을 보존한다. 원래 Validator, 오류 이벤트, 사용 범위·누락 사유와 allowlist export를 담고 민감정보·CRC·SHA256·identity를 검사한다. DB/WAL/cache/로그/.env는 제외한다. 진단 생성·검증 실패 모두 자동 종료를 허용하지 않는다. SQLite 조회는 임시 DB/WAL 복사본을 사용한다. PairedEngine 공개 view에만 나타나는 Rotation ERROR도 실행기에서 차단한다.
+- 수정 전 기존 575/575 통과. 최종 **597/597 통과**: 기존 Market Radar 관련 479(96.062초), 기존 runner 96+신규 22=118(264.421초). 실패/오류/skip 0, 실제 네트워크/Windows 종료 시도 0. 변경된 정책의 감사 fixture 두 개는 명시적으로 구독 상태를 설정해 구독 중 결측 검사 의미를 유지했다. 실패 ZIP 검증은 새 진단 검증기를 사용한다.
+- 실제 장애의 별도 복사본에서 34개 항목 진단 ZIP을 생성·검증하고 ERROR/자동 종료 차단을 확인했다. 원본 run 폴더에는 출력하지 않았다. 근거는 build/one_hour_runner/stabilization_20261014_005110의 profile_v2_default/profile.json, profile_v2_wal_full/profile.json, actual_quality_v2.json, 회귀·보존 JSON과 actual_incident_copy의 ZIP에 있다.
+- 원본 data/dist 데이터 306개(6,991,016,367 bytes)의 목록·SHA256·크기·mtime, 보호 코드·방향 DOCX/MD·기존 EXE의 해시가 작업 전후 동일하다. 변경 범위는 runner 8개, 테스트 2개, 상태·기술 문서 4개이며 기존 미커밋 변경을 보존했다.
+- 기존 Market Radar v2.6.1·Paper/Rotation 엔진/runtime/저장 설정·전략·2초 제한·PROJECT_DIRECTION DOCX/MD는 변경하지 않았다. 실행기 소스 v1.0.1 / manifest·summary 1 / diagnostic 1 / quality policy 2다. 기존 배포 EXE와 바로가기는 그대로이며 EXE는 v1.0.0이다. 사용자 data를 덮어쓰지 않는 별도 경로 재빌드와 오프라인 smoke가 필요하다. 실제 시장 안정성 검증은 완료되지 않았다. 실제 API/Windows 종료/commit/push를 실행하지 않았다.
+
+
+
+## 2026-10-13 — One Hour Research Runner v1.0.0 감사 보완 반영 재빌드
+
+- `tests/one_hour_runner_audit_test.py`, `__main__.py`, spec, build.ps1, requirements.txt와 실제 entry→Runner→export/quality 경로를 직접 재검토했다. 추가 코드 문제는 발견하지 않았고 이번 빌드 작업에서 애플리케이션·테스트·빌드 소스를 수정하지 않았다. Market Radar v2.6.1과 전략·schema·방향 문서는 그대로다.
+- 앞선 감사 보완은 종료 요청 직후 시계/저장 예외의 예약 가능 상태와 취소 실패 경고 유지, 첫 60분 WS/구독/관측·발견 후 OHLCV coverage 별도 검사, 미달 시 진단 ZIP 보존·PC 종료 차단이다. 합성 TP/SL·Rotation switch·post-exit·CSV/SQLite 일치와 ZIP 재검증 테스트도 포함됐다. 품질 정책 1과 manifest/summary schema 1은 전략 수익성 PASS가 아니다.
+- 전체 회귀를 다시 실행해 **575/575 통과**: Market Radar 관련 479(111.500초), 실행기 기존 62+감사 34의 96(176.406초), 실패/오류/skip 0. 실제 socket 연결과 Windows shutdown 실행을 금지한 audit hook의 시도 계수는 모두 0이다.
+- 기존 배포 폴더 943개 파일이 이전 PyInstaller TOC+사용 안내와 정확히 같아 사용자 파일이 없음을 확인한 뒤, 8개 직접 의존성 고정 버전/pip check가 일치하는 전용 venv에서 `build.ps1 -SkipInstall`로 재빌드했다(76.046초). 네트워크 설치·기존 Stock Helper 빌드 호출은 없다. 최신 EXE는 `dist/OneHourResearch/OneHourResearch.exe`, SHA256은 `cbbe5f1ea4b605c93cae0cdc1dffbe516153979c5c12b98cb3101cd05a13de42`다.
+- EXE 내부 실행기 9개 모듈의 실행 코드가 현재 소스와 일치하고 새 quality 모듈이 포함됐음을 확인했다. 추출한 EXE 코드로 감사 테스트 **34/34**를 재실행했다(37.995초, 고유 테스트 수에 중복 합산하지 않음). 시계 예외·취소 실패·품질 미달·거래/CSV 변조 차단을 mock/합성 자료로 검증했다.
+- 실제 EXE GUI/headless `--dry-run` 모두 exit 0. Python PATH/PYTHONHOME/PYTHONPATH 없는 별도 cwd, 번들 내부 module search path, `frozen=true`, 창 표시와 `COMPLETE_NO_SHUTDOWN`을 확인했다. 두 합성 실행 모두 통합 ZIP 36개/Review ZIP 8개, CRC/manifest SHA256/ID·날짜/중복 byte 일치 PASS, 첫 60분의 120개 구간과 60개 분봉 coverage PASS, shutdown disabled 및 예약 파일 미생성이다. 기존 official-close Validator FAIL과 full_session=false는 그대로 유지했다.
+- 배포 폴더는 943개 파일/168,772,372 bytes다. `dist/OneHourResearch_v1.0.0_20261013_163923.zip`(70,105,316 bytes)과 `.zip.sha256`을 생성하고 943개 항목 CRC·SHA256을 번들과 대조했다. ZIP SHA256은 `add9242ed97a857dec7b296a24e2f8ac6413a04867e87786c4b519af325fb4e1`다. 인증정보·원본 DB/data/log·테스트·OCR/Paddle/Torch/NH 실행 모듈은 포함하지 않았다. `.env`는 운영 PC에서 별도로 설정해야 한다.
+- 기존 data 216개/5,813,929,270 bytes의 전체 SHA256·경로·크기·mtime, 방향 DOCX/MD와 기존 소스·앞선 미커밋 변경을 보존했다. 문서 갱신 전 174개 소스 해시가 모두 같았으며 이번 문서 변경은 HANDOFF/CHANGELOG의 현재 검증 기록뿐이다. `.env` 인증값 출력·편집은 하지 않았다. 증거는 `build/one_hour_runner/predeploy_20261013_163923_d685af/`에 두며 git add/commit/push는 하지 않았다.
+- 남은 운영 검증: 새 PC에 폴더 전체 배포 후 `--no-shutdown`으로 개장 전 준비부터 open+65분까지 실제 Kiwoom 세션을 관측해야 한다. 실제 API/주문/Windows 종료와 다른 PC 검증은 실행하지 않았다. EXE는 NotSigned이며 기존 legacy 앱과의 원자적 상호 배제 제약도 유지한다.
+
+## 2026-10-13 — One Hour Research Runner v1.0.0 / manifest·summary schema 1
+
+- 기준 HEAD `6895584e10903be80d480b67250926ac5ab780a4`. Market Radar v2.6.1, research schema 4, Paper schema 2, Rotation extension 1, Opening Hour schema 1 및 기존 코드·fixtures·방향 DOCX/MD·기존 EXE 빌드를 보존했다. 신규 `tools/one_hour_runner/` 12개 파일과 `tests/one_hour_runner_test.py`, 안내/현재 상태 문서 4개가 범위다.
+- 독립 PySide6 창과 공개 CollectorController 조합이다. 기존 CONFIG 정책에서 경로·Regular Session·150 slots만 지정하고 Paper v1·Rotation v2·Opening을 켠다. XNYS 공식 개장+65분에 공개 `stop()`을 요청하며 첫 60분만 분석한다. 공식 close 기준의 기존 protocol/Validator FAIL과 Paper 조기중단·post-exit 결측은 변조하지 않는다.
+- 실행별 새 Radar/Paper/Rotation/Opening/Master DB와 기존 shared historical cache 정책을 사용한다. 단축 실행 요약에 계획/실제 구간·첫/마지막 관측·coverage·실패 사유 및 Controller UUID/기존 Master 내용 ID 매핑을 남긴다. legacy DB migration·새 REST/WS 구현·실제 주문은 없다.
+- 통합 ZIP은 radar/paper_v1/rotation_v2/opening_hour/manifest/summary의 allowlist다. 원래 exporter가 DB 복사본에서 재생성한 모든 연구 결과와 원본 export를 대조하며, 기존 Radar Review ZIP은 동일 Radar export 7개만 중복 포함한다. 필수 파일/날짜/ID/CRC/SHA256/nested 동등성/민감 필드를 검증한 임시 파일만 atomic publish한다. 원본 DB/cache/.env/log는 공유 ZIP에서 제외한다.
+- clean shutdown·모든 관련 thread 종료·정시 준비/시작/중지·실제 연구 관측·필수 export/Opening 후처리·ZIP 검증 후에만 `/s /f /t 60`을 1회 요청한다. UI 또는 `/a` 취소가 가능하다. late/clock/resume/WS gap/저장/분석/Windows 요청 오류는 종료를 차단하고 원본·실패 요약을 보존한다. 정리 중 강제 process kill은 없다. 취소 실패 시 실제 예약 유지 가능성을 표시하고 countdown은 monotonic 기준이다.
+- offline 신규 **62/62 통과**(116.896초), 기존 **479/479 통과**(78.585초). 기존 Collector를 합성 provider로 개장 전 arm한 뒤 연구 gate/세 옵션/종료 순서를 확인했고, 별도 가속 모의 실행에서 기존 exporter/Validator/연구 모듈과 통합 ZIP을 검사했다. DST·휴장·조기폐장·+60/+65 경계·원래 FAIL·0거래·PARTIAL/EMPTY·누락/오염/손상·중복·취소 경합·오류별 shutdown 0회/성공 1회를 검증했다. Windows 명령은 모두 mock이다. 초기 신규 fixture의 ws_factory 누락과 신규 ZIP fsync 핸들 문제는 신규 파일에서만 수정했다.
+- 전용 최소 venv + 로컬 캐시 wheel로 Windows onedir **`dist/OneHourResearch/OneHourResearch.exe` 빌드 성공**. 기존 빌드 스크립트는 사용하지 않았다. Python PATH/PYTHONHOME/PYTHONPATH를 제거하고 다른 cwd에서 EXE `--dry-run --smoke-dir ...` 합성 smoke를 실행했다. 화면의 모의 실행/자동 종료 비활성화와 ZIP 검증을 확인했다. OCR/Paddle/Torch 및 인증파일/실제 DB를 배포물에서 제외한다. source Python 설치를 제거한 다른 PC나 실제 Kiwoom/NH/live shadow/Windows 종료 동작은 미검증이다.
+- 기존 추적 파일 159개의 시작 SHA256과 원래 data 216개(5,813,929,270 bytes)의 목록·크기·mtime를 기록했다. 허용한 문서 4개 외 기존 파일/방향 DOCX·MD·fixtures를 보존하고 원래 data의 목록·크기·mtime가 동일함을 확인했다. DOCX SHA256은 `eb06f5add0fde0f5fecc424e00977932831d2f6d3279f10e9d67fe2c947641ef`다. 실제 인증값 출력·수정, git add/commit/push는 하지 않았다. 빌드/ZIP/로그/화면/테스트 산출물은 build/dist ignore 범위다.
+- 제약: 기존 legacy 앱은 전역 mutex에 참여하지 않는다. 서로 다른 폴더의 legacy 앱이 뒤늦게 시작하는 경우까지 원자적 상호 배제를 보장할 수는 없어 알려진 프로세스 감지 시 중지·종료 차단한다. 실제 운용 시 Collector 하나만 실행한다. 첫 운영 검증은 `--no-shutdown`으로 수행하며, 단축 실행의 VERIFIED를 full-session 준수나 전략 수익성 PASS로 해석하지 않는다.
+- 최종 감사에서 문서 4개 외 기존 추적 155개 SHA256 동일, 신규 파일 13개, data 목록·크기·mtime 동일, 상대 링크·버전·민감 대입 패턴·공백·`git diff --check` 및 staging 없음 확인. 최종 EXE는 exit 0, STARTING/ARMED/COLLECTING/FINALIZING/COMPLETE_NO_SHUTDOWN 화면과 36항목 합성 ZIP 검증을 기록했다. module search path는 전부 배포물 `_internal`이고 배포물은 943개 파일/168,759,873 bytes다. 인증파일·DB·log·OCR/Paddle/Torch/NH 실행 모듈이 없다.
+
 ## 2026-10-12 — Market Radar v2.6.1 / Paper schema 2 / opening_hour_v1_1
 
 - GitHub checkpoint `66589272e013644a94d2e206c4cddbcfa1951383` 기준의 연구 evidence 보존 보완이다. Paper v1 후보/진입/TP/SL, Rotation material evidence dominance, Opening 60분 계산식·경계, Current/Emerging 순위와 수집 정책은 유지했다.

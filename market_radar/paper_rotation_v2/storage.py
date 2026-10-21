@@ -49,17 +49,19 @@ class RotationStore(PaperStore):
         super().save(trade)
         self.put("rotation_details", trade["trade_id"], {k: v for k, v in trade.items() if k not in FIELDS})
 
-    def trades(self, day=None):
-        rows = super().trades(day)
+    def trades(self, day=None, *, entered_only=False):
+        rows = super().trades(day, entered_only=entered_only)
         for row in rows:
             detail = self.db.execute("SELECT detail_json FROM rotation_details WHERE trade_id=?", (row["trade_id"],)).fetchone()
             if detail:
                 row.update(json.loads(detail[0]))
         return rows
 
-    def summary(self, day):
-        result = super().summary(day)
-        valid = [t for t in self.entered(day) if t.get("return_pct") is not None and t["data_quality_status"] == "valid"]
+    def summary(self, day, *, entries=None):
+        if entries is None:
+            entries = self.entered(day)
+        result = super().summary(day, entries=entries)
+        valid = [t for t in entries if t.get("return_pct") is not None and t["data_quality_status"] == "valid"]
         result["switch_count"] = sum(t["exit_reason"] == SWITCH_REASON for t in valid)
         result["valid_closed_count"] = len(valid)
         result["statistics_population"] = "closed valid trades including switches; TP/SL win rate uses TP/SL only"

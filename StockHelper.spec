@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_all, copy_metadata
+from PyInstaller.utils.hooks import collect_all, collect_data_files, copy_metadata
 
 
 project_root = Path(SPECPATH)
@@ -13,7 +13,11 @@ os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
 
 datas = []
 binaries = []
-hiddenimports = []
+hiddenimports = ["websockets.sync.client"]
+# Market Radar GUI also needs its pinned data contract and XNYS/timezone data.
+datas += [(str(project_root / "market_radar/providers/kiwoom_contract.json"), "market_radar/providers")]
+datas += collect_data_files("exchange_calendars") + collect_data_files("tzdata")
+datas += copy_metadata("exchange_calendars")
 
 # PaddleOCR and PaddleX discover pipeline components dynamically, so static import
 # analysis alone does not find everything required by the OCR worker.

@@ -1,6 +1,8 @@
-# Market Radar v2.6.1 — Opening Hour Research v1.1 / Paper v1 + Rotation v2
+# Market Radar v2.6.5 — Opening Hour Research v1.1 / Paper v1 + Rotation v2
 
-현재 **Market Radar v2.6.1 / Opening Hour Research v1.1 / opening hour schema=1 / Paper Trading v1 / paper schema=2 / Rotation v2 / rotation extension schema=1 / Validator 1 / Collector v2.1 / test_version=kiwoom_radar_v2_1 / research schema=4 / master schema=1**의 기술 문서다. 프로그램 소개·설치는 [루트 README](../README.md), 현재 작업 상태는 [CODEX_HANDOFF](../CODEX_HANDOFF.md), 버전별 검증 이력은 [CHANGELOG](../CHANGELOG.md)를 따른다. Kiwoom 수집기에는 주문/계좌 기능이 없고, 별도 NH read-only probe만 계좌목록·잔고·매수가능수량을 조회한다. 실제 주문/자동매매 기능은 없다.
+v2.6.5는 첫 1시간 연구 판정과 안전한 데이터 보존 후 운영 종료를 분리합니다. `one_hour.py`가 기존 Controller 하나를 감독하며 독립 EXE를 실행하지 않습니다. v2.6.1의 수집기·전략·저장 엔진·Regular/Capacity 스케줄·Validator와 모든 schema는 유지합니다. 새 옵션이 OFF면 기존 GUI 실행 경로입니다. [사용·시각·저장·배포 안내](../README.md#첫-1시간-수집--zip-검증--pc-자동-종료-gui-통합-v4)를 참고하세요.
+
+현재 **Market Radar v2.6.5 / Opening Hour Research v1.1 / opening hour schema=1 / Paper Trading v1 / paper schema=2 / Rotation v2 / rotation extension schema=1 / Validator 1 / Collector v2.1 / test_version=kiwoom_radar_v2_1 / research schema=4 / master schema=1**의 기술 문서다. 프로그램 소개·설치는 [루트 README](../README.md), 현재 작업 상태는 [CODEX_HANDOFF](../CODEX_HANDOFF.md), 버전별 검증 이력은 [CHANGELOG](../CHANGELOG.md)를 따른다. Kiwoom 수집기에는 주문/계좌 기능이 없고, 별도 NH read-only probe만 계좌목록·잔고·매수가능수량을 조회한다. 실제 주문/자동매매 기능은 없다.
 
 NH 어댑터 v1.1은 `execution/nhplug_client.py`와 `execution/nhplug_accounts.py`, 명시적 CLI는 `tools/nhplug_probe/probe.py`와 `tools/nhplug_probe/accounts.py`, optional 의존성은 `requirements-nhplug.txt`다. Kiwoom discovery/research와 분리된 execution-price/account 조회용이며 Collector/순위/schema/Validator에 연결하지 않는다. 공식 nhplug 0.4.1의 OAuth·REST와 종목마스터 파서를 사용한다. REST `Output_0.trdprc`, 기존 실시간 `RC`의 `body.trdprc_1z17`만 가격으로 사용하며 GIC는 공식 마스터의 `sSymbol/sNationCode/sGIC`로 확인한다. SDK HTTP 전송에도 인증·현재가·계좌목록·잔고·매수가능수량 allowlist와 redirect 차단을 적용한다. 원본 계좌는 메모리에서 마스킹하며 토큰 파일 캐시와 SDK 진단 출력은 차단한다. RC/WSS10012는 보류 상태로 이번 계좌 작업에서 변경·재시험하지 않았다. 상세 범위·실행법은 [루트 README](../README.md)를 따른다.
 
@@ -9,6 +11,28 @@ NH 어댑터 v1.1은 `execution/nhplug_client.py`와 `execution/nhplug_accounts.
 매수가능수량은 `/gbstock/inquiry/v1/buyableAmount`의 `pcs_dit="2"`만 허용한다. 공식 입력 `act_no`, `fc_sec_trd_nat_cd="200"`, `iem_cd="AAPL"`, `wtm_cur_knd_cd="2"`(원화증거금), `oss_orr_knd_cd="1"`, `ahi_nmn_pr_tp_cd="00"`, `fc_orr_uit_pr`(NH REST 현재가)를 사용한다. `Output_0`의 `byn_pbl_qty`/`orr_pbl_qty`/`max_pbl_qty`는 서로 다른 값으로 유지하며 누락을 0으로 대체하지 않는다. 3개 운영 계좌 모두 실제 잔고·수량 조회 PASS, 수량 모두 0, 주문 호출 0건을 확인했다. 여러 사용 가능 계좌 중 기본값을 저장하지 않으며, 마스킹 끝자리가 같을 때 출력하는 `live-N`은 해당 응답 순서에만 유효하다.
 
 최상위 방향 원본은 [PROJECT_DIRECTION.docx](../PROJECT_DIRECTION.docx)이며 [MD mirror](../PROJECT_DIRECTION.md)는 그 의미를 따른다. 장기 흐름은 Market Radar → Session Validator → Research / Master DB → Strategy Analysis → Stock Helper → Live Decision Support다. 현재의 후보 탐색·수집 품질 검증과 향후 충분한 재검증 후의 Candidate Rank를 구분하고, 기존 가격구조와 독립 비교한 뒤 결합 효과를 검증한다. 이 문서의 현재 기능을 최종 전략 검증 완료로 해석하지 않는다.
+
+## 수집 테스트 탭과 진단 기록
+
+`collection_ui.CollectionTestPanel`은 `RadarPanel`의 기존 설정 위젯에만 값을 전달합니다. 별도 Controller, QTimer, DB 연결, QSettings를 만들지 않습니다. 기본 탭만 바꾸며 기존 네 탭을 유지합니다. 상세 설정은 스크롤 가능한 별도 탭입니다. `RadarPanel.poll()`의 기존 Paper `view()` 결과 한 개를 두 화면에 전달하고 기존 Radar health 집계를 사용합니다. 렌더링은 Paper engine/SQLite를 조회하지 않습니다. 새 일반/replay 수집 시작 시 이전 첫 1시간 결과를 화면 상태에서 분리합니다.
+
+첫 1시간 남은 시간은 예정 UTC stop과 Collector 실제 개장 `started_mono+3900` 중 남은 시간이 큰 쪽을 표시합니다. 시간이 보정되어도 GUI가 기한이나 연구 판정을 변경하지 않습니다. 실제 phase/Controller/supervisor 상태를 함께 표시하며 확인 가능한 모순은 미확인으로 표시합니다. 첫 오류의 상세 queue wait는 기존 구조화 진단에 있을 때만 표시합니다. 일반 세션의 미계측 오류 시각·큐 지연을 복원한 것처럼 보여주지 않습니다.
+
+`R = <선택한 data root>/market_radar_one_hour/run_<supervisor id>`입니다. Collector run_id는 폴더 식별자와 다를 수 있습니다.
+
+| 기존 파일 | 생성 시점과 내용 | 확인 수준 |
+|---|---|---|
+| `R/diagnostics/runtime.json` | 첫 1시간 supervisor가 이벤트를 기록할 때 atomic/fsync 갱신. 최초 오류 code/phase/wall/mono, clock 관측, stop caller, worker, 절전 획득(run_start.power_acquired)/해제, 보존·종료 판단 | 합성 오류·취소·쓰기 실패 검증. 신규 v2.6.4/5 실장 생성 미검증 |
+| `R/diagnostics/collection.json` | 보존 직전 freeze. collection_clock·최초 오류·중지 근거를 고정하고 ZIP 원본에 포함 | 합성 정상/clock/오류 ZIP 검증. 실장 지속 수집 미검증 |
+| `R/one_hour_run_summary.json` | 계획·진행·보존·종료 결과. research_status와 preservation_status/shutdown_eligible 분리 | 기존 실장 FAILED/BLOCKED 파일 존재; 신규 clock 지속 경로는 합성 검증 |
+| `R/paper_v1/paper_performance.json` | 첫 1시간 opt-in telemetry. 별도 writer가 5초 간격 및 종료 시 저장; 최초 오류/큐 대기/처리/단계 집계 | 10/21 실장 계측 존재. 처리 지연 원인은 미해결 |
+| `R/radar/dashboard_run.json` | Collector lifecycle·실제 시작/중지·protocol·clean shutdown | 기존 실장 파일 존재 |
+| `R/radar/opening_hour_diagnostics.json` | Opening 후처리 시 단계/공간/예외/쓰기 실패. 일반 세션은 `<session>/` 아래 | 합성 성공/실패/공간 부족 검증; 실장 완전한 오류 계측은 별도 확인 필요 |
+| `R/one_hour_*.zip`, `R/shutdown_status.json` | 후처리 후 정상/FAILED 진단 보존 및 조건부 종료 상태 | 기존 실장 진단 ZIP 무결성 재검증; 실제 Windows 종료는 미검증 |
+
+일반 Regular Session은 기존 session lifecycle·validation·Opening 파일을 사용하고 위 supervisor runtime/collection 및 Paper telemetry는 기본 활성화하지 않습니다. GUI 진단 버튼은 기존 allowlist JSON을 각각 최대 2MB까지 background executor에서 읽고 민감 문자열을 정제합니다. 없거나 깨진 파일은 NOT_CREATED/UNAVAILABLE로 표시합니다. ZIP은 존재만 확인하고 내용 재검증은 기존 보존 경로가 담당합니다. 이 UI는 새로운 진단 파일을 쓰지 않습니다.
+
+강제 종료·정전은 마지막으로 성공한 파일 교체까지만 남을 수 있고 telemetry의 최근 5초는 유실될 수 있습니다. 디스크 부족/쓰기 실패 시 파일을 보장할 수 없으며 메모리의 sticky 오류는 프로세스가 죽으면 소실됩니다. 보존 확인이 안 되면 종료를 차단하고 supervisor/GUI hang/crash 뒤 예정 종료를 보장하는 독립 watchdog은 없습니다. 전원 설정을 영구 변경하지 않으며 수동 전원 차단을 막는 기능도 아닙니다. 진단·DB·cache·실제 로그·ZIP은 Git에 포함하지 않습니다.
 
 ## Paper Trading v1 — experimental shadow test
 
@@ -333,3 +357,60 @@ Ctrl+C 수신 즉시 새 scheduling/REST retry/WS REG를 중단한다. 현재 bo
 ~~~
 
 audit는 v1 evidence를 read-only SQLite로 열고 다른 폴더에 결과를 쓴다. probe는 인증 및 공식 시장 종목목록만 읽는다. smoke_v2_1은 정규장 여부를 확인하며 새 data-dir을 요구하고 provider의 구독 선택을 덮어쓰지 않는다. 일반 smoke의 timer 종료는 Ctrl+C 검증이 아니다. 직접 Ctrl+C를 누르거나 windows_ctrlc_smoke.py로 OS console event를 전달한다.
+
+## GUI 첫 1시간 관리자
+
+`DashboardOneHour`는 기존 Controller 객체를 주입받고 One Hour Research v1.0.1의 `Runner` 수집 감독·취소 상태, `artifacts`/`diagnostics`의 export 재생성·무결성 검증 및 quality policy 2를 재사용한다. Collector에는 opt-in 계측 경로 연결만 추가한다. Paper/Paired runtime·store에는 선택적 계측 hook이 있으며 scheduling/provider/strategy/Validator와 DB schema·journal·commit 정책은 유지한다. 공개 `stop()`으로 open+65분 종료를 요청하므로 기존 protocol의 user_requested/stop_time_mismatch와 Validator FAIL은 그대로다.
+
+별도 non-daemon 관리 스레드에서 준비·감시·ZIP·fsync·OS 명령을 처리한다. WAITING_SHUTDOWN은 UTC와 monotonic 양쪽에서 open+70분을 확인하고 최종 ZIP을 다시 읽는다. 다른 앱 확인/collector lock, 종료 없는 테스트, 취소 event, 모든 worker 종료와 GUI file job 완료를 OS 경계 직전 재검사한다. OS 성공 후 시각/상태 파일 저장에 실패해도 `/a`를 시도한다. 취소 실패 시 pending을 유지해 GUI가 조용히 닫히지 않으며 재시도할 수 있다. 프로세스를 강제 종료하는 코드는 없다.
+
+GUI는 관리 실행 중 새 수집/replay/import/revalidation/manual ZIP을 차단한다. 일반 Regular/Capacity의 기본값을 저장하지 않고 체크 해제 시 이전 UI 옵션을 복원한다. 자동 실행 종료 후 기존 Controller의 Paper/Rotation/Opening 경로를 복원한다. 실행별 원본 DB의 격리는 단축 수집에만 적용하며 일반 세션의 경로·전략·일일 규칙을 바꾸지 않는다.
+
+StockHelper.spec에는 Kiwoom 계약 JSON, XNYS 일정 데이터/metadata, tzdata 및 websockets.sync.client를 포함하도록 보완했다. source import graph가 `tools.one_hour_runner`의 라이브러리 모듈을 묶으며 별도 OneHourResearch EXE는 필요 없다. 기존 StockHelper.exe 재빌드/실행 검증은 수행하지 않았다.
+
+
+### GUI integration 2 / archive schema 2
+
+2026-10-16 v2.6.3 소스 안정화는 DB schema/전략/수집 정책을 바꾸지 않는다. Opening의 `copied_database(..., diagnostics=...)`에만 사전 공간 검사를 적용한다. 복사할 DB+WAL 크기 + max(64MiB, 복사량의 10%)를 실제 `tempfile.gettempdir()` 볼륨의 가용량과 비교한다. 복사본은 순차적으로 닫고 자신의 TemporaryDirectory만 정리한다. 공간 검사는 quota·권한·검사 이후 공간 감소·출력 DB 크기를 보증하지 않으므로 실제 예외도 기록한다.
+
+Controller는 이 실행의 `radar/opening_hour_diagnostics.json`을 unique 임시 파일→fsync→atomic replace로 저장한다. 실제 TEMP/가용량, 각 복사 source/필요량/가용량, 분석·복사·읽기·DB 생성·save/export/close 단계, 예외 유형·errno/WinError·연쇄 예외와 frame 파일/함수/행을 담는다. 자유형 예외 메시지·소스 줄·locals는 저장하지 않고 경로도 정제한다. 저장 실패는 메모리의 `persistence_exception`에 남으며 필수 오류 근거가 파일에 없으면 운영 완료를 차단한다. 연구 fingerprint와 기존 결과 DB/export에는 이 운영 진단을 넣지 않는다.
+
+정상 ZIP은 기존 필수 15종을 유지한다(`evidence_policy=complete`). 새 진단 정책 `opening_failed_before_database_v1`은 실제 Opening DB 부재, Controller INCOMPLETE, 동일 run/date의 영속 오류 기록 및 메모리 일치를 모두 요구한다. 필수는 기존 Radar/Paper/Rotation 10종 + `opening_hour/processing_diagnostics.json`이며 manifest의 `missing_originals`와 Opening export 11종 omissions에 부재를 명시한다. 오류 JSON은 원래 Radar sidecar의 해시/provenance로 연결한다. 나머지 DB 부재/손상, Radar integrity 미검증, Paper DB identity/참조 및 재export 불일치는 차단한다. CRC·SHA256·날짜/ID·민감정보·원본 해시·정제 재현 검사를 유지하며, require_safe=False로 읽을 수 있는 BLOCKED 진단 ZIP은 종료 근거가 아니다. archive schema 2의 추가 정책 필드이며 기존 정상 v2 archive도 계속 검증한다. 최초 finalization 예외와 diagnostic retry 예외는 summary의 `archive_exceptions`에 순서와 단계별로 보존한다.
+
+`one_hour_archive.py`는 연구의 strict `collect_evidence`와 독립적인 운영 검사를 수행한다. 기존 standalone runner 기본 인자·success-only 종료 정책은 유지한다. GUI는 export inspector와 nested review 생략을 명시하여 정제 가능한 설명 값을 검사하고, DB 재생성 비교는 정제 전 원본 byte hash로 유지한다.
+
+정상/진단 ZIP의 `manifest.json`은 entry CRC·SHA256뿐 아니라 모든 run별 원본 파일의 상대 경로·해시, 정제 행/열·원본/출력 매핑, 제외 이유·원본 보존 여부를 담는다. 실제 인증값은 manifest에도 기록하지 않는다. 필수 Radar 후보/스냅샷/품질·검증/metadata, Paper trades/events/marks, Rotation trades/marks, Opening 후보/1m/quality/summary/metadata를 요구한다. 정제한 파일은 종료 직전 원본에서 다시 정제하여 archive bytes와 대조한다. 변조한 ZIP의 manifest hash만 다시 맞춰도 통과하지 못한다. 원본 DB는 DB/WAL 복사본에서 quick_check/identity/종료 상태를 확인한다. shared cache 자체를 ZIP에 넣지는 않으며 기존 provider의 정상 close 경로를 유지한다.
+
+`research_status`/`research_failures`는 연구 결과, `preservation_status`/`operational_failures`/`shutdown_eligible`은 운영 결과다. 운영 실패나 취소는 이미 확정된 연구 결과를 SUCCESS로 바꾸지 않는다. ZIP은 생성 당시의 판정이며 이후 취소/OS 요청 결과는 run summary와 shutdown_status.json에 기록한다. 테스트 모드의 shutdown_disabled와 실제 종료 가능 판정은 구분한다.
+
+`paper/telemetry.py`는 자동 첫 1시간에서만 활성화한다. bounded histogram 512 bins와 최근/최초 오류 64개 시각을 사용한다. mean/max/count는 정확한 관측 집계, p95/p99는 1.08 비율 histogram 상한 근사다. 단계별 시간은 중첩되므로 서로 더하지 않는다. 별도 writer는 5초 간격 atomic write/fsync, 종료 시 join한다. worker 검사는 이 io_thread도 포함한다. 계측 저장 실패는 write_error로 남기며 전략 판단을 성공으로 바꾸거나 2초 기준을 늘리지 않는다. SQL 본문·가격·인증값은 계측하지 않는다. 계측 OFF이면 원래 queue/sqlite 경로다.
+
+오프라인 `tools.one_hour_runner.replay_profile`은 원시 시각·도착 순서를 보존하며 새 DB에서 receipt/enqueue/dequeue/completion, queue peak와 처리 분포를 기록한다. 원래 machine load·enqueue 시각이 없어 원인 재현을 보장하지 않는다. 운영 WAL 전환이나 latency threshold 완화는 적용하지 않았다.
+
+
+### GUI integration 3 / archive schema 2 / Market Radar v2.6.4
+
+2026-10-21 실장 종료 직전 Kernel-General 이벤트 1(RecordId 812205)의 OldTime 13:34:52.9007667 → NewTime 13:34:56.4331951 UTC는 +3.5324284초다. Time-Service 35와 같은 구간이며 Controller actual_stop은 13:34:56.477594 UTC다. Runner.tick의 `abs(wall_delta-mono_delta)>2` → fail → 공개 Controller.stop → `user_requested` 경로와 일치한다. 실제 호출 stack이 없어 당시 호출자를 완전히 증명하지는 못한다. Paper는 13:34:06.025019에 실패했고 Radar batch는 13:34:30.062813에도 남아 있다. clock 검사는 제거하지 않았다.
+
+`power.WindowsSleepInhibitor`는 supervisor 스레드에서 ES_CONTINUOUS|ES_SYSTEM_REQUIRED를 획득하고 finally에서 ES_CONTINUOUS로 해제한다. 전원 계획/레지스트리를 변경하지 않는다. 정상 종료·시작 실패·예외·취소를 검증하며 수동 전원 작업/강제 종료/전원 상실에는 보증하지 않는다. API 근거: [Microsoft SetThreadExecutionState](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-setthreadexecutionstate).
+
+`RunDiagnostics`는 run별 diagnostics/runtime.json에 bounded 최근 128개 이벤트와 별도 최초 오류를 저장한다. 고유 임시 파일→fsync→replace이며 실패 errno/WinError/stack(메시지·locals 제외)을 메모리에 sticky 보존한다. ZIP의 diagnostics/collection.json은 보존 직전 고정한 원본이고 이후 OS 상태/예외는 runtime.json에 쓴다. 원본 inventory는 고정 파일만 포함해 종료 상태 갱신이 ZIP 해시를 무효화하지 않는다. 기록 실패가 있으면 종료를 허용하지 않는다. 갑작스러운 프로세스 충돌은 마지막으로 완료된 snapshot까지만 보존한다.
+
+연구 실패와 `shutdown_blockers`를 분리한다. `operational_failures`에는 clock_jump 같은 실제 장애가 계속 남으며 빈 shutdown_blockers는 장애가 없었다는 뜻이 아니다. 알려진 clock_jump/scheduler_gap_or_resume만 호출 근거가 고정 파일에 있고, 정시 개장·실제 수집 시작·clean 종료·모든 쓰기 소유자 종료·Radar integrity PASS·필수 DB/정제 export 재생성 비교·ZIP CRC/SHA/identity/원본 해시를 통과하면 조기 중지된 연구도 조건부 종료한다. 사용자 취소, supervisor 예외/원인 미상 중단, DB/worker 잔류, 미시작/증거 손실은 계속 차단한다. 기존 archive schema 2를 읽으며 새 필드는 추가적 운영 기록이다. 구버전 BLOCKED ZIP을 소급 승격하지 않는다.
+
+종료는 UTC open+70분 및 최초 monotonic deadline보다 빠를 수 없다. wall 보정은 기준점을 다시 잡되 monotonic 기한을 단축하지 않고 최소 60초 안정 대기를 추가한다. monotonic 역행은 계속 차단한다. OS 호출 직전 worker·GUI job·취소·진단 저장을 다시 검사한다. PC 종료만 취소는 독립 event이며 수집/예약 취소와 구분한다. Dashboard의 no_shutdown과 UI 테스트 체크는 기본 True다. 독립 runner의 기존 success-only 정책과 배포 EXE는 바꾸지 않았다.
+
+Paper/Rotation은 2초/FIFO/전략/DB schema/journal/commit/WS150을 유지한다. 이번 실장 최초 실패 직전 333/436/342/336/359/281ms의 연속 처리 tail과 큐 대기 증가를 확인했지만 전체 실행 commit max를 특정 tick에 소급 연결할 수 없다. 계측에 consumer별 이벤트 단계 count/total/max와 최초 gap 코드·시각만 추가했다. 여러 thread가 쓰는 aggregate와 달리 이벤트 단계는 해당 consumer thread만 포함한다. 중첩 시간은 합산하지 않으며 CPU·디스크·백신·스케줄러 원인은 미확정이다.
+
+
+### GUI integration 4 / bounded_forward_v1 / Market Radar v2.6.5
+
+`Runner.tick`의 2초 시계 차이·5초 관측 공백 검사와 독립 runner의 기존 중지 정책은 유지한다. Dashboard만 `_collection_failures`에서 검증된 짧은 전진 보정의 clock_jump를 원본 수집 중지 사유와 분리한다. failures/protocol에는 clock_jump가 남고 strict 연구 검증은 계속 실패한다. 조건은 양쪽 양의 관측 간격 ≤5초, wall−mono >2초, 정시 실제 개장/ready, RUNNING, 기존 원본 유실·worker/provider 오류·WS gap·취소 없음, Paper.fail() 사용 가능 및 진단 저장 성공이다. 5초는 기존 관측 공백 안전 경계이며 clock_jump 허용 오차를 늘린 것이 아니다. 후보 분류로 NTP·시간 서버의 정확성을 인증하지 않는다.
+
+`SessionSchedule.started_mono`는 REGULAR_LIVE gate가 열리는 순간을 추가 관측할 뿐 기존 calendar/gate/stop/compliance를 바꾸지 않는다. Dashboard는 UTC 계획 stop과 started_mono+3,900초를 모두 확인한다. 보정마다 deadline을 재설정하지 않는다. 수신/DB timestamp·FIFO·중복 관측은 수정하지 않으며 실제 UTC 종료가 늦어진 값도 그대로 보존한다. Opening 공식 첫60분·Regular 공식 close·Capacity는 그대로다. 역행·긴 공백·큰 전진은 중지하고, monotonic 역행은 보존 성공 여부와 무관하게 PC 종료도 차단한다.
+
+기존 Paper/PairedRuntime.fail()의 thread-safe input_failure flag로 소비기가 INVALIDATED를 기록하게 한다. 이벤트를 재정렬하거나 거래를 되살리지 않는다. 기존 2초 gate·전략·schema·journal·commit·provider·rank는 바꾸지 않는다. 원본은 진단용으로 계속 수집할 수 있지만 시각 기반 연구 결과는 전체 실패 상태이며 손상 구간을 성공으로 보정하지 않는다.
+
+runtime/collection.json의 collection_clock은 기준 start/deadline/stop monotonic, 실제 UTC 범위, 최대64개 이상 샘플·분류·continue/stop·불확실 관측 구간을 보존한다. 각 사건 사이 구간은 로컬 순서가 유지되는 clock epoch일 뿐 절대 UTC 정확성은 미검증이다. 64개를 넘기거나 기록이 실패하면 중지한다. 최초 오류와 최근128개 일반 이벤트는 기존대로 유지한다. ZIP summary에도 같은 범위를 넣고 읽을 때 고정 진단·실제 lifecycle·경과65분·caller와 대조한다. 보존 VERIFIED 조건은 기존 integrity·재export·원본 hash·CRC·worker 종료 검사를 모두 포함한다. 실제 shutdown은 여전히 기본 OFF이며 open+70분 양쪽 기한·후처리 후 보정 안정 대기·최종 OS 경계 검사는 유지한다.
+
+실행 환경 Python 3.11.9의 `time.get_clock_info` 실측에서 monotonic은 GetTickCount64(해상도 15.625ms), 계측 perf_counter는 QPC(해상도 100ns)이며 둘 다 adjustable=false다. wall 보정과 독립인 경과시간 시계이며 Python 버전에 따라 구현이 다르므로 최신 문서의 구현을 이 환경에 그대로 대입하지 않는다. 긴 관측 공백은 suspend와 scheduler stall을 단독으로 구분할 수 없어 같은 안전 중지로 다룬다. [Python 3.11 time](https://docs.python.org/3.11/library/time.html#time.monotonic), [Microsoft GetTickCount64](https://learn.microsoft.com/en-us/windows/win32/api/sysinfoapi/nf-sysinfoapi-gettickcount64), [Microsoft QPC](https://learn.microsoft.com/en-us/windows/win32/sysinfo/acquiring-high-resolution-time-stamps). 실장 절대 시각·실제 전원 기능은 별도 운영 검증이 필요하다.

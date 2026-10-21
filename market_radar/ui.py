@@ -10,7 +10,7 @@ import time
 from PySide6.QtCore import QSettings, QTimer, QUrl, Signal, Qt
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (QApplication, QDoubleSpinBox, QFileDialog, QHBoxLayout,
-    QLabel, QLineEdit, QPushButton, QSpinBox, QSplitter, QTabWidget, QTextEdit, QVBoxLayout, QWidget, QComboBox, QCheckBox)
+    QLabel, QLineEdit, QPushButton, QSpinBox, QSplitter, QTabWidget, QTextEdit, QVBoxLayout, QWidget, QComboBox, QCheckBox, QScrollArea)
 
 from . import __version__
 from .config import CONFIG, DEFAULT_SHARED_CACHE_PATH
@@ -33,6 +33,9 @@ class RadarPanel(QWidget):
     def __init__(self, parent=None, config=None, *, master_path=DEFAULT_MASTER_PATH, settings=None):
         super().__init__(parent)
         self.config = config
+        self.one_hour = None
+        self._one_hour_preferences = None
+        self.mutation_buttons = []
         base = config or CONFIG
         self.master = MasterDB(master_path)
         self.controller = CollectorController(master_path)
@@ -50,7 +53,9 @@ class RadarPanel(QWidget):
         self._closing = self.closed = False
         self.setWindowTitle(f"Market Radar Dashboard · v{__version__}")
         self.resize(1400, 850)
-        layout = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        advanced = QWidget()
+        layout = QVBoxLayout(advanced)
         self.mode = QLabel(f"Market Radar v{__version__} · 미연결 · Collector v2.1 · research schema 4 · master schema 1")
         layout.addWidget(self.mode)
         self.status = QLabel("STOPPED · Start Collection을 눌러 수집을 시작하세요.")
@@ -72,12 +77,12 @@ class RadarPanel(QWidget):
         controls = QHBoxLayout()
         self.collection_mode = QComboBox()
         self.collection_mode.addItems(MODES)
-        self.collection_mode.setCurrentText(base.collection_mode)
+        self.collection_mode.setCurrentText(base.collection_mode if config else "Regular Session")
         controls.addWidget(QLabel("Collection Mode"))
         controls.addWidget(self.collection_mode)
         self.max_ws = QSpinBox()
         self.max_ws.setRange(1, 200)
-        self.max_ws.setValue(base.max_ws_symbols if config else int(self.settings.value("max_ws", base.max_ws_symbols)))
+        self.max_ws.setValue(base.max_ws_symbols if config else int(self.settings.value("max_ws", 150)))
         self.data_root = QLineEdit(str(base.data_dir if config else self.settings.value("data_root", str(base.data_dir))))
         self.grace = QDoubleSpinBox()
         self.grace.setDecimals(3)
@@ -100,16 +105,31 @@ class RadarPanel(QWidget):
         layout.addLayout(opening_controls)
         self.collection_mode.currentTextChanged.connect(self._render_opening_hour)
         self.opening_hour_enable.toggled.connect(self._render_opening_hour)
+        auto_controls = QHBoxLayout()
+        self.one_hour_enable = QCheckBox("첫 1시간 수집 + ZIP 검증 + PC 자동 종료")
+        self.one_hour_no_shutdown = QCheckBox("PC 자동 종료 없이 테스트")
+        self.one_hour_no_shutdown.setChecked(True)
+        self.one_hour_no_shutdown.setToolTip("실제 수집·ZIP 검증은 수행하고 Windows 종료만 비활성화합니다.")
+        auto_controls.addWidget(self.one_hour_enable)
+        auto_controls.addWidget(self.one_hour_no_shutdown)
+        self.one_hour_cancel = self.add_button(auto_controls, "PC 종료만 취소", self.cancel_one_hour)
+        self.add_button(auto_controls, "첫 1시간 결과 폴더", self.open_one_hour_folder)
+        layout.addLayout(auto_controls)
+        self.one_hour_status = QLabel("첫 1시간 자동 실행: OFF · 실제 주문 OFF")
+        self.one_hour_status.setWordWrap(True)
+        layout.addWidget(self.one_hour_status)
         buttons = QHBoxLayout()
         self.replay_button = self.add_button(buttons, "Open Replay", self.open_replay)
         for label, action in (("Import Existing Session", self.import_existing), ("Refresh", self.refresh),
                 ("Create Review ZIP", self.review), ("Open Session Folder", lambda: self.open_folder("data_dir")),
                 ("Open Export Folder", lambda: self.open_folder("export_path")),
                 ("Open Review ZIP Folder", lambda: self.open_folder("reviews"))):
-            self.add_button(buttons, label, action)
+            button = self.add_button(buttons, label, action)
+            if label in {"Import Existing Session", "Create Review ZIP"}:
+                self.mutation_buttons.append(button)
         layout.addLayout(buttons)
         self.tabs = QTabWidget()
-        layout.addWidget(self.tabs)
+        outer.addWidget(self.tabs)
         live = QWidget()
         live_layout = QHBoxLayout(live)
         split = QSplitter(Qt.Orientation.Vertical)
@@ -142,7 +162,7 @@ class RadarPanel(QWidget):
         for label, delta in (("Previous", -200), ("Next", 200)):
             self.add_button(paging, label, lambda checked=False, n=delta: self.history_page(n))
         history_layout.addLayout(paging)
-        self.add_button(paging, "Revalidate Session", self.revalidate)
+        self.mutation_buttons.append(self.add_button(paging, "Revalidate Session", self.revalidate))
         self.history = DataTable(HISTORY_COLUMNS)
         for i, width in enumerate((100, 70, 85, 85, 115, 150, 90, 75, 115)):
             self.history.setColumnWidth(i, width)
@@ -175,12 +195,23 @@ class RadarPanel(QWidget):
         self.ticker_table = DataTable()
         ticker_layout.addWidget(self.ticker_table)
         self.tabs.addTab(ticker_box, "Candidate History")
+        self.ticker_tab = ticker_box
         from .paper_rotation_v2.ui import PairedPaperPanel
         self.paper_panel = PairedPaperPanel()
         self.tabs.addTab(self.paper_panel, "Paper Trading")
+        self.one_hour_enable.toggled.connect(self.configure_one_hour)
         self.collection_mode.currentTextChanged.connect(lambda: self.paper_panel.render(
             None, busy=self.controller.busy, collection_mode=self.collection_mode.currentText()))
         layout.addWidget(QLabel("- = unavailable · 더블클릭: 종목 선택 · 새 수집은 data root 아래 별도 폴더 · 폴더/ZIP은 선택 세션 기준"))
+        layout.addStretch()
+        advanced_scroll = QScrollArea()
+        advanced_scroll.setWidgetResizable(True)
+        advanced_scroll.setWidget(advanced)
+        self.tabs.addTab(advanced_scroll, "수집 상세 설정")
+        from .collection_ui import CollectionTestPanel
+        self.collection_test = CollectionTestPanel(self)
+        self.tabs.insertTab(0, self.collection_test, "수집 테스트")
+        self.tabs.setCurrentWidget(self.collection_test)
         geometry = self.settings.value("geometry")
         if geometry:
             self.restoreGeometry(geometry)
@@ -233,7 +264,10 @@ class RadarPanel(QWidget):
         self.opening_hour_status.setToolTip(result.get("export_path") or result.get("error", "세션 종료 후 생성"))
 
     def start(self, provider=None, *, fresh_directory=None):
-        if self.controller.busy:
+        if self.controller.busy or (self.one_hour and self.one_hour.active):
+            return
+        if self.one_hour_enable.isChecked() and provider is None:
+            self.start_one_hour()
             return
         try:
             base = self.config or CONFIG
@@ -244,6 +278,7 @@ class RadarPanel(QWidget):
                                   paper_enabled=self.paper_panel.enable.isChecked() and provider is None,
                                   paper_rotation_enabled=self.paper_panel.rotation_enable.isChecked() and provider is None,
                                   opening_hour_enabled=self.opening_hour_enable.isChecked() and provider is None)
+            self.one_hour = None  # A new regular/replay run must not show the prior run's result.
             for table in self.tables:
                 table.render_rows([])
             self._summary = {}
@@ -261,13 +296,125 @@ class RadarPanel(QWidget):
         except OSError:
             self.status.setText("설정 오류: 경로와 수집 설정을 확인하세요.")
 
+    def configure_one_hour(self, enabled):
+        if enabled:
+            self._one_hour_preferences = (self.collection_mode.currentText(), self.max_ws.value(),
+                self.grace.value(), self.paper_panel.enable.isChecked(),
+                self.paper_panel.rotation_enable.isChecked(), self.opening_hour_enable.isChecked())
+            self.collection_mode.setCurrentText("Regular Session")
+            self.max_ws.setValue(150)
+            self.grace.setValue(CONFIG.result_pre_target_grace_seconds)
+            self.paper_panel.enable.setChecked(True)
+            self.paper_panel.rotation_enable.setChecked(True)
+            self.opening_hour_enable.setChecked(True)
+        elif self._one_hour_preferences:
+            mode, slots, grace, paper, rotation, opening = self._one_hour_preferences
+            self.collection_mode.setCurrentText(mode)
+            self.max_ws.setValue(slots)
+            self.grace.setValue(grace)
+            self.paper_panel.enable.setChecked(paper)
+            self.paper_panel.rotation_enable.setChecked(rotation)
+            self.opening_hour_enable.setChecked(opening)
+            self._one_hour_preferences = None
+        self.poll()
+
+    def start_one_hour(self):
+        if self.jobs:
+            self.status.setText("기존 조회·저장 작업이 끝난 뒤 Start Collection을 눌러 주세요.")
+            return
+        try:
+            from .one_hour import DashboardOneHour, DashboardGuard
+            base = self.config or CONFIG
+            root = Path(self.data_root.text()).expanduser().resolve()/"market_radar_one_hour"
+            self.one_hour = DashboardOneHour(self.controller, root,
+                no_shutdown=self.one_hour_no_shutdown.isChecked(), guard=DashboardGuard(),
+                ready_to_shutdown=lambda: not self.jobs)
+            self.one_hour.launch(cache=base.historical_cache_path or DEFAULT_SHARED_CACHE_PATH)
+            self._summary, self._tracking = {}, {}
+            self._current_session = self._selected_session = None
+            self.history.clearSelection()
+            for table in self.tables:
+                table.render_rows([])
+            self.shutdown_label.clear()
+            self.validation_status.clear()
+            self.status.setText("첫 1시간 준비 · 기존 Collector 1개 · 실제 주문 OFF")
+        except Exception as exc:
+            self.status.setText(f"첫 1시간 시작 차단 ({type(exc).__name__}) · 기존 수집 여부와 설정을 확인하세요.")
+        self.poll()
+
+    def cancel_one_hour(self):
+        if self.one_hour and self.one_hour.active:
+            self.one_hour.request_cancel_shutdown()
+            self.one_hour_status.setText("PC 종료만 취소 요청 중 · 수집과 후처리는 계속합니다.")
+
+    def open_one_hour_folder(self):
+        if self.one_hour and self.one_hour.folder and self.one_hour.folder.is_dir():
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.one_hour.folder)))
+
+    def render_one_hour(self, busy):
+        enabled = self.one_hour_enable.isChecked()
+        self.one_hour_enable.setEnabled(not busy)
+        self.one_hour_no_shutdown.setEnabled(enabled and not busy)
+        active = bool(self.one_hour and self.one_hour.active)
+        self.one_hour_cancel.setEnabled(active)
+        for button in self.mutation_buttons:
+            button.setEnabled(not active)
+        if enabled:
+            for widget in (self.collection_mode, self.max_ws, self.grace, self.opening_hour_enable,
+                           self.paper_panel.enable, self.paper_panel.rotation_enable):
+                widget.setEnabled(False)
+        runner = self.one_hour
+        if not enabled and not active:
+            self.one_hour_status.setText("첫 1시간 자동 실행: OFF · 실제 주문 OFF")
+            return
+        if runner is None:
+            self.one_hour_status.setText("첫 1시간: 선택됨 · 개장 전 Start Collection · 실제 주문 OFF" if enabled else
+                                        "첫 1시간 자동 실행: OFF · 실제 주문 OFF")
+            return
+        from zoneinfo import ZoneInfo
+        def kst(stamp):
+            return instant(stamp).astimezone(ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d %H:%M:%S KST") if stamp else "-"
+        plan = runner.plan or {}
+        archive = str(runner.archive) if runner.archive else "아직 생성되지 않음"
+        shutdown = "비활성화 (테스트)" if runner.no_shutdown else kst(plan.get("shutdown_not_before"))+" 이후 안전한 보존 검증 시 60초 뒤 종료 예약"
+        if runner.shutdown_at:
+            shutdown = kst(runner.shutdown_at)+" · 자동 종료 취소 가능"
+        if runner.finalized and not runner.shutdown_may_be_pending and runner.state != "COMPLETE_NO_SHUTDOWN":
+            shutdown = "차단 또는 취소됨"
+        warning = ("경고: 취소 실패. Windows 종료 예약이 남아 있을 수 있습니다. 자동 종료 취소를 다시 누르거나 shutdown.exe /a를 실행하세요."
+                   if runner.reason == "shutdown_cancel_failed" else (runner.reason or ""))
+        summary = runner.summary or {}
+        result = summary.get("research_status")
+        safe = summary.get("shutdown_eligible") is True
+        if safe and result == "FAILED":
+            verdict = "연구 오류 / 검증된 진단 ZIP 저장 / " + ("PC 종료 비활성화 (테스트)" if runner.no_shutdown else "PC 종료 가능")
+        elif safe and result == "VERIFIED":
+            verdict = "연구 정상 / 정상 ZIP 저장 / " + ("PC 종료 비활성화 (테스트)" if runner.no_shutdown else "PC 종료 가능")
+        elif runner.finalized:
+            verdict = "저장·검증 오류 또는 취소 / PC 종료 차단"
+        else:
+            verdict = "연구·보존 결과 확인 중"
+        if runner.shutdown_may_be_pending and result == "FAILED":
+            verdict += " · 연구 실패 기록을 보존하고 Windows 종료 예약됨"
+        collecting = self.controller.busy and self.controller.session_phase == "REGULAR_LIVE"
+        if collecting and getattr(runner, 'continue_after_clock_jump', False):
+            verdict = "시계 전진 보정 기록 · 연구 무효 / 진단용 원본 수집 지속 · 65분 경과 후 종료"
+        self.one_hour_status.setText(f"첫 1시간 {runner.state} · 수집 {'진행 중' if collecting else '대기/후처리/종료'} · 실제 주문 OFF\n"
+            f"개장 {kst(plan.get('open'))} · 수집 종료 기준 {kst(plan.get('stop'))} · PC 종료 {shutdown}\n"
+            f"{verdict}\nZIP: {archive} · {warning}")
+        if active and self.controller.schedule:
+            self.schedule_label.setText(self.schedule_label.text()+"\n첫 1시간 관리: 개장+65분 정상 중지. 위 Regular 공식 종가 기준 Validator는 변경하지 않습니다.")
+
     def open_replay(self):
         path, _ = QFileDialog.getOpenFileName(self, "Replay", "", "JSONL (*.jsonl)")
         if path:
             self.start(JsonlReplayProvider(Path(path)), fresh_directory=True)
 
-    def stop(self):
-        self.controller.stop()
+    def stop(self, *, source='gui_stop_collection'):
+        if self.one_hour and self.one_hour.active:
+            self.one_hour.request_cancel(source=source)
+        else:
+            self.controller.stop()
 
     def refresh(self):
         if "history" in self.jobs:
@@ -337,7 +484,7 @@ class RadarPanel(QWidget):
         if ticker:
             self.submit("ticker_" + ticker, lambda: self.master.ticker_history(ticker),
                 lambda rows: self.ticker_table.render_rows(rows, automatic_columns=True) if self.ticker.text().strip().upper() == ticker else None)
-            self.tabs.setCurrentIndex(2)
+            self.tabs.setCurrentWidget(self.ticker_tab)
 
     def import_existing(self):
         path = QFileDialog.getExistingDirectory(self, "Import Existing Session · read-only", self.data_root.text())
@@ -435,7 +582,9 @@ class RadarPanel(QWidget):
                     self.render(message["rows"])
             except queue.Empty:
                 pass
-            if not self._closing and time.monotonic() >= self._health_at and worker.phase != "STARTING":
+            finalizing_one_hour = self.one_hour and self.one_hour.active and self.one_hour.state in {
+                "FINALIZING", "WAITING_SHUTDOWN", "SHUTDOWN_PENDING"}
+            if not self._closing and not finalizing_one_hour and time.monotonic() >= self._health_at and worker.phase != "STARTING":
                 self._health_at = time.monotonic() + 5
                 path = worker.config.db_path
                 latest = worker.phase in {"STOPPED", "ERROR"}
@@ -463,9 +612,10 @@ class RadarPanel(QWidget):
                         self.health_label.setText("System Health · 갱신 대기/읽기 오류 · 마지막 표시값")
                     else:
                         self.status.setText(f"{key} 작업 실패 ({type(exc).__name__}) · 원본/권한/민감정보를 확인하고 재시도하세요.")
-        busy = self.controller.busy
+        busy = self.controller.busy or bool(self.one_hour and self.one_hour.active)
         self._render_opening_hour()
-        self.paper_panel.render(self.controller.paper.view() if self.controller.paper else None,
+        paper_view = self.controller.paper.view() if self.controller.paper else None
+        self.paper_panel.render(paper_view,
                                 busy=busy, collection_mode=self.collection_mode.currentText())
         self.start_button.setEnabled(not busy)
         self.replay_button.setEnabled(not busy)
@@ -501,19 +651,21 @@ class RadarPanel(QWidget):
                 f"Start delay {display(p['start_delay_ms'])} ms · Protocol {protocol_status} ({p['protocol_reason']})")
         if self.controller.state == "STOPPED" and self.controller.lifecycle.get("clean_shutdown"):
             self.shutdown_label.setText(f"Stopped cleanly · shutdown {display(self.controller.lifecycle.get('shutdown_elapsed_ms'))} ms (final CSV/첫 quality export까지)")
+        self.render_one_hour(busy)
+        self.collection_test.render(paper_view, busy=busy)
         if self._closing and not busy and not self.jobs:
             self._closing = False
             self.close()
 
     def closeEvent(self, event):
-        self.stop()
-        self.settings.setValue("max_ws", self.max_ws.value())
+        self.stop(source='gui_close')
+        self.settings.setValue("max_ws", self._one_hour_preferences[1] if self._one_hour_preferences else self.max_ws.value())
         self.settings.setValue("data_root", self.data_root.text())
         self.settings.setValue("geometry", self.saveGeometry())
         for i, table in enumerate([*self.tables, self.history]):
             key = f"columns_{i}" if i < 2 else "history_columns_v2_3_0"
             self.settings.setValue(key, table.horizontalHeader().saveState())
-        if self.controller.busy:
+        if self.controller.busy or (self.one_hour and self.one_hour.active):
             self._closing = True
             self.status.setText("STOPPING · 정상 종료/export/Master 작업 완료 후 닫습니다.")
             event.ignore()

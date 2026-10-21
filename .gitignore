@@ -10,3 +10,14 @@ build/
 dist/
 .build-runtime-backup/
 data/
+# Local diagnostics and one-time handoff reports never belong in source control.
+CODEX_LAST_TASK_REPORT.md
+*.log
+*.db
+*.sqlite
+*.sqlite3
+*-wal
+*-shm
+*.zip
+*.bak
+*.tmp

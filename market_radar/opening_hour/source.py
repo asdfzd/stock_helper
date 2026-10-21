@@ -37,7 +37,7 @@ def _inside(at, start, end):
     return bool(at) and start <= instant(at) < end
 
 
-def read_session(session_dir, *, day=None, cache_path=None, paper_paths=(), calendar=None):
+def read_session(session_dir, *, day=None, cache_path=None, paper_paths=(), calendar=None, diagnostics=None):
     root = Path(session_dir).resolve(strict=True)
     lifecycle_path = root/"dashboard_run.json"
     lifecycle = json.loads(lifecycle_path.read_text(encoding="utf-8-sig")) if lifecycle_path.exists() else {}
@@ -47,7 +47,7 @@ def read_session(session_dir, *, day=None, cache_path=None, paper_paths=(), cale
     if len(source_paths) != 1:
         raise ValueError("Expected one session research DB")
     source = source_paths[0]
-    with copied_database(source) as db:
+    with copied_database(source, diagnostics=diagnostics, phase='radar') as db:
         names = tables(db)
         if not {"radar_metadata", "radar_batches", "radar_snapshots", "market_sessions"} <= names:
             raise ValueError("Unsupported Radar source")
@@ -160,7 +160,7 @@ def read_session(session_dir, *, day=None, cache_path=None, paper_paths=(), cale
     warnings = []
     cache_identity = None
     if cache.exists():
-        with copied_database(cache) as db:
+        with copied_database(cache, diagnostics=diagnostics, phase='cache') as db:
             if not {"minute_bars", "cache_metadata"} <= tables(db):
                 raise ValueError("Not a minute cache")
             cache_identity = unpack(dict(db.execute("SELECT key,value FROM cache_metadata")).get("identity"), {})
@@ -190,7 +190,7 @@ def read_session(session_dir, *, day=None, cache_path=None, paper_paths=(), cale
     for path in paper_paths:
         if not Path(path).exists():
             continue
-        with copied_database(path) as db:
+        with copied_database(path, diagnostics=diagnostics, phase='paper_reference') as db:
             if "paper_trades" not in tables(db):
                 raise ValueError("Unsupported paper reference database")
             for r in db.execute("SELECT trade_id,ticker,strategy_version FROM paper_trades WHERE session_date_et=? AND radar_run_id=? AND entry_price IS NOT NULL", (day, run_id)):

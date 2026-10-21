@@ -9,7 +9,7 @@
 - 기존 stock_helper 기능을 회귀시키지 않고 사용자의 미커밋 변경을 보존한다.
 - .env, secrets, token 및 실제 인증값을 출력하거나 수정하지 않는다.
 - .env, data/, DB, logs, 실제 export를 Git에 추가하지 않는다.
-- *_REPORT.md 같은 단계별 임시 보고서를 만들지 않는다. 프로젝트 상태 전달은 CODEX_HANDOFF.md를 사용한다.
+- \*\_REPORT.md 같은 단계별 임시 보고서를 만들지 않는다. 프로젝트 상태 전달은 CODEX_HANDOFF.md를 사용한다.
 - 의미 있는 버전 변경은 CHANGELOG.md에 영구 기록하고 README의 Current Version, CODEX_HANDOFF.md와 관련 기술 문서를 갱신한다.
 - 프로그램 버전과 schema version을 별도로 표시한다(예: Market Radar v2.1 / research schema 4).
 - 작업 완료 시 CODEX_HANDOFF.md의 현재 상태·검증·다음 작업·Git 상태를 갱신한다.

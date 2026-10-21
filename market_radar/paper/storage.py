@@ -25,7 +25,7 @@ FIELDS = ("trade_id radar_run_id session_date_et strategy_version ticker state w
 
 
 class PaperStore:
-    def __init__(self, path, *, result_tolerance_seconds=CONFIG.result_tolerance_seconds):
+    def __init__(self, path, *, result_tolerance_seconds=CONFIG.result_tolerance_seconds, metrics=None):
         self.path = Path(path)
         self.result_tolerance_seconds = float(result_tolerance_seconds)
         if not math.isfinite(self.result_tolerance_seconds) or self.result_tolerance_seconds < 0:
@@ -40,7 +40,13 @@ class PaperStore:
                                      "Preserve the original; offline migration to a separate copy is required. "
                                      "Legacy discarded ticks cannot be recovered.")
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(self.path, timeout=5)
+        if metrics is None:
+            self.db = sqlite3.connect(self.path, timeout=5)
+        else:
+            from .telemetry import MeasuredConnection
+            self.db = sqlite3.connect(self.path, timeout=5, factory=MeasuredConnection)
+            self.db.timings = metrics
+            self.db.label = "paper" if self.path.name == "paper.db" else "rotation"
         self.db.row_factory = sqlite3.Row
         tables = {r[0] for r in self.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         version = self.db.execute("PRAGMA user_version").fetchone()[0]
@@ -85,15 +91,21 @@ class PaperStore:
         self.db.execute("INSERT INTO paper_trade_events(trade_id,timestamp_utc,event_type,evidence_json) VALUES(?,?,?,?)",
                         (trade["trade_id"], at, kind, json.dumps(evidence, sort_keys=True, allow_nan=False)))
 
-    def trades(self, day=None):
+    def trades(self, day=None, *, entered_only=False):
+        conditions = (["session_date_et=?"] if day else []) + (["entry_price IS NOT NULL"] if entered_only else [])
         return [dict(r) for r in self.db.execute("SELECT * FROM paper_trades" +
-                (" WHERE session_date_et=?" if day else "") + " ORDER BY created_at,trade_id", (day,) if day else ())]
+                (" WHERE " + " AND ".join(conditions) if conditions else "") +
+                " ORDER BY created_at,trade_id", (day,) if day else ())]
 
     def entered(self, day):
-        return [r for r in self.trades(day) if r["entry_price"] is not None]
+        # Filter before materializing rows (and Rotation details), using the
+        # same NULL predicate and ordering as the former Python-side filter.
+        return self.trades(day, entered_only=True)
 
-    def summary(self, day):
-        entries = self.entered(day)
+    def summary(self, day, *, entries=None):
+        # Optional same-call snapshot, never a cache across events or commits.
+        if entries is None:
+            entries = self.entered(day)
         valid = [r for r in entries if r["exit_reason"] in {"TAKE_PROFIT_15", "STOP_LOSS_10", "SESSION_END"}]
         tp = sum(r["exit_reason"] == "TAKE_PROFIT_15" for r in entries)
         sl = sum(r["exit_reason"] == "STOP_LOSS_10" for r in entries)
