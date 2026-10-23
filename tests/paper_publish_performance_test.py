@@ -92,6 +92,47 @@ class PublicationTests(unittest.TestCase):
         deny.start()
         self.addCleanup(deny.stop)
 
+    def test_paired_publication_reads_each_store_once_and_never_keeps_rows(self):
+        a = PaperStore(self.root/"paper.db")
+        b = RotationStore(self.root/"review.db")
+        self.addCleanup(a.close)
+        self.addCleanup(b.close)
+        engine = PairedEngine(PaperEngine(a, "same-call", enabled=True), b, rotation_enabled=True)
+        runtime = PairedRuntime(CONFIG, "same-call", self.root/"unused.db",
+                                review_path=self.root/"unused_review.db", rotation_enabled=True)
+
+        def publish():
+            expected_view, expected_interests = engine.view(), engine.interests()
+            changes = a.db.total_changes, b.db.total_changes
+            with patch.object(a, "entered", wraps=a.entered) as ar, \
+                 patch.object(b, "entered", wraps=b.entered) as br:
+                runtime._publish(engine)
+            self.assertEqual((ar.call_count, br.call_count), (1, 1))
+            self.assertEqual(runtime.view(), expected_view)
+            self.assertEqual(runtime.interests, expected_interests)
+            self.assertEqual((a.db.total_changes, b.db.total_changes), changes)
+
+        engine.on_frame(SESSION, [row(360, "A")], stamp(360))
+        publish()
+        self.assertEqual(runtime.interests, {"A"})
+        self.assertEqual(runtime.protection, {})
+        engine.on_frame(SESSION, [row(422, "A", price=11)], stamp(422))
+        engine.on_tick("A", 11.1, stamp(423))
+        publish()
+        self.assertEqual(runtime.protection, {"A": SESSION.close_utc})
+        original = runtime.view()["recent"]
+        with self.assertRaisesRegex(RuntimeError, "rollback"):
+            with a.db:
+                a.db.execute("UPDATE paper_trades SET current_price=999")
+                publish()
+                self.assertEqual(runtime.view()["recent"][0]["current_price"], 999)
+                raise RuntimeError("rollback")
+        publish()
+        self.assertEqual(runtime.view()["recent"], original)
+        engine.gap(stamp(424), "test_gap")
+        publish()
+        self.assertIsNone(runtime.view()["active"])
+
     def test_entered_filter_preserves_rows_order_details_and_rollback(self):
         for store_type in (PaperStore, RotationStore):
             with self.subTest(store=store_type.__name__):

@@ -129,8 +129,11 @@ class PaperRuntime:
         self.input_failure.set()
 
     def _publish(self, engine):
-        value = engine.view()
-        self.interests = frozenset(engine.interests())
+        if callable(getattr(engine, "publication", None)):
+            value, interests = engine.publication()
+        else:
+            value, interests = engine.view(), engine.interests()
+        self.interests = frozenset(interests)
         with self.lock:
             self.state = value
         if self.metrics:

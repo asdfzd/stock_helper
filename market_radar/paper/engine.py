@@ -50,8 +50,8 @@ class PaperEngine:
     def _entries(self):
         return self.store.entered(self.session.date) if self.session else []
 
-    def interests(self):
-        result = {r["ticker"] for r in self._entries()}
+    def interests(self, *, entries=None):
+        result = {r["ticker"] for r in (self._entries() if entries is None else entries)}
         if self.active:
             result.add(self.active["ticker"])
         return result
@@ -263,10 +263,10 @@ class PaperEngine:
                 self.store.db.execute("UPDATE paper_sessions SET summary_json=? WHERE radar_run_id=? AND session_date_et=?",
                                       (encode(self.store.summary(self.session.date)), self.run_id, self.session.date))
 
-    def view(self):
+    def view(self, *, entries=None):
         # One read per view, also when _state persists it during a tick. Keep the
         # snapshot local: later ticks/transactions must always see fresh rows.
-        entries = self._entries()
+        entries = self._entries() if entries is None else entries
         return dict(status=self.status, strategy=STRATEGY_VERSION, trades=len(entries),
                     active=dict(self.active) if self.active else None, evidence=dict(self.latest_row) if self.latest_row else None,
                     recent=entries[-10:],

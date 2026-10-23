@@ -1,8 +1,12 @@
-# Market Radar v2.6.5 — Opening Hour Research v1.1 / Paper v1 + Rotation v2
+# Market Radar v2.6.6 — Opening Hour Research v1.1 / Paper v1 + Rotation v2
 
 v2.6.5는 첫 1시간 연구 판정과 안전한 데이터 보존 후 운영 종료를 분리합니다. `one_hour.py`가 기존 Controller 하나를 감독하며 독립 EXE를 실행하지 않습니다. v2.6.1의 수집기·전략·저장 엔진·Regular/Capacity 스케줄·Validator와 모든 schema는 유지합니다. 새 옵션이 OFF면 기존 GUI 실행 경로입니다. [사용·시각·저장·배포 안내](../README.md#첫-1시간-수집--zip-검증--pc-자동-종료-gui-통합-v4)를 참고하세요.
 
-현재 **Market Radar v2.6.5 / Opening Hour Research v1.1 / opening hour schema=1 / Paper Trading v1 / paper schema=2 / Rotation v2 / rotation extension schema=1 / Validator 1 / Collector v2.1 / test_version=kiwoom_radar_v2_1 / research schema=4 / master schema=1**의 기술 문서다. 프로그램 소개·설치는 [루트 README](../README.md), 현재 작업 상태는 [CODEX_HANDOFF](../CODEX_HANDOFF.md), 버전별 검증 이력은 [CHANGELOG](../CHANGELOG.md)를 따른다. Kiwoom 수집기에는 주문/계좌 기능이 없고, 별도 NH read-only probe만 계좌목록·잔고·매수가능수량을 조회한다. 실제 주문/자동매매 기능은 없다.
+현재 **Market Radar v2.6.6 / Opening Hour Research v1.1 / opening hour schema=1 / Paper Trading v1 / paper schema=2 / Rotation v2 / rotation extension schema=1 / Validator 1 / Collector v2.1 / test_version=kiwoom_radar_v2_1 / research schema=4 / master schema=1**의 기술 문서다. 프로그램 소개·설치는 [루트 README](../README.md), 현재 작업 상태는 [CODEX_HANDOFF](../CODEX_HANDOFF.md), 버전별 검증 이력은 [CHANGELOG](../CHANGELOG.md)를 따른다. Kiwoom 수집기에는 주문/계좌 기능이 없고, 별도 NH read-only probe만 계좌목록·잔고·매수가능수량을 조회한다. 실제 주문/자동매매 기능은 없다.
+
+v2.6.6의 `PairedEngine.publication()`은 소비 이벤트가 끝난 뒤 각 전략의 entered 행을 한 번씩 읽어 view·interests·보호 종목에 재사용한다. 다음 이벤트나 transaction/rollback을 넘어 보관하지 않는다. 두 엔진의 독립 판단·DB·write/commit·FIFO·2초 차단은 유지한다. 기존 measured view 구간 밖에서 공유 조회하므로 view 시간만으로 전후 성능을 비교하지 않는다. 이벤트 전체 처리와 SQL 합계가 비교 기준이다. 10/23 MYND 385개 입력에서 SELECT 4,618→3,078 및 논리 DB·상태 동일을 확인했지만 지연 상위값의 일관된 개선이나 실장 장애 해소는 미검증이다.
+
+Fresh quality는 최근 가격 수신뿐 아니라 정상 연결·실제 구독·observation/batch 양쪽의 `ws_gap_detected=False`를 요구한다. 연결 gap 표시는 재연결 뒤에도 유지되므로 낮은 Fresh coverage만으로 장시간 WS 수신 중단을 단정하지 않는다. 10/23은 재연결 이후 raw FE와 snapshot 수신 시각이 일치했고 엄격한 분류가 부족분을 설명했다. Opening Hour OHLCV는 REST minute cache가 주 자료이며 FE만으로 완전한 분봉을 만들지 않는다. WS 수신, cache 부족, 구독 표본 coverage를 각각 해석하며 기존 품질 기준과 NULL 정책을 유지한다.
 
 NH 어댑터 v1.1은 `execution/nhplug_client.py`와 `execution/nhplug_accounts.py`, 명시적 CLI는 `tools/nhplug_probe/probe.py`와 `tools/nhplug_probe/accounts.py`, optional 의존성은 `requirements-nhplug.txt`다. Kiwoom discovery/research와 분리된 execution-price/account 조회용이며 Collector/순위/schema/Validator에 연결하지 않는다. 공식 nhplug 0.4.1의 OAuth·REST와 종목마스터 파서를 사용한다. REST `Output_0.trdprc`, 기존 실시간 `RC`의 `body.trdprc_1z17`만 가격으로 사용하며 GIC는 공식 마스터의 `sSymbol/sNationCode/sGIC`로 확인한다. SDK HTTP 전송에도 인증·현재가·계좌목록·잔고·매수가능수량 allowlist와 redirect 차단을 적용한다. 원본 계좌는 메모리에서 마스킹하며 토큰 파일 캐시와 SDK 진단 출력은 차단한다. RC/WSS10012는 보류 상태로 이번 계좌 작업에서 변경·재시험하지 않았다. 상세 범위·실행법은 [루트 README](../README.md)를 따른다.
 

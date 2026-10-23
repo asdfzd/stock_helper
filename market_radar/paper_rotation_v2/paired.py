@@ -19,8 +19,9 @@ class PairedEngine:
     def session(self):
         return self.baseline.session
 
-    def interests(self):
-        result = self.baseline.interests() | self.rotation.interests()
+    def interests(self, *, baseline_entries=None, rotation_entries=None):
+        result = (self.baseline.interests(entries=baseline_entries) |
+                  self.rotation.interests(entries=rotation_entries))
         if self.session:
             result |= {r["ticker"] for r in self.tracker.records.values()
                        if r["session_date_et"] == self.session.date and r["tracking_status"] == "OBSERVING"}
@@ -66,11 +67,19 @@ class PairedEngine:
     def finish(self, *args, **kwargs):
         self._apply("finish", *args, **kwargs)
 
-    def view(self):
-        value = self.baseline.view()
-        value["rotation_v2"] = self.rotation.view() if not self.review_error else {"status": "ERROR · sidecar unavailable"}
+    def publication(self):
+        # The consumer publishes after the action/commits. Reuse just this call's
+        # rows for view, protection and interests; never cache across an action,
+        # transaction or rollback. Each strategy still owns its separate store.
+        baseline_entries = self.baseline._entries()
+        rotation_entries = self.rotation._entries()
+        value = self.baseline.view(entries=baseline_entries)
+        value["rotation_v2"] = self.rotation.view(entries=rotation_entries) if not self.review_error else {"status": "ERROR · sidecar unavailable"}
         value["post_exit_tracking"] = "ERROR" if self.review_error else "ON"
         if self.session:
             value["official_close_utc"] = self.session.close_utc
-            value["tracking_tickers"] = sorted({t["ticker"] for t in self.baseline._entries() + self.rotation._entries()})
-        return value
+            value["tracking_tickers"] = sorted({t["ticker"] for t in baseline_entries + rotation_entries})
+        return value, self.interests(baseline_entries=baseline_entries, rotation_entries=rotation_entries)
+
+    def view(self):
+        return self.publication()[0]

@@ -1,28 +1,29 @@
 # CODEX HANDOFF
 
-갱신: 2026-10-22 KST. 현재 상태만 유지하며 영구 이력은 [CHANGELOG](CHANGELOG.md)에 둔다. 새 대화는 [START_HERE](START_HERE.md), 최상위 방향 원본은 [PROJECT_DIRECTION.docx](PROJECT_DIRECTION.docx), 도구용 mirror는 [PROJECT_DIRECTION.md](PROJECT_DIRECTION.md), 수집 기준은 [TEST_PROTOCOL](TEST_PROTOCOL.md)을 따른다.
+갱신: 2026-10-24 KST. 현재 상태만 유지하며 영구 이력은 [CHANGELOG](CHANGELOG.md)에 둔다. 새 대화는 [START_HERE](START_HERE.md), 최상위 방향 원본은 [PROJECT_DIRECTION.docx](PROJECT_DIRECTION.docx), 도구용 mirror는 [PROJECT_DIRECTION.md](PROJECT_DIRECTION.md), 수집 기준은 [TEST_PROTOCOL](TEST_PROTOCOL.md)을 따른다.
 
 ## 현재 버전과 연구 단계
 
-- **Market Radar v2.6.5 소스 GUI / Opening Hour Research v1.1 / opening hour schema 1 / Paper Trading v1 / paper schema 2 / Rotation v2 / rotation extension schema 1 / Validator 1 / Collector v2.1 / test_version=kiwoom_radar_v2_1 / research schema 4 / Master schema 1 / Windows Quick Launch v1**.
+- **Market Radar v2.6.6 소스 GUI / Opening Hour Research v1.1 / opening hour schema 1 / Paper Trading v1 / paper schema 2 / Rotation v2 / rotation extension schema 1 / Validator 1 / Collector v2.1 / test_version=kiwoom_radar_v2_1 / research schema 4 / Master schema 1 / Windows Quick Launch v1**.
 - **Phase A 마무리 ~ Phase B 시작**. 실데이터 수집은 시작됐고 2026-10-06 ET 표준 150-slot Capacity 세션의 검증 결과가 있다. 여러 거래일의 표준 full-session/1주 축적 완료나 전략 확정을 뜻하지 않는다.
 - 최종 목표는 시장 후보 → 검증 조건 → 기존 Stock Helper 가격구조 분석 → 데이터 기반 단기매매 의사결정 보조다. Current Leaders/Emerging은 후보 탐색의 두 축이며 향후 검증된 Candidate Rank와 구분한다. 자동주문은 현재 기본 목표가 아니다.
 - 기존 Current/Emerging 공식, RVOL/NULL, 보호 추적, result sampling, provider 및 OCR/매입가/반등가/벽/Toss/halt는 유지한다. launcher로 바탕화면 Stock Helper 또는 launch_stock_helper.cmd를 사용한다. 상세 실행법은 [README](README.md).
 
-## 수집 테스트 기본 화면 / 이번 GitHub 반영
+## 10월 23일 실장 조사와 현재 수정
 
-- v2.6.5 소스에 `수집 테스트` 기본 탭을 추가했다. 기존 네 탭과 상세 수집 설정을 유지하며 설정·Controller·Paper cached view를 공유한다. 새 GUI Max WS 기본150, 저장된 값 유지, PC 자동 종료 기본OFF, 실제 주문OFF다. 전략·스케줄·DB 정책은 이번 GUI 작업에서 변경하지 않았다.
-- 현재 단계/연결/WS/최근 집계/실제 elapsed/UTC 일정/countdown, Paper와 Rotation 상태, 최초 오류와 지연 근거, 연구/보존/PC 종료 결과를 구분한다. 결과·ZIP 폴더와 기존 진단 JSON 읽기 버튼을 제공한다. late_launch 자동 우회나 추가 Collector/SQLite timer 조회는 없다.
-- 최종 전체 732/732 PASS, FAIL/ERROR/SKIP0; 기존 Stock Helper main 12/12 exit0; GUI 경계28 PASS(중복). 592개 보호 파일 SHA/mtime 동일, 새 data0. 첫 전체731개 ERROR13의 fixture/WinError5 구분과 재시험 이력은 CHANGELOG에 보존했다. 실제 API/주문/Windows 종료와 EXE 재빌드는 이번에도 수행하지 않는다. 진단 저장 위치·생성 조건·실장 확인 수준은 [기술 문서](market_radar/README.md#수집-테스트-탭과-진단-기록)를 참고한다.
+- v2.6.5 실장 run `8b9b5b9741e946b59aa9d66bd48d37ca`의 실제 폴더는 `data/market_radar_one_hour/run_813f74ad8c3849cca35b5afa0deafaf6`다. 65분 예정 종료와 진단 ZIP VERIFIED는 직접 재확인했고 연구는 Paper 오류로 FAILED다. 원본·cache는 읽기 전용 보존했다.
+- v2.6.6은 Paired 상태 게시 한 호출 안에서 entered 행을 재사용한다. 385개 실제 MYND 입력의 SELECT 4,618→3,078, write/commit·논리 DB·상태·interests/protection 동일. 처리 시간 결과는 혼재하여 실장 지연 해결은 미검증이다. SQL 호출·commit 지연은 확인했으나 CPU/디스크/락/스케줄링 원인은 미확정이다.
+- Fresh48/118은 재연결 뒤 sticky gap을 제외하는 기존 strict 분류다. 13:54~14:30 snapshot5,424건에 대응하는 raw FE가 존재한다. Opening 구독 OHLCV72.1495%는 별도 REST cache 가용성 문제다. 품질 정의·후보 전략을 완화하지 않았다. Opening 재분석11개 파일과 기존 품질 판정은 동일하다.
+- 2026-10-24 최종 반영 검증: 새 단일 전체 실행733 PASS/FAIL0/ERROR0/SKIP0, 기존 Stock Helper main12/12 exit0. 이전 고정 소스 비교 FAIL은 수정된 상태로 이번 전체에서 통과했다. 기존 성능 비교의 논리 DB 동일성을 재검토했으며 실장 지연 개선은 미검증이다. 근거: build/final_v266_20261024. 이전 조사·실패/재시도 이력은 CHANGELOG에 보존한다.
+- 수집 테스트 기본 탭, 기존 상세 설정과 네 탭, Controller·Paper cached view 공유를 유지한다. GUI Max WS 기본150, PC 자동 종료 기본OFF, 실제 주문OFF이며 기존 EXE는 미반영이다. 이번 최종 반영에서는 사용자 승인에 따라 검증 후 commit/push한다. 실제 API/주문/Windows 종료/EXE 빌드는 하지 않는다.
 
 ## Market Radar GUI 첫 1시간 자동 실행
 
-- **v2.6.5 / integration 4 / archive schema 2**. 10/21의 Windows +3.5324284초 보정은 이벤트로 재확인했다. 기존 supervisor clock_jump→Controller.stop→user_requested가 조기 종료의 유력한 경로지만 당시 caller trace 부재로 인과는 INFERRED다. 원래 run의 FAILED/BLOCKED는 그대로다.
+- **v2.6.6 / integration 4 / archive schema 2**. v2.6.5의 bounded_forward_v1 시계 대응과 보존·종료 경계를 그대로 유지한다. 이전 장애와 시계 수정 검증 이력은 CHANGELOG에 보존한다.
 - 정시 개장한 실행에서 양쪽 관측 간격 ≤5초·양의 차이 >2초인 전진 보정 후보만, 원본/worker/provider 오류·WS gap·취소가 없고 Paper fail-closed와 진단 기록이 가능할 때 원본 수집을 지속한다. 기존 2초/5초 검사는 유지한다. Paper/Rotation 및 전체 연구는 FAILED이고 clock_jump를 숨기지 않는다. 역행·큰 전진·긴 관측 공백·monotonic 이상은 중지한다. NTP 원인이나 절대 UTC 정확성을 두 시계만으로 확정하지 않는다.
 - 실제 개장 gate의 monotonic+3,900초 및 공식 UTC stop을 모두 확인한다. 반복 보정이 경과시간 기한을 재설정하지 않는다. 시각을 소급 수정하지 않아 wall 종료는 보정량만큼 늦을 수 있다. Opening 첫60분·공식 close·기존 Regular/Capacity 스케줄·전략·2초/FIFO/DB schema/commit/WS150/rank는 유지한다.
 - diagnostics/runtime.json·고정 collection.json·ZIP summary의 collection_clock에 샘플/불확실 구간/이후 clock epoch/원본 수집 결정/실제 범위를 남긴다. 이상 최대64개, 초과·쓰기 실패 시 중지/종료 차단. 새 원본 계속 수집 경로도 기존 DB integrity·재export·ZIP CRC/SHA/원본 hash·writer 종료 검증을 모두 통과해야 보존 VERIFIED가 된다.
 - 예약·수집·후처리 동안 절전 요청, 예외/취소 해제, PC 종료만 취소/수집 취소 분리, 실제 종료 기본 OFF, UTC/monotonic open+70분·후처리 후 보정 안정 대기·OS 직전 재검사를 유지한다. watchdog은 추가하지 않았다. supervisor/GUI hang/crash 뒤 예정 종료는 보장하지 않는다.
-- 검증은 build/clock_continuity_20261022의 JSON/log 및 단일 CODEX_LAST_TASK_REPORT.md에 기록한다. 확대 회귀 **629/629 PASS**, 최종 경계 **148/148 PASS**, 각각 FAIL/ERROR/SKIP 0. 범위가 겹치는 실행을 합산하지 않는다. 실제 RadarWorker의 65분/130 batch, 원시 FIFO·Paper INVALIDATED, 이전/현재 논리 DB 16비교 PASS. 원본/기존 변경 582개 SHA/mtime 동일. 10/21 원본 ZIP 35개 data entry/41개 원본 hash와 BLOCKED 유지 재검증 PASS. 기존 v2.6.4 회귀 이력은 CHANGELOG에 남아 있다.
 
 ## 수집과 저장
 
@@ -55,7 +56,7 @@
 - 사용자가 교체한 **2026-10-12 기준 PROJECT_DIRECTION.docx가 source of truth**다. MD는 같은 의미의 mirror로 보존하며 START_HERE의 읽는 순서를 따른다. 두 파일을 수정·재생성하지 않는다.
 - 현재 DOCX SHA256: eb06f5add0fde0f5fecc424e00977932831d2f6d3279f10e9d67fe2c947641ef. MD SHA256: 50029336dea7d83563c4912d74a34509c8da35f7f3cf551e2d0ef496b0df840c. 이번 작업은 전략과 분리된 운영 자동화이며 두 파일을 보존했다.
 - RESEARCH_BASIS의 7개 연구 축은 DOCX와 일치한다. 정확한 citation은 **출처 검증 필요**이며 논문명·저자·URL을 만들지 않았다.
-- 이번 안정화의 회귀·계측·원본 보존 결과는 위 GUI 절과 build/market_radar_one_hour/verification_20261015의 JSON/log에 둔다. 이전 2026-10-13 EXE 빌드·합성 검증의 상세 수치와 배포 해시는 CHANGELOG의 영구 이력을 참조한다.
+- 이번 조사·회귀·계측·원본 보존 결과는 위 현재 수정 절과 build/paper_fresh_20261024의 JSON/log에 둔다. 이전 2026-10-13 EXE 빌드·합성 검증의 상세 수치와 배포 해시는 CHANGELOG의 영구 이력을 참조한다.
 - 실제 장애의 근본 병목을 확정하거나 live 안정성을 검증한 상태가 아니다. 신규 EXE 적용 전에 별도 경로 재빌드·오프라인 smoke가 필요하며 첫 실제 검증은 --no-shutdown을 유지한다.
 
 ## Opening Hour Research v1 현재 상태
@@ -107,9 +108,9 @@
 
 ## Next Work
 
-다음 실제 실행은 v2.6.5 소스 GUI를 정상 재시작한 뒤 **수집 테스트 → 첫 1시간 (65분)**을 선택하고 **PC 자동 종료 없이 테스트**를 유지하여 개장 전 예약부터 후처리까지 감독한다. diagnostics/runtime.json의 sleep 획득/해제·stop caller·시계 차이, paper_performance.json의 첫 gap 및 이벤트별 SQL/commit tail, 고정 collection.json과 ZIP을 확인한다. Windows 실제 절전 방지·종료/취소는 별도 사용자 승인 운영 검증이며 오프라인 PASS를 실장 무인 운용 완료로 해석하지 않는다.
+다음 실제 실행 전 기존 작업이 끝난 것을 확인하고 사용자가 소스 GUI를 정상 재시작하여 v2.6.6 표시를 확인한다. **수집 테스트 → 첫 1시간 (65분), PC 자동 종료 없이 테스트**를 유지한다. 이번에는 기존 GUI를 중단·재시작하지 않았다. 다음 세션에서 2초 차단·FIFO를 유지하며 최초 실패 전 SQL read/write/commit, queue 입력/처리율, 전체 처리 p95/p99/max와 host CPU·디스크 지연을 같은 시간축으로 확인한다. 추가 host 계측은 별도 범위이며 현재 원인을 추정해 저장 정책을 바꾸지 않는다.
 
-Paper 원인은 아직 완결되지 않았다. 새 계측의 같은 이벤트에 속한 engine/SQL/commit 비용을 비교하고 CPU·디스크 부하를 함께 수집한다. 확인되지 않은 비용을 임의 최적화하거나 2초 gate·Tick 순서/개수·commit 정책을 바꾸지 않는다. 일반 수집의 상세 계측 연결은 별도 후속 범위다. supervisor/GUI hang/crash까지 자동 종료를 보장하려면 독립 watchdog, 프로세스 소유권/heartbeat, writer 종료 및 디스크 무결성 재검증을 별도 설계해야 한다. 시각만 보고 강제 종료하는 watchdog은 도입하지 않았다.
+연결 generation/GAP 이후 raw FE 지속, snapshot 수신 시각, sticky gap과 Fresh 판정을 함께 대조한다. 최근 수신과 연속성 유효 관측을 별도로 설명하는 진단 개선은 후속 검토이며 자동 gap 해제·기준 완화는 하지 않는다. REST unsupported54/no_data4의 종목·거래소·응답 코드 및 backfill/cache 완료 범위를 검증하고 OHLCV·RVOL 표본을 별도로 늘린다. 65분 planned stop, clock anomaly, 절전 요청 획득/해제, collection/runtime/Paper telemetry, 최종 진단 ZIP을 계속 확인한다. 실제 PC 종료와 무인 hang/crash 대응은 아직 미검증이며 독립 watchdog은 없다.
 
 기존 full-session 연구의 다음 작업은 새 Regular Session에서 Opening Hour Research와 Paper/Rotation v2를 각각 명시적으로 Enable하고 preopen arm하여 official close까지 수집하는 것이다. 종료 후 validation·Opening Hour quality/coverage·날짜별 export, 동일 시작 trade 연결·전환 시각 분리·post-exit 추적 품질을 확인한다. 여러 거래일 descriptive dataset을 축적하며 수익성 검증과 구분한다. 파일 오류가 재발하면 파일명·작업 단계·OS 번호로 외부 점유/지속적 권한 거부를 추가 조사한다. Capacity Test는 두 전략과 Opening Hour 자동 분석 모두 OFF다. NH 운영 계좌 선택은 별개이며 기본 계좌를 임의 설정하지 않는다. RC/WSS10012는 보류하고 실제 주문은 구현하지 않는다. clock_jump 연구 비준수 판정은 유지하며 연구 단계는 아래 순서를 유지한다.
 
@@ -120,4 +121,4 @@ Paper 원인은 아직 완결되지 않았다. 새 계측의 같은 이벤트에
 
 ## Git 상태와 작업 보존
 
-이번 시작 main / HEAD `6895584e10903be80d480b67250926ac5ab780a4`; fetch 후 origin/main과 동일했다. 사용자가 이번 작업에서 누적된 소스·테스트·문서 commit/push를 명시했다. 미커밋 기능을 보존하면서 GUI/문서/ignore만 추가 수정했다. 검토된 파일만 명시적으로 staging하며 원본 data/cache/DB/WAL/SHM/log/ZIP, build/venv/EXE, CODEX_LAST_TASK_REPORT.md는 제외한다. 방향 DOCX는 기존 tracked 원본을 그대로 유지한다. 검토한 소스·테스트·문서55개를 단일 커밋으로 반영하는 범위다. 본 문서가 포함된 커밋은 git log -1로 식별하며, 실제 push 완료 SHA/URL·origin/main 비교·원격 파일 검수는 로컬 단일 CODEX_LAST_TASK_REPORT.md와 build/collection_gui_20261022/remote_verification.json에 기록한다. 저장소는 https://github.com/asdfzd/stock_helper, 대상 기존 브랜치는 main이다. 보고서와 실제 기록은 Git에 올리지 않는다.
+최종 반영 작업 시작 main/HEAD `9dd813205da456279d9ec3891195dd9dc00eb1a9`, 기존 v2.6.6 변경11개를 보존했다. origin/main과0/0 확인 후 새 전체733개와 기존12개 회귀를 통과했다. 소스5/테스트2/문서4개만 명시적으로 staging하여 일반 commit/push하는 사용자 승인 범위다. 본 문서가 포함된 커밋은 git log -1로 식별하며 실제 push SHA/URL과 원격 파일 검증은 CODEX_LAST_TASK_REPORT.md 및 build/final_v266_20261024에 기록한다. data/cache/DB/WAL/SHM/log/ZIP/.env/build/venv/보고서는 추가하지 않는다. 원본455개 내용 해시 보존, DOCX 불변. 기존 GUI를 종료하거나 재시작하지 않았고 새 최적화·연구 정책 변경도 없다.

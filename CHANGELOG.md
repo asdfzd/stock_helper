@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-10-24 — v2.6.6 최종 전체 회귀 및 GitHub 반영 검증
+
+- 기존 v2.6.6 소스·테스트를 추가 수정하지 않고 새 단일 전체 unittest733 PASS/FAIL0/ERROR0/SKIP0, Stock Helper main12/12 exit0를 확인했다. 이전 고정 소스 문구 검사도 전체에서 통과했다. FIFO·2초·전략·commit·65분 종료·GUI·전원·정상/진단 ZIP 회귀 포함. 실장 지연 해결/수익성 검증은 아니다.
+- 이전385 Tick 비교 결과를 다시 대조하여 SELECT4,618→3,078, 입력·18개 논리 테이블·상태/관심/보호 동일성을 재확인했다. 성능 replay를 새로 실행한 것은 아니며 기존 시간 결과의 혼재를 유지한다.
+- 기존 GUI PID3692는 연결0/data 파일0, 최신 진단은 COMPLETE_NO_SHUTDOWN 및 모든 수집 스레드 종료였다. 프로그램을 임의 종료·재시작하지 않았다. 원본 data/cache/log/ZIP/.env/DOCX/기존 EXE455개 해시 보존 검사를 수행했다. 상세 metadata 변화는 단일 보고서에 기록한다.
+- 기존 origin/main과 동일한 HEAD에서 검토한11개만 명시적으로 staging 후 일반 commit/push하는 승인 작업이다. 금지 파일·자격증명 검사와 원격 SHA/파일 대조는 build/final_v266_20261024 및 단일 CODEX_LAST_TASK_REPORT.md에 남긴다. 실제 API·주문·Windows 종료·EXE 빌드·force/reset/clean/stash/rebase/merge 없음.
+
+## 2026-10-24 — Market Radar v2.6.6 / 10월 23일 실장 조사와 Paper 게시 중복 조회 감소
+
+- 조사 대상은 v2.6.5 Collector `8b9b5b9741e946b59aa9d66bd48d37ca`, 실제 폴더 `data/market_radar_one_hour/run_813f74ad8c3849cca35b5afa0deafaf6`다. 13:30:00.027064~14:35:00.102088 UTC, monotonic 3,900.078초, planned_65_minute_stop, 연구 FAILED/Paper 오류, 보존 VERIFIED를 직접 확인했다. 기존 진단 ZIP 36개 data entry/42개 원본 hash·CRC·identity·provenance 검증 PASS. 원본 47개 SHA256 모두 동일, Radar SHM 하나의 mtime만 변경(주체 미확정), DOCX 동일. SQLite는 안정된 DB/WAL 복사본만 조사했다.
+- MYND 첫 paper_processing_delay 13:33:06.554236 UTC, queue wait 2,249.134ms, 전체 최대 wait 2,613.585ms/processing 588.987ms/queue 28. 직전 11개 Tick 처리 3,801.158ms 중 SQL read/fetch/write/commit leaf 합계 3,788.430ms였고, 같은 3.802초 동안 입력24개/처리11개였다. engine/view는 SQL을 포함하므로 중첩 합산하지 않았다. CPU/디스크/락/스케줄링 근본 원인은 미확정이다.
+- `PairedEngine.publication()`에서 두 전략의 entered 행을 각각 한 번 읽어 view/interests/보호 종목에 같은 호출 내 재사용한다. 독립 DB·판단·write/commit, FIFO, 2초 제한, 연구/수집/시계/전원/GUI 정책은 유지한다. 같은 MYND 385개 입력에서 SELECT 4,618→3,078, 18개 논리 테이블·매 이벤트 상태·interests/protection·write/commit 동일. rollback 후 신선한 게시와 WATCH/OPEN/gap 경계 회귀를 추가했다. measured view 밖에서 공유 조회하므로 view 시간만 비교하지 않는다.
+- 400개 실제 수신간격 replay는 전후 모두 오류 없이 처리했고 원래 marks 385개가 정확한 prefix다. 처리 평균 16.487→15.011ms, queue 최대168.105→137.802ms지만 처리 최대39.666→106.004ms/queue p95 46.684→49.626ms로 악화한 지표도 있다. 동기식 최초 비교 평균14.959→27.372ms, 이후 교차 순서 각3회 평균 중앙값13.473→13.316ms. 시간 변동이 커 일관된 latency 개선이나 원래 2초 장애 해소를 주장하지 않는다. replay는 한 watch frame과 실제 Tick을 사용하며 당시 전체 부하를 복원하지 않는다. 결정론적 비교의 실패 경계는 명시적으로 주입했다.
+- 13:54:50.929590 GAP, 마지막 FE13:54:50.787038→새 연결 첫 FE13:54:53.687928. generation2는14:30 전까지236,841 FE를 저장했다. 13:54~14:30 snapshot5,424개 모두 원시 FE 수신 시각·ticker와 일치, raw drop0. sticky ws_gap 때문에 strict Fresh48/118(마지막+1470.467초)이며 품질 재계산은 저장 결과와 동일했다. 구독118/118은 30초 표본이며 3초 미만 단절 부재를 뜻하지 않는다. Fresh 정의·gap 정책은 변경하지 않았다.
+- Opening all331/eligible278/full60m42, eligible 완전분봉6,265/16,680, 구독 구간3,860/5,350=72.1495%. 구독 중 cache 결측1,490분 중69분에는 같은 로컬 수신 분의 FE가 있었다(완전한 거래소 분봉의 증명은 아님). REST58=unsupported54/no_data4, RVOL139/8,791=1.5812%. 복사본 재분석 research ID와11개 export 바이트 동일/PARTIAL. WS 수신과 REST historical cache 부족을 구분하며 OHLCV 생성·후보·품질 기준을 바꾸지 않았다.
+- 오프라인 전체 최초 **732 PASS/1 FAIL/ERROR0/SKIP0**. FAIL은 이전 view 소스 문구 고정 검사였다. 승인된 entries 전달 구문만 정확히 정규화하고 다른 전략 바이트 보호를 유지한 뒤 해당 검사 **1 PASS/FAIL0/ERROR0/SKIP0**. 최종 고유733개 통과(여러 실행), 기존 Stock Helper main **12/12 exit0**, 관련98 PASS는 전체와 중복이다. 정상/진단 ZIP, 65분 stop, clock, 절전 요청, no_shutdown, FIFO/무결성/GUI 회귀 포함. 실제 API·주문·Windows 종료·EXE 빌드·git add/commit/push 미실행. v2.6.6은 다음 소스 GUI 시작에 적용되며 기존 GUI/EXE에 자동 반영하지 않았다. 재현 자료는 `build/paper_fresh_20261024/`, 단일 보고서는 CODEX_LAST_TASK_REPORT.md다. 여러 거래일 재실장 검증은 남아 있다.
+
 ## 2026-10-22 — Market Radar v2.6.5 / 수집 테스트 기본 탭과 소스 동기화
 
 - `수집 테스트`를 기본 탭으로 추가하고 기존 네 탭·상세 수집 설정을 유지했다. Collection Mode/Max WS/Paper/Rotation/Opening/no_shutdown은 원래 위젯과 같은 상태다. 새 GUI Regular/150 기본과 저장값 유지, 실제 주문OFF·PC 자동 종료 기본OFF. 같은 Controller와 cached Paper view를 사용하며 GUI timer의 Paper SQL/추가 Collector는 없다.

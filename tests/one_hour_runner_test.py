@@ -545,6 +545,23 @@ class SystemTests(unittest.TestCase):
             expected = subprocess.check_output(["git", "show", "6895584:"+name], cwd=ROOT)
             # Git checkout may use CRLF; source semantics and fixture bytes otherwise identical.
             actual = (ROOT/name).read_bytes().replace(b"\r\n", b"\n")
+            if name in {"market_radar/paper/engine.py", "market_radar/paper_rotation_v2/engine.py"}:
+                # v2.6.6 authorizes only same-publication row reuse. Normalize
+                # these exact additions; freeze all strategy bytes as before.
+                shared_rows = [
+                    (b"def interests(self, *, entries=None):", b"def interests(self):"),
+                    (b"def view(self, *, entries=None):", b"def view(self):"),
+                ]
+                shared_rows += ([
+                    (b'(self._entries() if entries is None else entries)', b'self._entries()'),
+                    (b'entries = self._entries() if entries is None else entries', b'entries = self._entries()'),
+                ] if name == "market_radar/paper/engine.py" else [
+                    (b'super().interests(entries=entries)', b'super().interests()'),
+                    (b'super().view(entries=entries)', b'super().view()'),
+                ])
+                for current, original in shared_rows:
+                    self.assertEqual(actual.count(current), 1, (name, current))
+                    actual = actual.replace(current, original)
             if name == 'market_radar/scheduling.py':
                 # Observe the original gate's monotonic instant only. All existing
                 # calendar, eligibility, compliance and stop bytes remain frozen.

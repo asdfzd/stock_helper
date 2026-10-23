@@ -34,8 +34,8 @@ class RotationEngine(PaperEngine):
             self.active.setdefault("rotation_root_trade_id", self.active["trade_id"])
         super()._save(at, event, evidence)
 
-    def interests(self):
-        result = super().interests()
+    def interests(self, *, entries=None):
+        result = super().interests(entries=entries)
         if self.rotation_watch:
             result.add(self.rotation_watch["ticker"])
         if self.pending_switch:
@@ -157,8 +157,8 @@ class RotationEngine(PaperEngine):
                 self.pending_switch = self.rotation_watch = None
                 self._save(price_at)
 
-    def view(self):
-        result = super().view()
+    def view(self, *, entries=None):
+        result = super().view(entries=entries)
         result.update(strategy=STRATEGY_VERSION, rotation_watch=self.rotation_watch,
                       pending_switch=self.pending_switch)
         return result
