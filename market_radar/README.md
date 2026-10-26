@@ -1,8 +1,16 @@
-# Market Radar v2.6.6 — Opening Hour Research v1.1 / Paper v1 + Rotation v2
+# Market Radar v2.6.7 — Opening Hour Research v1.1 / Paper v1 + Rotation v2
 
 v2.6.5는 첫 1시간 연구 판정과 안전한 데이터 보존 후 운영 종료를 분리합니다. `one_hour.py`가 기존 Controller 하나를 감독하며 독립 EXE를 실행하지 않습니다. v2.6.1의 수집기·전략·저장 엔진·Regular/Capacity 스케줄·Validator와 모든 schema는 유지합니다. 새 옵션이 OFF면 기존 GUI 실행 경로입니다. [사용·시각·저장·배포 안내](../README.md#첫-1시간-수집--zip-검증--pc-자동-종료-gui-통합-v4)를 참고하세요.
 
-현재 **Market Radar v2.6.6 / Opening Hour Research v1.1 / opening hour schema=1 / Paper Trading v1 / paper schema=2 / Rotation v2 / rotation extension schema=1 / Validator 1 / Collector v2.1 / test_version=kiwoom_radar_v2_1 / research schema=4 / master schema=1**의 기술 문서다. 프로그램 소개·설치는 [루트 README](../README.md), 현재 작업 상태는 [CODEX_HANDOFF](../CODEX_HANDOFF.md), 버전별 검증 이력은 [CHANGELOG](../CHANGELOG.md)를 따른다. Kiwoom 수집기에는 주문/계좌 기능이 없고, 별도 NH read-only probe만 계좌목록·잔고·매수가능수량을 조회한다. 실제 주문/자동매매 기능은 없다.
+현재 **Market Radar v2.6.7 / Opening Hour Research v1.1 / opening hour schema=1 / Paper Trading v1 / paper schema=2 / Rotation v2 / rotation extension schema=1 / Validator 1 / Collector v2.1 / test_version=kiwoom_radar_v2_1 / research schema=4 / master schema=1**의 기술 문서다. 프로그램 소개·설치는 [루트 README](../README.md), 현재 작업 상태는 [CODEX_HANDOFF](../CODEX_HANDOFF.md), 버전별 검증 이력은 [CHANGELOG](../CHANGELOG.md)를 따른다. Kiwoom 수집기에는 주문/계좌 기능이 없고, 별도 NH read-only probe만 계좌목록·잔고·매수가능수량을 조회한다. 실제 주문/자동매매 기능은 없다.
+
+## v2.6.7 명시적 30초 종료 시험과 패키징
+
+`shutdown_test.ShutdownExperiment`는 기존 `WindowsShutdown`/65분 종료 eligibility와 독립이다. 생성 시 OS 호출 없음, 사용자 확인 후 `GetSystemDirectoryW`로 구한 절대 `shutdown.exe`에 `/s /f /t 30`, 성공 소유권이 있을 때만 `/a`를 전달한다. 셸·PATH·환경 SystemRoot의 실행 파일을 사용하지 않는다. 반환 코드 0만 SCHEDULED/CANCELLED이며 5/1314/1115/1190/1116 및 기타 거절과 실행 실패/timeout을 구분한다. 기존 다른 예약의 거절에는 `/a`를 보내지 않는다. 요청 timeout은 UNKNOWN으로 잠그며 소유권을 추정해 타인의 예약을 취소하지 않는다. `/a` 자체는 Windows 전체 예약에 적용되는 명령이며 OS가 예약 소유 ID를 제공하는 기능은 아니다. [Microsoft shutdown](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/shutdown), [Windows 오류 코드](https://learn.microsoft.com/en-us/windows/win32/debug/system-error-codes--1000-1299-).
+
+`ShutdownTestBox`는 GUI 전용 executor에서 명령을 실행하고 기존 250ms Dashboard poll로 표시한다. Collector/DB/hot path에 새 타이머·조회가 없다. 확인창 기본 No, 중첩 이벤트 루프 뒤 idle 재검사, STOPPED/worker·Paper io thread/first-hour active/GUI jobs 차단, 실행 중 새 수집·replay·파일 작업 차단을 적용한다. 명시적 클릭 시에만 기존 DashboardGuard로 다른 앱·mutex·collector lock을 검사하며 수집을 중단하지 않는다. 정상 종료·close·atexit는 수락받은 예약 취소를 시도하고 실패를 경고한다. hard kill/crash는 보장하지 않는다. countdown은 호출 직전 monotonic+30초를 사용해 취소 가능 시간을 과장하지 않으며 0초에도 OS 전원 종료를 확정하지 않는다.
+
+`StockHelper.spec`의 entry는 `live_ui.py`다. Market Radar GUI/collection/one_hour/종료 시험을 hidden import로 명시하고 Kiwoom JSON·exchange_calendars data/metadata·tzdata와 Paddle 동적 의존성을 포함한다. `build_windows.ps1`은 `.venv-paddle`로 새 버전 폴더만 생성하며 기존 배포/OCR/data 이동·실제 `.env` 복사가 없다. manifest에는 기준 Git HEAD·실제 소스 SHA256·EXE SHA256·별도 schema가 있다. 소스 변경과 기준 HEAD는 동일 개념이 아니며 해당 빌드 소스 해시로 대조한다. `tools.packaged_smoke`는 명시적 플래그에서만 로드되고 쓰기·QSettings·모델을 새 scratch에 격리한 뒤 네트워크/자식 프로세스 차단 아래 실제 Stock Helper/Radar GUI를 구동한다.
 
 v2.6.6의 `PairedEngine.publication()`은 소비 이벤트가 끝난 뒤 각 전략의 entered 행을 한 번씩 읽어 view·interests·보호 종목에 재사용한다. 다음 이벤트나 transaction/rollback을 넘어 보관하지 않는다. 두 엔진의 독립 판단·DB·write/commit·FIFO·2초 차단은 유지한다. 기존 measured view 구간 밖에서 공유 조회하므로 view 시간만으로 전후 성능을 비교하지 않는다. 이벤트 전체 처리와 SQL 합계가 비교 기준이다. 10/23 MYND 385개 입력에서 SELECT 4,618→3,078 및 논리 DB·상태 동일을 확인했지만 지연 상위값의 일관된 개선이나 실장 장애 해소는 미검증이다.
 
@@ -370,7 +378,7 @@ audit는 v1 evidence를 read-only SQLite로 열고 다른 폴더에 결과를 �
 
 GUI는 관리 실행 중 새 수집/replay/import/revalidation/manual ZIP을 차단한다. 일반 Regular/Capacity의 기본값을 저장하지 않고 체크 해제 시 이전 UI 옵션을 복원한다. 자동 실행 종료 후 기존 Controller의 Paper/Rotation/Opening 경로를 복원한다. 실행별 원본 DB의 격리는 단축 수집에만 적용하며 일반 세션의 경로·전략·일일 규칙을 바꾸지 않는다.
 
-StockHelper.spec에는 Kiwoom 계약 JSON, XNYS 일정 데이터/metadata, tzdata 및 websockets.sync.client를 포함하도록 보완했다. source import graph가 `tools.one_hour_runner`의 라이브러리 모듈을 묶으며 별도 OneHourResearch EXE는 필요 없다. 기존 StockHelper.exe 재빌드/실행 검증은 수행하지 않았다.
+StockHelper.spec에는 Kiwoom 계약 JSON, XNYS 일정 데이터/metadata, tzdata 및 websockets.sync.client를 포함한다. source import graph가 `tools.one_hour_runner`의 라이브러리 모듈을 묶으며 별도 OneHourResearch EXE는 필요 없다. v2.6.7은 별도 시험 EXE를 만들며 기존 StockHelper.exe는 보존한다.
 
 
 ### GUI integration 2 / archive schema 2

@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-10-26 — Market Radar v2.6.7 / 30초 종료 시험과 최신 Windows EXE
+
+- 수집 테스트에 **30초 강제 종료 테스트 / 종료 예약 취소** 추가. 기본 No 경고 확인, STOPPED·첫1시간 예약 없음·모든 writer/GUI file jobs 종료 gate, 중복 요청 방지, 기존 DashboardGuard 적용. 실제 OS 명령은 GetSystemDirectoryW 절대 경로의 `/s /f /t 30`, 자신이 수락받은 예약만 `/a`로 취소한다. OS 거절·기존 예약·권한·timeout과 취소 실패를 성공으로 표시하지 않는다. monotonic countdown, close/aboutToQuit/atexit 취소, crash 뒤 예약 잔류 경고. 기존 65분 eligibility·수집·전략·FIFO·2초·clock·전원·ZIP·schema·주문OFF 유지, 자동 arm/watchdog 없음.
+- 기존9/11 EXE의 PYZ6,783개에 market_radar 모듈0개를 확인했다. 최신 소스를 다시 빌드하지 않은 오래된 산출물이었으며 현재 spec은 live_ui.py를 분석한다. v2.6.7 hidden imports/계약 JSON/calendar/tzdata를 명시했다. build_windows는 별도 새 폴더만 생성하고 OCR 결과 이동·실제 `.env` 복사를 제거했다. UAC 강제 승격 없는 asInvoker이며 권한 거절은 보고한다. 사용자 지정 새 폴더/사전 의존성·모델·공간 검사, 소스/EXE 해시 manifest를 제공한다.
+- 새 `C:\Users\Choi\projects\stock_helper\dist\StockHelper_v2_6_7_TEST\StockHelper.exe`, **3,864,974,963 bytes / 6,604 files**, SHA256 `8c65392188c3141e4c9ffc0104ddaf8c8ec5200b9f2e298a8746a1f2b8343fb4`. 전체 onedir가 배포 단위다. 핵심16개 모듈 code object 대조·OCR 모델6개 해시·contract/calendar/tzdata·UAC·금지 원본 경로 검사 PASS. 새 바탕화면 바로가기 생성/대상 확인, 기존 바로가기 해시 불변. 실제 EXE 격리 GUI smoke 및 GPU OCR 초기화 PASS; screenshots 직접 검수. 모든 자식 프로세스/네트워크 차단, 실제 OS 종료0. API/HTS 캡처/실제 Windows 종료 검증은 아니다.
+- 신규20개 mock/GUI 검사 PASS. 최초 전체753개 중752 PASS/ERROR1(Opening GUI의 비동기 history 조회와 임시 DB 삭제 경합). Opening teardown의 executor 종료 대기 후 두 번째 sandbox 전체는749 PASS/FAIL3/ERROR1(설정파일 정리·진단 ZIP 실패). collection UI teardown의 executor/QSettings 정리를 보완했고 JSON atomic replace의 PermissionError errno13/WinError5를 기록했다. sandbox 동일 testcase5회4 PASS/FAIL1, 일반 Windows 동일 testcase5회5 PASS였으나 일반 Windows 전체는748 PASS/FAIL3/ERROR2로 재발했다(설정파일 정리2, import 대기1, 진단 저장2). 권한만의 문제로 확정하지 않는다. 실제 보존 정책을 바꾸지 않고 프로젝트 밖 허용 TEMP `C:/Users/Public/Documents/ESTsoft/CreatorTemp/stock_helper_v267_full`로 격리해 관련54개 및 **새 전체753 PASS/FAIL0/ERROR0/SKIP0**, Stock Helper main12/12 exit0. 기존 65분/clock/전원/정상·진단ZIP/Paper/Rotation/Opening 회귀 포함. 새 스키마/전략 변경 없음.
+- 초기 source smoke의 devnull 차단과 선택적 dependency subprocess probe 처리 보완 후 EXE smoke PASS. PyInstaller 선택적 TensorRT/lxml/serving·ccache 경고, HuggingFace hook 로그 경로 접근 거부(fallback), 외부 PowerShell stderr NativeCommandError가 있었다. 빌드/manifest 완료와 EXE 실행·해시·코드 대조를 별도로 확인했다. 앞선 전체·부분 검사 실패는 보존한다. 환경별 파일 접근 차이는 관측했으나 점유 프로세스와 근본 원인은 미확정이다.
+- 기존 원본455개 내용·size·mtime 불변, DOCX SHA256 eb06f5add0fde0f5fecc424e00977932831d2f6d3279f10e9d67fe2c947641ef. 기존 배포/OCR/GUI 보존, 자격증명 복사/출력 없음. 근거 build/exe_v267_20261026, 단일 보고서 CODEX_LAST_TASK_REPORT.md. 검토된 소스·테스트·문서만 일반 commit/push하며 산출물·원본·보고서는 Git 제외한다. 실제 전원 종료·실장 Paper 지연 해결·수익성은 미검증이다.
+
 ## 2026-10-24 — v2.6.6 최종 전체 회귀 및 GitHub 반영 검증
 
 - 기존 v2.6.6 소스·테스트를 추가 수정하지 않고 새 단일 전체 unittest733 PASS/FAIL0/ERROR0/SKIP0, Stock Helper main12/12 exit0를 확인했다. 이전 고정 소스 문구 검사도 전체에서 통과했다. FIFO·2초·전략·commit·65분 종료·GUI·전원·정상/진단 ZIP 회귀 포함. 실장 지연 해결/수익성 검증은 아니다.

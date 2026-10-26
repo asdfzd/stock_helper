@@ -13,7 +13,9 @@ os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
 
 datas = []
 binaries = []
-hiddenimports = ["websockets.sync.client"]
+hiddenimports = ["websockets.sync.client", "market_radar.ui", "market_radar.collection_ui",
+                 "market_radar.shutdown_test", "market_radar.shutdown_test_ui",
+                 "market_radar.one_hour", "tools.packaged_smoke"]
 # Market Radar GUI also needs its pinned data contract and XNYS/timezone data.
 datas += [(str(project_root / "market_radar/providers/kiwoom_contract.json"), "market_radar/providers")]
 datas += collect_data_files("exchange_calendars") + collect_data_files("tzdata")
@@ -85,7 +87,8 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    uac_admin=True,
+    # Ordinary user launch: shutdown failures are reported, never auto-elevated.
+    uac_admin=False,
 )
 
 coll = COLLECT(

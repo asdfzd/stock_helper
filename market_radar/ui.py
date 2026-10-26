@@ -34,6 +34,7 @@ class RadarPanel(QWidget):
         super().__init__(parent)
         self.config = config
         self.one_hour = None
+        self.shutdown_test = None
         self._one_hour_preferences = None
         self.mutation_buttons = []
         base = config or CONFIG
@@ -239,6 +240,8 @@ class RadarPanel(QWidget):
         return self.controller if self.controller.thread is not None else None
 
     def submit(self, key, function, callback):
+        if self.shutdown_test and self.shutdown_test.active:
+            return
         if key not in self.jobs and not self.closed:
             self.jobs[key] = (self.executor.submit(function), callback)
 
@@ -264,6 +267,8 @@ class RadarPanel(QWidget):
         self.opening_hour_status.setToolTip(result.get("export_path") or result.get("error", "세션 종료 후 생성"))
 
     def start(self, provider=None, *, fresh_directory=None):
+        if self.shutdown_test and self.shutdown_test.active:
+            return
         if self.controller.busy or (self.one_hour and self.one_hour.active):
             return
         if self.one_hour_enable.isChecked() and provider is None:
@@ -319,6 +324,8 @@ class RadarPanel(QWidget):
         self.poll()
 
     def start_one_hour(self):
+        if self.shutdown_test and self.shutdown_test.active:
+            return
         if self.jobs:
             self.status.setText("기존 조회·저장 작업이 끝난 뒤 Start Collection을 눌러 주세요.")
             return
@@ -569,6 +576,8 @@ class RadarPanel(QWidget):
         # Current connection is sampled separately; persisted gauges remain unchanged.
 
     def poll(self):
+        if self.shutdown_test:
+            self.shutdown_test.render()
         worker = self.controller.worker
         if worker:
             try:
@@ -652,12 +661,19 @@ class RadarPanel(QWidget):
         if self.controller.state == "STOPPED" and self.controller.lifecycle.get("clean_shutdown"):
             self.shutdown_label.setText(f"Stopped cleanly · shutdown {display(self.controller.lifecycle.get('shutdown_elapsed_ms'))} ms (final CSV/첫 quality export까지)")
         self.render_one_hour(busy)
+        if self.shutdown_test and self.shutdown_test.active:
+            for widget in (self.start_button, self.replay_button, self.one_hour_enable,
+                           *self.mutation_buttons):
+                widget.setEnabled(False)
         self.collection_test.render(paper_view, busy=busy)
         if self._closing and not busy and not self.jobs:
             self._closing = False
             self.close()
 
     def closeEvent(self, event):
+        if self.shutdown_test and not self.shutdown_test.prepare_close():
+            event.ignore()
+            return
         self.stop(source='gui_close')
         self.settings.setValue("max_ws", self._one_hour_preferences[1] if self._one_hour_preferences else self.max_ws.value())
         self.settings.setValue("data_root", self.data_root.text())
@@ -672,6 +688,7 @@ class RadarPanel(QWidget):
             return
         self.timer.stop()
         self.closed = True
+        self.shutdown_test.dispose()
         self.executor.shutdown(wait=False)
         super().closeEvent(event)
 

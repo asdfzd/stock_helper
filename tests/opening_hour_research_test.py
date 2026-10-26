@@ -658,6 +658,9 @@ class IsolationTests(unittest.TestCase):
             self.assertIn("OFF",panel.opening_hour_status.text())
         finally:
             panel.close()
+            # close() deliberately leaves research IO asynchronous. Finish this
+            # test's initial history query before TemporaryDirectory removes DB.
+            panel.executor.shutdown(wait=True)
             app.processEvents()
 
 

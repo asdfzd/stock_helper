@@ -1,4 +1,4 @@
-"""Small view of the existing Dashboard. No collector, timer, DB or settings store."""
+"""Small view of the Dashboard, plus a separate explicit OS shutdown experiment."""
 from datetime import timedelta
 import json
 from pathlib import Path
@@ -106,6 +106,9 @@ class CollectionTestPanel(QWidget):
         grid.addWidget(self.no_shutdown, 2, 0, 1, 4)
         grid.addWidget(QLabel('실제 주문 OFF'), 2, 4, 1, 2)
         layout.addWidget(settings)
+        from .shutdown_test_ui import ShutdownTestBox
+        dashboard.shutdown_test = ShutdownTestBox(dashboard)
+        layout.addWidget(dashboard.shutdown_test)
         self.phase = self.label_group(layout, '실시간 수집 상태')
         self.paper_status = self.label_group(layout, 'Paper / Rotation')
         self.result = self.label_group(layout, '오류 · 결과')
@@ -178,6 +181,7 @@ class CollectionTestPanel(QWidget):
 
     def render(self, paper_view, *, busy):
         d, c = self.dashboard, self.dashboard.controller
+        d.shutdown_test.render()
         self.sync_settings()
         self.start.setEnabled(d.start_button.isEnabled())
         # A pre-start supervisor can be active while the Controller is STOPPED.

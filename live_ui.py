@@ -11,6 +11,10 @@ from datetime import datetime
 from enum import Enum
 from typing import Callable, TextIO
 
+if __name__ == "__main__" and "--offline-gui-smoke" in sys.argv:
+    from tools.packaged_smoke import run
+    raise SystemExit(run(sys.argv[1:]))
+
 try:
     import winsound
 except ImportError:  # pragma: no cover - Windows 실행본에서는 항상 제공된다.

@@ -31,7 +31,7 @@
 
 필요한 데이터가 없으면 지표는 NULL로 남깁니다. 누락 분을 거래량 0으로 채우지 않으며 VWAP는 현재 NULL입니다. EOD/D+1~D+3는 일봉 기반 provisional 또는 future pending 상태를 구분합니다.
 
-## 수집 테스트 화면 (v2.6.5)
+## 수집 테스트 화면 (v2.6.7)
 
 Market Radar를 열면 **수집 테스트** 탭이 먼저 표시됩니다. Live Radar, Session History, Candidate History, Paper Trading은 그대로이며 기존 세부 설정·Replay·Import·검증 도구는 **수집 상세 설정** 탭에 있습니다.
 
@@ -40,19 +40,28 @@ Market Radar를 열면 **수집 테스트** 탭이 먼저 표시됩니다. Live 
 3. 현재 단계·연결·WS·최근 snapshot/후보 집계·실제 수집 경과·UTC 예정 시각·남은 시간을 확인합니다. 값이 없으면 미확인입니다. Paper/Rotation 상태와 연구 실패, ZIP 보존 판정은 별도로 표시합니다.
 4. **수집 중지**는 예약/수집을 취소합니다. **PC 종료만 취소**는 수집과 후처리를 계속합니다. 결과 폴더/ZIP 폴더를 열거나 **진단 결과 확인**에서 기존 JSON의 오류·clock·stop caller를 읽습니다. 파일 읽기는 버튼을 누를 때만 실행하며 새 Paper DB 조회나 로그 시스템을 만들지 않습니다.
 
-첫 1시간은 개장 전 예약이 필요합니다. `late_launch`는 명시적으로 표시하며 일반 세션으로 자동 전환하지 않습니다. 일반 Regular Session의 조기 수동 종료는 FULL SESSION 성공이 아닙니다. ZIP 검증 표시는 보존 당시 기록이며 진단 버튼의 존재 확인과 재검증을 혼동하지 않습니다. 2026-10-23 v2.6.5 실장은 65분 예정 종료와 진단 ZIP 보존에 성공했지만 Paper 지연과 연구 품질 부족으로 연구는 FAILED입니다. v2.6.6은 Paper 상태 게시의 중복 조회를 줄이며 실장 지연 해결과 실제 PC 종료는 아직 검증되지 않았습니다. 기존 EXE에는 이번 소스 변경이 반영되지 않았습니다.
+첫 1시간은 개장 전 예약이 필요합니다. `late_launch`는 명시적으로 표시하며 일반 세션으로 자동 전환하지 않습니다. 일반 Regular Session의 조기 수동 종료는 FULL SESSION 성공이 아닙니다. ZIP 검증 표시는 보존 당시 기록이며 진단 버튼의 존재 확인과 재검증을 혼동하지 않습니다. 2026-10-23 v2.6.5 실장은 65분 예정 종료와 진단 ZIP 보존에 성공했지만 Paper 지연과 연구 품질 부족으로 연구는 FAILED입니다. v2.6.6의 Paper 게시 중복 조회 감소를 포함하며 실장 지연 해결과 실제 PC 종료는 아직 검증되지 않았습니다.
+
+**30초 강제 종료 테스트**는 수집과 별도의 실제 Windows 종료 시험입니다. Collector가 STOPPED이고 첫 1시간 예약·writer·조회/ZIP/검증 작업이 없을 때만 사용할 수 있습니다. 다른 Stock Helper/Collector 앱이 있으면 확인 후에도 차단하므로 먼저 사용자가 기존 작업을 정상 종료해야 합니다. 자동으로 수집을 중단하지 않습니다.
+
+1. 모든 앱의 작업을 저장한 뒤 버튼을 누릅니다. 경고창의 기본 선택은 **아니요**이며 취소하면 OS 명령은 없습니다.
+2. **예**를 누르면 Windows 시스템 디렉터리의 `shutdown.exe /s /f /t 30`을 요청합니다. OS 수락 후에만 예약 성공·예상 종료 시각·남은 초를 표시합니다. 남은 시간은 monotonic 기준이며 PC 시계 변경으로 늘어나지 않습니다. 0초 표시는 실제 전원 종료를 확인했다는 뜻이 아닙니다.
+3. 시간이 남아 있을 때 **종료 예약 취소**로 `/a`를 요청합니다. 성공/실패·OS 코드·원인 종류를 확인하세요. 취소 실패는 예약을 해제한 것으로 처리하지 않습니다.
+4. 창을 닫거나 정상 앱 종료 시 자신이 수락받은 예약을 취소합니다. 실패하면 경고합니다. 강제 프로세스 종료·충돌에서는 예약이 남을 수 있으므로 Windows에서 `shutdown.exe /a`로 직접 취소해야 할 수 있습니다. 결과 불명(timeout)이면 다른 예약을 잘못 취소하지 않도록 자동 `/a`를 하지 않으며 Windows 상태를 직접 확인한 뒤 앱을 다시 여세요.
+
+기존 **PC 자동 종료 없이 테스트** 기본 ON은 65분 수집용 설정입니다. 위 30초 버튼은 별도 확인을 요구하는 일회성 명령입니다. 단순 EXE 실행으로 수집이나 종료가 예약되지 않으며 90분 watchdog도 없습니다. `/f`는 미저장 작업을 잃게 할 수 있습니다. [Microsoft shutdown 명령](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/shutdown).
 
 ## Current Version
 
 | 구분 | 현재 값 |
 |---|---|
-| Market Radar 앱 버전 | **v2.6.6 소스 GUI** (Paper 게시 중복 조회 감소; 기존 EXE 미반영) |
+| Market Radar 앱 버전 | **v2.6.7 소스 / 별도 시험 EXE** (30초 종료 시험, v2.6.6 Paper 개선 포함) |
 | Session Validator | **1** (수집 품질 검증; 전략 판단 아님) |
 | Collector 연구 버전 | **v2.1** |
 | test_version | `kiwoom_radar_v2_1` |
 | Research schema | **4** |
 | Master schema | **1** |
-| Windows Quick Launch | **v1** (`.venv-paddle` 실행, EXE 패키징 없음) |
+| Windows Quick Launch | **v1** (`.venv-paddle` 소스 launcher; 새 EXE 바로가기와 별도) |
 | 독립 One Hour Research Runner | **v1.0.1 소스 / 테스트 EXE v1.0.1** (별도 TEST 폴더; 기존 v1.0.0 보존; manifest/summary 1, diagnostic 1, quality policy 2) |
 | 독립 NH read-only adapter | **v1.1** (`nhplug 0.4.1`; 잔고·매수가능수량 조회 PASS, RC 보류) |
 | Paper Trading / paper schema | **v1 / 2** (전략 규칙 유지, 기본 OFF, 실제 주문 disabled / not implemented) |
@@ -315,9 +324,9 @@ quality policy 2의 구독 확인/경계/미구독 분모와 전체 95%·종목�
 
 조건을 통과하면 시스템 경로의 `shutdown.exe /s /f /t 60`을 한 번 요청합니다. 예약 후에는 GUI **PC 종료만 취소** 또는 `shutdown.exe /a`로 취소할 수 있습니다. 강제 종료는 다른 앱도 닫으므로 이 옵션을 선택한 운영 PC에서는 미저장 작업을 남기지 않아야 합니다. OS 명령 대기는 10초로 제한하고 결과가 불확실하면 취소를 시도합니다. 취소 실패 시 예약이 남아 있을 수 있습니다. [Microsoft 명령 문서](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/shutdown).
 
-**배포 상태:** 소스 GUI는 v2.6.6이며 기존 launcher는 `.venv-paddle`에서 `live_ui.py`를 실행합니다. 이미 떠 있는 GUI에 자동 적용되지 않습니다. 실행 중인 수집기를 중단하거나 재시작하지 않았습니다. `dist/StockHelper/StockHelper.exe`는 재빌드하지 않았습니다. 다음 수집 전에 기존 작업 종료를 확인하고 사용자가 GUI를 정상적으로 닫은 뒤 launcher로 다시 열어 버전을 확인해야 적용됩니다. 10월 23일 v2.6.5의 65분 예정 종료·진단 ZIP VERIFIED는 원본으로 재확인했으며, v2.6.6의 실장 지연 개선과 실제 PC 자동 종료는 미검증입니다. PC 자동 종료 없이 테스트를 유지합니다. EXE 배포가 필요하면 별도 경로 재빌드·검증이 필요합니다.
+**배포 상태:** 소스와 새 시험 EXE는 v2.6.7입니다. 기존 launcher는 `.venv-paddle`에서 `live_ui.py`를 실행하는 소스 바로가기입니다. 기존 `dist/StockHelper/StockHelper.exe`와 바로가기는 보존하며 새 EXE와 구분합니다. 이미 떠 있는 GUI에는 자동 적용되지 않습니다. 실제 수집에는 **PC 자동 종료 없이 테스트**를 유지하며 실장 Paper 지연 개선과 실제 PC 종료는 여전히 미검증입니다.
 
-## 관리자 권한 Windows EXE 빌드
+## Windows 시험 EXE 빌드와 실행
 
 빌드 도구를 설치하고 PowerShell에서 빌드합니다.
 
@@ -326,13 +335,15 @@ quality policy 2의 구독 확인/경계/미구독 분모와 전체 95%·종목�
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build_windows.ps1
 ```
 
-결과물은 `dist\StockHelper\StockHelper.exe`입니다. EXE에는 관리자 권한 요청
-매니페스트가 포함되어 실행할 때 UAC 승인 창이 표시됩니다. `_internal`과
-`.paddle-cache`도 실행에 필요하므로 `dist\StockHelper` 폴더 전체를 함께
-이동해야 합니다.
+기본 결과물은 `dist\StockHelper_v2_6_7_TEST\StockHelper.exe`입니다. 기존 폴더가 있으면 덮어쓰지 않고 거부합니다. 다시 빌드할 때는 `-OutputName StockHelper_v2_6_7_TEST_2`처럼 새 이름을 지정하세요. `-PreflightOnly`로 `.venv-paddle`·필수 의존성·OCR 모델·여유 공간(최소 10GiB)을 먼저 검사할 수 있습니다. 기존 OCR 결과를 이동하거나 `.env`를 복사하지 않습니다.
 
-빌드할 때 프로젝트 루트의 `.env`가 있으면 EXE 옆으로 복사됩니다. 배포 폴더를
-다른 사람에게 전달할 때는 API 인증정보가 든 `.env`를 반드시 제거하십시오.
+`_internal`, `.paddle-cache/official_models`의 두 OCR 모델, `build_manifest.json`을 포함한 **폴더 전체**가 배포 단위입니다. EXE 하나만 옮기면 실행되지 않습니다. 관리자 승격을 강제하지 않는 `asInvoker` 매니페스트를 사용합니다. Windows 종료 권한이 없으면 OS 거절 코드를 표시합니다. 관리자 권한으로 실행한 HTS와의 캡처/전역 단축키 호환성은 같은 권한 수준에서 별도 확인이 필요합니다.
+
+Frozen runtime root는 EXE의 부모 폴더이며 기본 data/cache/Master DB와 `.env` 검색도 이 위치입니다. 이전에 저장된 Dashboard의 Data root 설정은 유지되므로 수집 전 화면에서 실제 경로를 확인하세요. API 수집이 필요하면 사용자가 자신의 `.env`를 EXE 옆에 별도로 구성합니다. Kiwoom 인증은 이 .env 파일을 직접 읽습니다. 빌드와 smoke는 실제 인증파일을 복사하지 않습니다. `.env.example`은 항목 안내이며 실제 자격증명은 넣지 않습니다. 다른 사람에게는 인증파일·운영 data·로그를 제외한 깨끗한 배포 폴더만 전달하세요.
+
+바탕화면의 **Market Radar EXE 테스트**는 새 EXE를 직접 가리킵니다. Stock Helper에서 **Market Radar**를 누르고 제목의 **v2.6.7**과 수집 테스트의 새 버튼을 확인하세요. EXE 실행만으로 수집이나 PC 종료가 시작되지는 않습니다.
+
+오프라인 패키지 검사는 `StockHelper.exe --offline-gui-smoke <새 빈 경로> [--ocr]`로 수행합니다. 이 명시적 진단 모드는 runtime/QSettings/출력을 격리하고 capture·가격/시세 서비스를 시작하지 않으며 모든 자식 프로세스·네트워크를 차단합니다. 실제 GUI·버전·버튼·기본값을 확인해 JSON과 화면 PNG를 남깁니다. `--ocr`는 배포 모델을 scratch로 복사해 OCR 초기화도 확인합니다. 실제 HTS 캡처·API 연결·PC 종료 검증과 구분합니다.
 
 콘솔 기반 live capture 진단:
 

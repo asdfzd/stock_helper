@@ -10,7 +10,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
-from PySide6.QtCore import QSettings, QPoint
+from PySide6.QtCore import QSettings, QPoint, QEvent
 from PySide6.QtWidgets import QApplication
 from market_radar.config import CONFIG
 from market_radar.collection_ui import read_diagnostics
@@ -48,6 +48,10 @@ class CollectionViewTests(unittest.TestCase):
         self.panel.one_hour = None
         self.drain()
         self.panel.close()
+        self.panel.executor.shutdown(wait=True)
+        self.settings.sync()
+        self.panel.deleteLater()
+        self.app.sendPostedEvents(None, QEvent.DeferredDelete)
         self.app.processEvents()
         self.temp.cleanup()
 

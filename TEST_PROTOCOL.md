@@ -1,6 +1,6 @@
 # Capacity Test Protocol v1
 
-적용: **Market Radar v2.6.1 / Opening Hour Research v1.1 / opening hour schema 1 / Paper v1 / paper schema 2 / Rotation v2 / rotation extension schema 1 / Validator 1 / Collector v2.1 / kiwoom_radar_v2_1 / research schema 4 / Master schema 1**. Dashboard에서 선택하며 기존 CLI `--collect`는 Manual이다. Capacity 조건은 변경하지 않았으며 Paper v1·Rotation v2·Opening Hour 자동 분석은 모두 강제 OFF다.
+적용: **Market Radar v2.6.7 / Opening Hour Research v1.1 / opening hour schema 1 / Paper v1 / paper schema 2 / Rotation v2 / rotation extension schema 1 / Validator 1 / Collector v2.1 / kiwoom_radar_v2_1 / research schema 4 / Master schema 1**. Dashboard에서 선택하며 기존 CLI `--collect`는 Manual이다. Capacity 조건은 변경하지 않았으며 Paper v1·Rotation v2·Opening Hour 자동 분석은 모두 강제 OFF다.
 
 | 항목 | 고정 기준 |
 |---|---|
@@ -41,6 +41,12 @@
 - 한 번 arm은 **한 거래일**이다. 다음 거래일은 다시 arm한다. 주간 자동 반복·Windows 깨우기·부팅 자동 실행·D+n 자동 스케줄은 포함하지 않는다.
 
 참고: [README](README.md), [기술 상세](market_radar/README.md), [HANDOFF](CODEX_HANDOFF.md), [CHANGELOG](CHANGELOG.md).
+
+## 30초 Windows 종료 시험의 오프라인 경계 (v2.6.7)
+
+이 버튼은 수집/전략 검증과 분리된 운영 시험이다. 자동화에서는 실제 `shutdown.exe` 요청과 취소를 모두 차단하고 `tests.shutdown_test`의 주입 execute/guard를 사용한다. 생성·일반 GUI 시작·확인창 취소의 OS 호출 0회, 확인 후 정확한 `/s /f /t 30`, 성공/거절/timeout·소유권, monotonic 30→0, `/a` 성공/실패/예약 없음, 중복 클릭·다른 예약·창 닫기·앱 종료, STOPPED/예약/writer/ZIP/검증 gate와 기존 Controller 무변경을 검사한다. 기존 65분·clock·전원·Paper/Rotation/Opening/ZIP 전체 회귀도 유지한다.
+
+패키지 smoke는 새 EXE의 `--offline-gui-smoke <새 경로> --ocr`로 runtime·QSettings·모델·출력을 격리하고 네트워크/자식 프로세스를 차단한다. GUI와 OCR 초기화 PASS는 실제 API 수집·HTS 캡처·Windows 전원 종료 PASS가 아니다. 실제 30초 종료 버튼을 누르는 시험은 사용자가 저장 작업과 수집 종료를 확인한 뒤 직접 수행하며, Codex 자동화에서 실제 Windows 종료/예약/취소 명령을 실행하지 않는다.
 
 ## Automatic Session Validator 1
 
