@@ -40,12 +40,21 @@ class DashboardGuard(InstanceGuard):
                     continue
                 try:
                     name = process.name().lower()
+                    if name == 'marketradarfamily.exe':
+                        args = process.cmdline()
+                        if '--watchdog-run' in args or '--watchdog-cancel' in args or '--scheduler-probe' in args:
+                            continue
+                        raise RunBlocked("other_collection_application")
                     if name in {"stockhelper.exe", "stock_helper.exe", "onehourresearch.exe"}:
                         raise RunBlocked("other_collection_application")
                     if name.startswith(("python", "pyw")):
                         args = [str(a).lower().replace("\\", "/") for a in process.cmdline()]
-                        if any(a.endswith(("/live_ui.py", "/main.py", "/launch_stock_helper.py"))
-                               or a in {"live_ui.py", "main.py", "market_radar", "market_radar.__main__", "tools.one_hour_runner"}
+                        family_entry = any(a.endswith('/family_collect.py') or
+                                           a in {'family_collect.py', 'tools.family_collect'} for a in args)
+                        if family_entry and ('--watchdog-run' in args or '--watchdog-cancel' in args or '--scheduler-probe' in args):
+                            continue
+                        if any(a.endswith(("/live_ui.py", "/main.py", "/launch_stock_helper.py", "/family_collect.py"))
+                               or a in {"live_ui.py", "main.py", "family_collect.py", "tools.family_collect", "market_radar", "market_radar.__main__", "tools.one_hour_runner"}
                                or a.startswith("tools.kiwoom_provider.") for a in args):
                             raise RunBlocked("other_collection_application")
                 except psutil.NoSuchProcess:

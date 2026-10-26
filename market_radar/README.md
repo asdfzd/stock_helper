@@ -1,8 +1,24 @@
-# Market Radar v2.6.7 — Opening Hour Research v1.1 / Paper v1 + Rotation v2
+# Market Radar v2.6.8 — Opening Hour Research v1.1 / Paper v1 + Rotation v2
 
 v2.6.5는 첫 1시간 연구 판정과 안전한 데이터 보존 후 운영 종료를 분리합니다. `one_hour.py`가 기존 Controller 하나를 감독하며 독립 EXE를 실행하지 않습니다. v2.6.1의 수집기·전략·저장 엔진·Regular/Capacity 스케줄·Validator와 모든 schema는 유지합니다. 새 옵션이 OFF면 기존 GUI 실행 경로입니다. [사용·시각·저장·배포 안내](../README.md#첫-1시간-수집--zip-검증--pc-자동-종료-gui-통합-v4)를 참고하세요.
 
-현재 **Market Radar v2.6.7 / Opening Hour Research v1.1 / opening hour schema=1 / Paper Trading v1 / paper schema=2 / Rotation v2 / rotation extension schema=1 / Validator 1 / Collector v2.1 / test_version=kiwoom_radar_v2_1 / research schema=4 / master schema=1**의 기술 문서다. 프로그램 소개·설치는 [루트 README](../README.md), 현재 작업 상태는 [CODEX_HANDOFF](../CODEX_HANDOFF.md), 버전별 검증 이력은 [CHANGELOG](../CHANGELOG.md)를 따른다. Kiwoom 수집기에는 주문/계좌 기능이 없고, 별도 NH read-only probe만 계좌목록·잔고·매수가능수량을 조회한다. 실제 주문/자동매매 기능은 없다.
+현재 **Market Radar v2.6.8 / Opening Hour Research v1.1 / opening hour schema=1 / Paper Trading v1 / paper schema=2 / Rotation v2 / rotation extension schema=1 / Validator 1 / Collector v2.1 / test_version=kiwoom_radar_v2_1 / research schema=4 / master schema=1**의 기술 문서다. 프로그램 소개·설치는 [루트 README](../README.md), 현재 작업 상태는 [CODEX_HANDOFF](../CODEX_HANDOFF.md), 버전별 검증 이력은 [CHANGELOG](../CHANGELOG.md)를 따른다. Kiwoom 수집기에는 주문/계좌 기능이 없고, 별도 NH read-only probe만 계좌목록·잔고·매수가능수량을 조회한다. 실제 주문/자동매매 기능은 없다.
+
+## 가족용 진입점과 독립 watchdog (v2.6.8)
+
+`tools/family_collect.py`는 `--family`에서만 자동 예약합니다. `family_config`가 다른 앱 모듈 import 전에 해당 프로세스의 APP_ROOT를 명시적 프로젝트 root로 바인딩합니다. 기존 OCR/Stock Helper 실행과 전역 설정은 바꾸지 않습니다. KiwoomRest의 기존 `dotenv_values(APP_ROOT / ".env")` 및 같은 collector lock을 재사용하고, 실제 키/토큰은 파일·manifest에 기록하지 않습니다. cache는 SQLite 연결/복사 없이 header·r+b 열기, data는 임시 probe/fsync, 여유 공간5GiB를 사전 확인합니다. 이는 credential 존재/경로 검사이며 실제 OAuth 검증이 아닙니다.
+
+`FamilyWindow`는 사진 한 화면에 버전·미국장 날짜·현지 예정시간·연결/WS/snapshot·Paper/Rotation·오류·정상 종료·독립 감시 상태를 표시합니다. 전체 RadarPanel은 같은 controller를 사용하며 가족용 인스턴스의 수동 재시작은 차단합니다. `FamilyRunner(DashboardOneHour)`는 예약 성공 후에만 task를 등록합니다. 기존 엔진·전략·2초/FIFO·SQL/commit·65분과 개장+70분 검증을 변경하지 않습니다. 종료 명령 이전의 watchdog 삭제 실패는 정상 제출을 차단합니다. 정상 요청 수락 기록도 실제 전원 종료 증거는 아닙니다.
+
+`watchdog_task.ps1`은 COM `Schedule.Service`의 TASK_CREATE(2)로만 등록하고 exact name을 조회합니다. XML에서 생략된 기본값은 실제 COM 속성으로 보완해 검증합니다. task의 owner nonce·run_id·날짜·command/arguments·단일 TimeTrigger·Start/EndBoundary·일반 권한·missed-start OFF를 확인하고 소유 작업만 삭제합니다. UTC offset을 포함한 기한은 PC 시간대 표기와 독립입니다. [Microsoft StartBoundary](https://learn.microsoft.com/en-us/windows/win32/taskschd/trigger-startboundary), [StartWhenAvailable](https://learn.microsoft.com/en-us/windows/win32/taskschd/tasksettings-startwhenavailable), [TimeTrigger](https://learn.microsoft.com/en-us/windows/win32/taskschd/timetrigger).
+
+상태 파일은 archive 밖의 독립 journal이며 fsync+atomic replace, 프로세스 간 파일 lease로 정상 종료·취소·비상 제출을 직렬화합니다. 취소를 먼저 저장하고 작업 삭제를 확인하므로 삭제 실패 때도 취소된 작업은 발동하지 않습니다. 비상 요청이 이미 OS에 제출된 뒤에는 소급 취소 성공을 주장하지 않습니다. GUI가 멈춰도 독립 취소 executor/CLI를 사용할 수 있습니다. 정상 완료는 해제 → 기존 WindowsShutdown 요청 → 수락 기록 순서입니다. 해제 후 OS 요청 자체 실패 구간은 화면/진단에 남고 독립 예약이 이미 없어 자동 재등록하지 않습니다.
+
+작업이 실행한 동일 EXE의 `--watchdog-run` 경로에는 Qt/Collector/OCR import가 없습니다. 날짜/90분 기한/5분 만료·현재 부팅 식별자·GetTickCount64 기한·nonce·실제 task identity를 재검사합니다. 이 PC에서 확인한 Windows PrefetchParameters BootId를 부팅 식별자로 사용하고 읽기 불가 시 차단합니다. missed-start OFF와 별개로 부팅 변경을 거부합니다. 강제 종료 직전에도 시간/부팅 gate를 다시 검사합니다. 기존 연구/DB/ZIP을 수정하지 않고 별도 `INCOMPLETE / EMERGENCY_FORCED` 기록을 남깁니다. 기존 VERIFIED는 ZIP 존재와 함께 과거 기록으로만 표시하며 재검증을 가장하지 않습니다.
+
+`emergency_shutdown: false` 또는 `--dry-run`은 작업 action에도 `--watchdog-dry-run`을 고정하므로 상태 파일만 바꿔 실제 제출을 활성화할 수 없습니다. 최종 실제 비상 명령은 검증한 시스템 `shutdown.exe /s /f /t 0`이며 자동 테스트에서는 호출하지 않습니다. sleep inhibition은 기존 supervisor가 담당하고 task의 WakeToRun은 OFF입니다. OS 자체 중단·로그아웃·디스크/Task Scheduler 장애·전원 차단 시 실행/기록은 보장하지 않습니다.
+
+`MarketRadarFamily.spec` / `build_family_windows.ps1`은 새 onedir만 만듭니다. PySide6/Radar/calendar/contract/timezone/task 스크립트를 포함하고 Paddle/OCR/GPU·NH는 제외합니다. 기존 전체 Stock Helper 배포를 보존하기 위한 B안이며 수집 엔진을 복제하지 않습니다. 수집 전용 EXE와 `_internal` 전체가 배포 단위입니다. family config와 watchdog은 운영 schema1이며 research4/Paper2/Opening1/Rotation extension1/archive2/Master1은 불변입니다.
 
 ## v2.6.7 명시적 30초 종료 시험과 패키징
 
@@ -44,7 +60,7 @@ NH 어댑터 v1.1은 `execution/nhplug_client.py`와 `execution/nhplug_accounts.
 
 일반 Regular Session은 기존 session lifecycle·validation·Opening 파일을 사용하고 위 supervisor runtime/collection 및 Paper telemetry는 기본 활성화하지 않습니다. GUI 진단 버튼은 기존 allowlist JSON을 각각 최대 2MB까지 background executor에서 읽고 민감 문자열을 정제합니다. 없거나 깨진 파일은 NOT_CREATED/UNAVAILABLE로 표시합니다. ZIP은 존재만 확인하고 내용 재검증은 기존 보존 경로가 담당합니다. 이 UI는 새로운 진단 파일을 쓰지 않습니다.
 
-강제 종료·정전은 마지막으로 성공한 파일 교체까지만 남을 수 있고 telemetry의 최근 5초는 유실될 수 있습니다. 디스크 부족/쓰기 실패 시 파일을 보장할 수 없으며 메모리의 sticky 오류는 프로세스가 죽으면 소실됩니다. 보존 확인이 안 되면 종료를 차단하고 supervisor/GUI hang/crash 뒤 예정 종료를 보장하는 독립 watchdog은 없습니다. 전원 설정을 영구 변경하지 않으며 수동 전원 차단을 막는 기능도 아닙니다. 진단·DB·cache·실제 로그·ZIP은 Git에 포함하지 않습니다.
+강제 종료·정전은 마지막으로 성공한 파일 교체까지만 남을 수 있고 telemetry의 최근 5초는 유실될 수 있습니다. 디스크 부족/쓰기 실패 시 파일을 보장할 수 없으며 메모리의 sticky 오류는 프로세스가 죽으면 소실됩니다. 보존 확인이 안 되면 종료를 차단하고 supervisor/GUI hang/crash 뒤 예정 종료를 보장하는 일반 GUI에는 독립 watchdog이 없습니다. 가족용 명시적 진입점의 감시는 위 별도 경계를 따릅니다. 전원 설정을 영구 변경하지 않으며 수동 전원 차단을 막는 기능도 아닙니다. 진단·DB·cache·실제 로그·ZIP은 Git에 포함하지 않습니다.
 
 ## Paper Trading v1 — experimental shadow test
 

@@ -15,6 +15,26 @@
 - 거래정지 모니터
 - Kiwoom Market Radar를 통한 시장 후보 발견·연구 데이터 수집
 
+## 가족용 원클릭 자동 수집 (v2.6.8)
+
+바탕화면 **Market Radar 자동 수집**은 별도 경량 `MarketRadarFamily.exe --family --config <family_config.json>`를 실행합니다. 기존 Stock Helper와 30초 종료 시험 바로가기는 유지합니다. 새 EXE를 인수 없이 실행하면 수동 Market Radar 화면이며 자동 예약하지 않습니다. OCR/GPU는 가족용 패키지에 포함하지 않습니다. 기존 Collector 하나와 DashboardOneHour의 수집·보존·종료 경로를 사용합니다.
+
+이번 검증·바로가기 대상은 `dist/MarketRadarFamily_v2_6_8_FINAL/MarketRadarFamily.exe`입니다. `_internal`, manifest, family_config.json을 포함한 폴더 전체(약181MB)를 유지하세요. 중간 빌드 `MarketRadarFamily_v2_6_8`, `MarketRadarFamily_v2_6_8_RELEASE` 폴더는 최종 배포 대상이 아닙니다.
+
+- 매 거래일 개장 전에 한 번 실행합니다. 첫65분 / WS150 / Paper v1 / Rotation v2 / Opening ON / 실제 주문 OFF로 자동 예약합니다. `ARMED`는 수집 예약이며 인증 성공 표시가 아닙니다. 준비 단계의 Kiwoom 연결 상태를 따로 확인합니다. 휴장·개장 이후·중복 실행·경로/인증 오류는 거부하며 다음 거래일로 자동 반복하지 않습니다.
+- 배포 설정 `family_config.json`은 비밀값 없이 `project_root`, `data_root`, `cache`, `normal_shutdown`, `emergency_shutdown`, `expected_windows_timezone`을 명시합니다. 이 PC는 프로젝트 `.env`, `data`, `data/market_radar_cache/kiwoom_v2.db`를 직접 재사용합니다. 실제 자격증명·5GB 이상 캐시는 EXE로 복사하지 않습니다. 환경변수만으로 Kiwoom 인증을 대체하지 않습니다.
+- 가족용 배포의 정상 종료는 허용합니다(`normal_shutdown: true`). 65분 종료와 writer 정리·DB/ZIP 보존 검증 및 기존 UTC/monotonic 개장+70분 gate를 통과한 최초 시점에 기존 Windows 60초 종료 요청을 보냅니다. 연구 FAILED와 보존 VERIFIED는 별개이며 기존 eligibility를 유지합니다.
+- **독립 90분 비상 종료는 기본 dry-run**입니다(`emergency_shutdown: false`). 첫 실제 수집을 전원 종료 없이 감독하려면 실행 인수에 `--dry-run`을 추가하면 두 종료 경로 모두 꺼집니다. 이는 API 수집까지 가상으로 바꾸는 옵션이 아닙니다. 실제 종료는 모든 앱의 작업을 저장한 뒤에만 사용합니다.
+- 실제 비상 종료를 사용하려면 먼저 감독하에 수집·후처리·취소를 확인한 뒤 사용자가 설정의 `emergency_shutdown`을 `true`로 명시적으로 바꾸고 다음 실행에서 적용합니다. 실행 중인 DB writer/ZIP과 저장 전 작업을 손상시킬 수 있습니다. Codex 작업 중 실제 Windows 종료는 실행하지 않았습니다.
+
+독립 Windows 작업은 공식 XNYS 개장+90분에 실행합니다. 2026-10-27~30은 22:30 KST 개장 → 다음 날00:00 기준이며 DST 종료 후에는 달력으로 계산합니다. 작업 이름은 `MarketRadarFamily_<ET YYYYMMDD>_<collector run_id>`이고 일반 GUI에서는 생성하지 않습니다. 1회 TimeTrigger, UTC offset, 종료 후5분 만료, missed-start OFF, 반복/부팅·로그온 trigger 없음, 현재 로그인 사용자·일반 권한입니다. Windows 자체 중단·정전·로그아웃에서는 실행을 보장하지 않습니다.
+
+화면의 **PC 종료만 취소**는 수집을 계속하며 해당 watchdog도 취소합니다. **무인 모드 / 수집 중지**는 수집과 해당 예약을 취소합니다. 취소 실패/상태 불명은 화면에 남습니다. GUI가 응답하지 않으면 같은 EXE로 `--watchdog-cancel "<watchdog.json 전체 경로>"`를 실행할 수 있습니다. 해당 날짜·run_id 작업만 확인·삭제하며 다른 작업을 일괄 삭제하지 않습니다.
+
+새 결과는 `data/market_radar_family/<ET-date>/attempt_<id>/run_<id>/`, watchdog 상태는 같은 attempt의 `watchdogs/<collector run_id>/watchdog.json`에 있습니다. 최초 오류와 연구/보존 결과는 기존 diagnostics와 ZIP에 보존하고 비상 기록은 별도 상태 파일에 남깁니다. 비상 실행이 정상 ZIP/VERIFIED를 만들어 주지는 않습니다. 상태 기록 실패 시 실제 종료 제출을 차단하므로 디스크/OS 자체 장애까지 보장하는 하드웨어 감시는 아닙니다.
+
+Windows 시간대와 짧은 UTC/monotonic 일관성을 검사하며 절대 UTC/NTP 정확성까지 인증하지 않습니다. 부팅 식별자 읽기 실패·등록 실패는 안전 실패합니다. 실제 Task Scheduler dry-run 통과, 실제 미국장 자동 수집·자동 정상/90분 강제 종료는 미검증입니다. 이전 30초 실제 종료 성공은 사용자 보고이며 전체 경로의 검증을 대체하지 않습니다. [운영·테스트 기준](TEST_PROTOCOL.md), [기술 상세](market_radar/README.md#가족용-진입점과-독립-watchdog-v268)를 참고하세요.
+
 ## Market Radar
 
 시장 전체에서 수집한 후보 중 사용자가 살펴볼 종목을 찾는 연구·모니터링 기능입니다. **자동 매수/매도 시스템이 아닙니다.** 실제 표는 유효한 실시간 가격을 확보한 구독 후보 부분집합을 재정렬하며, 시장 전체를 빠짐없이 추적하는 통합 순위는 아닙니다.
@@ -55,7 +75,8 @@ Market Radar를 열면 **수집 테스트** 탭이 먼저 표시됩니다. Live 
 
 | 구분 | 현재 값 |
 |---|---|
-| Market Radar 앱 버전 | **v2.6.7 소스 / 별도 시험 EXE** (30초 종료 시험, v2.6.6 Paper 개선 포함) |
+| Market Radar 앱 버전 | **v2.6.8 소스 / 가족용 경량 EXE** (기존 Stock Helper 시험 EXE v2.6.7 보존) |
+| 가족용 설정 / 독립 watchdog schema | **1 / 1** (운영 설정·감시 상태, 연구 DB schema와 별도) |
 | Session Validator | **1** (수집 품질 검증; 전략 판단 아님) |
 | Collector 연구 버전 | **v2.1** |
 | test_version | `kiwoom_radar_v2_1` |
@@ -324,7 +345,7 @@ quality policy 2의 구독 확인/경계/미구독 분모와 전체 95%·종목�
 
 조건을 통과하면 시스템 경로의 `shutdown.exe /s /f /t 60`을 한 번 요청합니다. 예약 후에는 GUI **PC 종료만 취소** 또는 `shutdown.exe /a`로 취소할 수 있습니다. 강제 종료는 다른 앱도 닫으므로 이 옵션을 선택한 운영 PC에서는 미저장 작업을 남기지 않아야 합니다. OS 명령 대기는 10초로 제한하고 결과가 불확실하면 취소를 시도합니다. 취소 실패 시 예약이 남아 있을 수 있습니다. [Microsoft 명령 문서](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/shutdown).
 
-**배포 상태:** 소스와 새 시험 EXE는 v2.6.7입니다. 기존 launcher는 `.venv-paddle`에서 `live_ui.py`를 실행하는 소스 바로가기입니다. 기존 `dist/StockHelper/StockHelper.exe`와 바로가기는 보존하며 새 EXE와 구분합니다. 이미 떠 있는 GUI에는 자동 적용되지 않습니다. 실제 수집에는 **PC 자동 종료 없이 테스트**를 유지하며 실장 Paper 지연 개선과 실제 PC 종료는 여전히 미검증입니다.
+**배포 상태:** 소스와 가족용 경량 EXE는 v2.6.8이며 기존 전체 Stock Helper 시험 EXE v2.6.7과 옛 EXE는 보존합니다. 기존 launcher는 `.venv-paddle`에서 `live_ui.py`를 실행하는 소스 바로가기입니다. 이미 떠 있는 GUI에는 변경이 자동 적용되지 않습니다. 새 가족용 운영의 첫 실제 수집은 위 `--dry-run` 절차로 감독하세요. 실장 Paper 지연 개선과 자동 종료 전체 경로는 미검증입니다. 30초 실제 종료 성공은 사용자 보고입니다.
 
 ## Windows 시험 EXE 빌드와 실행
 
@@ -335,13 +356,13 @@ quality policy 2의 구독 확인/경계/미구독 분모와 전체 95%·종목�
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build_windows.ps1
 ```
 
-기본 결과물은 `dist\StockHelper_v2_6_7_TEST\StockHelper.exe`입니다. 기존 폴더가 있으면 덮어쓰지 않고 거부합니다. 다시 빌드할 때는 `-OutputName StockHelper_v2_6_7_TEST_2`처럼 새 이름을 지정하세요. `-PreflightOnly`로 `.venv-paddle`·필수 의존성·OCR 모델·여유 공간(최소 10GiB)을 먼저 검사할 수 있습니다. 기존 OCR 결과를 이동하거나 `.env`를 복사하지 않습니다.
+이 전체 OCR 빌더의 기본 결과는 현재 소스 버전을 따른 `dist\StockHelper_v2_6_8_TEST\StockHelper.exe`입니다(이번에는 전체 OCR 패키지를 다시 빌드하지 않음). 이미 배포된 v2.6.7 폴더는 보존합니다. 기존 폴더가 있으면 덮어쓰지 않고 거부하며 `-OutputName StockHelper_v2_6_8_TEST_2`처럼 새 이름을 지정할 수 있습니다. `-PreflightOnly`로 의존성·OCR 모델·여유 공간(최소10GiB)을 검사합니다. 가족용은 `build_family_windows.ps1`로 별도 `dist\MarketRadarFamily_v2_6_8\MarketRadarFamily.exe`를 빌드하며 OCR/GPU를 포함하지 않습니다.
 
 `_internal`, `.paddle-cache/official_models`의 두 OCR 모델, `build_manifest.json`을 포함한 **폴더 전체**가 배포 단위입니다. EXE 하나만 옮기면 실행되지 않습니다. 관리자 승격을 강제하지 않는 `asInvoker` 매니페스트를 사용합니다. Windows 종료 권한이 없으면 OS 거절 코드를 표시합니다. 관리자 권한으로 실행한 HTS와의 캡처/전역 단축키 호환성은 같은 권한 수준에서 별도 확인이 필요합니다.
 
 Frozen runtime root는 EXE의 부모 폴더이며 기본 data/cache/Master DB와 `.env` 검색도 이 위치입니다. 이전에 저장된 Dashboard의 Data root 설정은 유지되므로 수집 전 화면에서 실제 경로를 확인하세요. API 수집이 필요하면 사용자가 자신의 `.env`를 EXE 옆에 별도로 구성합니다. Kiwoom 인증은 이 .env 파일을 직접 읽습니다. 빌드와 smoke는 실제 인증파일을 복사하지 않습니다. `.env.example`은 항목 안내이며 실제 자격증명은 넣지 않습니다. 다른 사람에게는 인증파일·운영 data·로그를 제외한 깨끗한 배포 폴더만 전달하세요.
 
-바탕화면의 **Market Radar EXE 테스트**는 새 EXE를 직접 가리킵니다. Stock Helper에서 **Market Radar**를 누르고 제목의 **v2.6.7**과 수집 테스트의 새 버튼을 확인하세요. EXE 실행만으로 수집이나 PC 종료가 시작되지는 않습니다.
+기존 바탕화면 **Market Radar EXE 테스트**는 보존된 전체 v2.6.7 EXE를 가리킵니다. Stock Helper에서 **Market Radar**를 누르면 수집 테스트의 30초 버튼이 있습니다. 이 기존 EXE 실행만으로 수집이나 PC 종료가 시작되지는 않습니다. 새 **Market Radar 자동 수집** 바로가기와 구분하세요.
 
 오프라인 패키지 검사는 `StockHelper.exe --offline-gui-smoke <새 빈 경로> [--ocr]`로 수행합니다. 이 명시적 진단 모드는 runtime/QSettings/출력을 격리하고 capture·가격/시세 서비스를 시작하지 않으며 모든 자식 프로세스·네트워크를 차단합니다. 실제 GUI·버전·버튼·기본값을 확인해 JSON과 화면 PNG를 남깁니다. `--ocr`는 배포 모델을 scratch로 복사해 OCR 초기화도 확인합니다. 실제 HTS 캡처·API 연결·PC 종료 검증과 구분합니다.
 
