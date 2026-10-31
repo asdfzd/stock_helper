@@ -116,10 +116,12 @@ def run(output, *, case='default'):
             emergency_shutdown=checked.emergency_shutdown)
         return replace(config, normal_shutdown=checked.normal_shutdown,
             emergency_shutdown=checked.emergency_shutdown)
-    real_create, real_error = entry.create_window, entry.startup_error
+    real_create, real_error, real_startup_audit = entry.create_window, entry.startup_error, entry.record_startup_failure
     def create(family, cfg):
         if family:
-            window = FamilyWindow(cfg, runner_factory=factory)
+            from market_radar.audit_runtime import AuditSession
+            window = FamilyWindow(cfg, runner_factory=factory, audit_factory=lambda root, **kw:
+                AuditSession(root, now=clock.now, scheduler=MemoryScheduler(), **kw))
         else:
             window = real_create(False, cfg)
         captured.update(window=window, family=family)
@@ -131,12 +133,16 @@ def run(output, *, case='default'):
         'manual': ['--manual'], 'dry-run': ['--family', '--config', str(config_path), '--dry-run'],
         'missing-config': ['--family', '--config', str(runtime/'missing.json')],
         'invalid-config': ['--family', '--config', str(runtime/'broken.json')]}.get(case)
-    if case in {'watchdog-run', 'watchdog-cancel', 'scheduler-probe'}:
+    if case in {'watchdog-run', 'watchdog-cancel', 'scheduler-probe', 'audit-run'}:
         from datetime import timedelta
         from market_radar.watchdog import stamp
         import uuid
         with patch.object(entry, 'create_window', side_effect=AssertionError('helper opened GUI')):
-            if case == 'scheduler-probe':
+            if case == 'audit-run':
+                rc = entry.main(['--audit-run',str(output/'missing/task.json'),'--audit-nonce',uuid.uuid4().hex])
+                assert rc == 2
+                rc = 0  # Expected safe rejection, no config/GUI/power fallback.
+            elif case == 'scheduler-probe':
                 nonce = uuid.uuid4().hex
                 probe = output / ('probe_' + nonce + '.json')
                 rc = entry.main(['--scheduler-probe', str(probe), '--probe-nonce', nonce])
@@ -219,6 +225,13 @@ def run(output, *, case='default'):
                 return
             window.close()
             if family:
+                window.runner.audit.flush(2)
+                audit_result = json.loads((window.root/'audit/postrun_audit.json').read_text(encoding='utf-8'))
+                assert audit_result['upload_status'] == audit_result['ai_status'] == 'DISABLED'
+                assert (window.root/'audit/postrun_audit.txt').is_file()
+                results['postrun_audit'] = dict(severity=audit_result['severity'],
+                    upload_status=audit_result['upload_status'], ai_status=audit_result['ai_status'],
+                    independent_task=window.runner.audit.state['audit_task_status'])
                 window.dashboard.executor.shutdown(wait=True)
                 results['watchdog_after_cancel'] = window.runner.watchdog.view['status'] if window.runner and window.runner.watchdog else None
             elif not captured.get('error'):
@@ -231,7 +244,9 @@ def run(output, *, case='default'):
     QTimer.singleShot(2500, inspect)
     with patch.object(FamilyConfig, 'load', side_effect=isolated_load), \
             patch.object(entry, 'create_window', side_effect=create), \
-            patch.object(entry, 'startup_error', side_effect=startup_error):
+            patch.object(entry, 'startup_error', side_effect=startup_error), \
+            patch.object(entry, 'record_startup_failure', side_effect=lambda reason:
+                real_startup_audit(reason, root=runtime/'startup_audit')):
         entry.main(argv)
     return 0 if results['status'] == 'PASS' else 1
 
@@ -249,7 +264,7 @@ def manifest(destination):
         source_sha256={p: digest(root/p) for p in sorted(set(paths)) if p.endswith(('.py', '.ps1', '.spec')) and (root/p).is_file() and not p.startswith(('tests/', 'build/', 'dist/'))},
         exe_sha256=digest(destination / 'MarketRadarFamily.exe'), distribution='collector-only-onedir',
         credentials_bundled=False, ocr_bundled=False, emergency_shutdown_default=False,
-        schema=dict(research=4, paper=2, opening=1, archive=2, master=1, rotation_extension=1, family_config=1, watchdog=1))
+        schema=dict(research=4, paper=2, opening=1, archive=2, master=1, rotation_extension=1, family_config=1, watchdog=1, postrun_audit=1))
     (destination / 'build_manifest.json').write_text(json.dumps(result, indent=2), encoding='utf-8')
 
 

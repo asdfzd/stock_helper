@@ -13,6 +13,8 @@ from .config import CONFIG
 from .family_mode import FamilyRunner
 from .models import ET, instant, utc
 from .ui import RadarPanel
+from .audit_runtime import AuditSession
+from .family_mode import executable_command
 
 
 class FamilyDashboard(RadarPanel):
@@ -30,7 +32,7 @@ class FamilyDashboard(RadarPanel):
 
 
 class FamilyWindow(QWidget):
-    def __init__(self, config, *, runner_factory=FamilyRunner):
+    def __init__(self, config, *, runner_factory=FamilyRunner, audit_factory=AuditSession):
         super().__init__()
         self.config = config
         self.runner_factory = runner_factory
@@ -42,6 +44,10 @@ class FamilyWindow(QWidget):
         day = datetime.now(timezone.utc).astimezone(ET).date().isoformat()
         self.root = config.data_root / 'market_radar_family' / day / ('attempt_' + uuid.uuid4().hex)
         self.root.mkdir(parents=True, exist_ok=False)
+        try:
+            self.audit = audit_factory(self.root, command=executable_command(), recover_base=config.data_root/'market_radar_family')
+        except Exception:
+            self.audit = None
         settings = QSettings(str(self.root / 'family_ui.ini'), QSettings.Format.IniFormat)
         self.dashboard = FamilyDashboard(config=replace(CONFIG, data_dir=self.root,
             historical_cache_path=config.cache, collection_mode='Regular Session', max_ws_symbols=150),
@@ -49,7 +55,7 @@ class FamilyWindow(QWidget):
         self.dashboard.one_hour_enable.setChecked(True)
         self.dashboard.one_hour_no_shutdown.setChecked(not config.normal_shutdown)
         self.setWindowTitle(f'Market Radar 자동 수집 · v{__version__}')
-        self.resize(1020, 730)
+        self.resize(1020, 780)
         self.setStyleSheet('QLabel { font-size:14px; } QPushButton { font-size:14px; min-height:32px; }')
         layout = QVBoxLayout(self)
         self.header = self.label(layout, f'Market Radar v{__version__} · 가족용 자동 수집 · 실제 주문 OFF')
@@ -61,6 +67,7 @@ class FamilyWindow(QWidget):
         self.paper = self.label(layout, '')
         self.result = self.label(layout, '')
         self.power = self.label(layout, '')
+        self.audit_label = self.label(layout, '자동 진단 준비 중 · 외부 전송 OFF · AI 분석 OFF')
         self.warning = self.label(layout, '예약 완료는 인증·수집 성공이 아닙니다. 실제 Kiwoom 연결은 아래 상태에서 확인하세요.\n'
             '비상 종료 OFF이면 오류·멈춤 때 PC가 계속 켜져 있을 수 있습니다.\n'
             '이 창을 닫으면 수집과 종료 예약을 취소합니다. 절전·로그아웃·업데이트는 수집을 중단시킬 수 있습니다.')
@@ -101,20 +108,29 @@ class FamilyWindow(QWidget):
                 QTimer.singleShot(250, self.arm)
                 return
             self.failure = 'startup_history_not_ready'
+            if self.audit: self.audit.failure(self.failure)
             self.arm_attempted = True
             return
         self.arm_attempted = True
         try:
             self.runner = self.runner_factory(self.dashboard.controller, self.root, self.config,
-                ready_to_shutdown=lambda: not self.dashboard.jobs)
+                ready_to_shutdown=lambda: not self.dashboard.jobs, audit=self.audit)
             self.dashboard.one_hour = self.runner
             self.runner.launch(cache=self.config.cache)
         except Exception as exc:
             self.failure = 'family_launch_failed:' + type(exc).__name__
+            if self.audit: self.audit.failure('family_launch_failed')
         self.refresh()
 
     def refresh(self):
         r = self.runner
+        audit = getattr(r, 'audit', None) or self.audit
+        if audit:
+            verdict = (audit.result or {}).get('severity', 'UNKNOWN')
+            self.audit_label.setText(f'자동 진단: {verdict} · 저장: 이번 실행/audit/postrun_audit.txt · 외부 전송 OFF · AI OFF'
+                + (' · 진단 저장/등록 오류' if audit.error else ''))
+        else:
+            self.audit_label.setText('자동 진단 시작 실패 · 수집/전원 정책은 기존 조건을 따릅니다')
         if r:
             r.gui_heartbeat = utc(datetime.now(timezone.utc))
             r.refresh_watchdog()
@@ -174,6 +190,8 @@ class FamilyWindow(QWidget):
         QApplication.instance().aboutToQuit.disconnect(self.stop)
         if r:
             r.dispose()
+        elif self.audit:
+            self.audit.close()
         event.accept()
 
 

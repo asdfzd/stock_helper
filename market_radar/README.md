@@ -1,10 +1,10 @@
-# Market Radar v2.6.9 — Opening Hour Research v1.1 / Paper v1 + Rotation v2
+# Market Radar v2.6.10 — Opening Hour Research v1.1 / Paper v1 + Rotation v2
 
 v2.6.5는 첫 1시간 연구 판정과 안전한 데이터 보존 후 운영 종료를 분리합니다. `one_hour.py`가 기존 Controller 하나를 감독하며 독립 EXE를 실행하지 않습니다. v2.6.1의 수집기·전략·저장 엔진·Regular/Capacity 스케줄·Validator와 모든 schema는 유지합니다. 새 옵션이 OFF면 기존 GUI 실행 경로입니다. [사용·시각·저장·배포 안내](../README.md#첫-1시간-수집--zip-검증--pc-자동-종료-gui-통합-v4)를 참고하세요.
 
-현재 **Market Radar v2.6.9 / Opening Hour Research v1.1 / opening hour schema=1 / Paper Trading v1 / paper schema=2 / Rotation v2 / rotation extension schema=1 / Validator 1 / Collector v2.1 / test_version=kiwoom_radar_v2_1 / research schema=4 / master schema=1**의 기술 문서다. 프로그램 소개·설치는 [루트 README](../README.md), 현재 작업 상태는 [CODEX_HANDOFF](../CODEX_HANDOFF.md), 버전별 검증 이력은 [CHANGELOG](../CHANGELOG.md)를 따른다. Kiwoom 수집기에는 주문/계좌 기능이 없고, 별도 NH read-only probe만 계좌목록·잔고·매수가능수량을 조회한다. 실제 주문/자동매매 기능은 없다.
+현재 **Market Radar v2.6.10 / Opening Hour Research v1.1 / opening hour schema=1 / Paper Trading v1 / paper schema=2 / Rotation v2 / rotation extension schema=1 / Validator 1 / Collector v2.1 / test_version=kiwoom_radar_v2_1 / research schema=4 / master schema=1**의 기술 문서다. 프로그램 소개·설치는 [루트 README](../README.md), 현재 작업 상태는 [CODEX_HANDOFF](../CODEX_HANDOFF.md), 버전별 검증 이력은 [CHANGELOG](../CHANGELOG.md)를 따른다. Kiwoom 수집기에는 주문/계좌 기능이 없고, 별도 NH read-only probe만 계좌목록·잔고·매수가능수량을 조회한다. 실제 주문/자동매매 기능은 없다.
 
-## 가족용 진입점과 독립 watchdog (v2.6.9)
+## 가족용 진입점과 독립 watchdog (v2.6.10)
 
 전용 frozen `MarketRadarFamily.exe`는 인수 없이 실행해도 같은 폴더의 `family_config.json`으로 자동 예약합니다. `--manual`은 수동 GUI, `--family --config <path>`는 이전 명시적 실행입니다. Python 소스 기본값과 전체 Stock Helper 실행은 수동 그대로입니다. 설정 파일 부재·JSON 형식 오류는 경로 대체 없이 지속 오류 화면으로 표시합니다. helper/smoke/probe 분기는 설정 로드·Qt·Collector보다 먼저 처리하며 단독 helper 보조 플래그는 오류로 거부합니다. `family_config`가 다른 앱 모듈 import 전에 해당 프로세스의 APP_ROOT를 명시적 프로젝트 root로 바인딩합니다. 기존 OCR/Stock Helper 실행과 전역 설정은 바꾸지 않습니다. KiwoomRest의 기존 `dotenv_values(APP_ROOT / ".env")` 및 같은 collector lock을 재사용하고, 실제 키/토큰은 파일·manifest에 기록하지 않습니다. cache는 SQLite 연결/복사 없이 header·r+b 열기, data는 임시 probe/fsync, 여유 공간5GiB를 사전 확인합니다. 이는 credential 존재/경로 검사이며 실제 OAuth 검증이 아닙니다.
 
@@ -19,6 +19,21 @@ v2.6.5는 첫 1시간 연구 판정과 안전한 데이터 보존 후 운영 종
 `emergency_shutdown: false` 또는 `--dry-run`은 작업 action에도 `--watchdog-dry-run`을 고정하므로 상태 파일만 바꿔 실제 제출을 활성화할 수 없습니다. 최종 실제 비상 명령은 검증한 시스템 `shutdown.exe /s /f /t 0`이며 자동 테스트에서는 호출하지 않습니다. sleep inhibition은 기존 supervisor가 담당하고 task의 WakeToRun은 OFF입니다. OS 자체 중단·로그아웃·디스크/Task Scheduler 장애·전원 차단 시 실행/기록은 보장하지 않습니다.
 
 `MarketRadarFamily.spec` / `build_family_windows.ps1`은 새 onedir만 만듭니다. PySide6/Radar/calendar/contract/timezone/task 스크립트를 포함하고 Paddle/OCR/GPU·NH는 제외합니다. 기존 전체 Stock Helper 배포를 보존하기 위한 B안이며 수집 엔진을 복제하지 않습니다. 수집 전용 EXE와 `_internal` 전체가 배포 단위입니다. family config와 watchdog은 운영 schema1이며 research4/Paper2/Opening1/Rotation extension1/archive2/Master1은 불변입니다.
+
+## 자동 사후 감사 (v2.6.10 / schema 1)
+
+`postrun_audit.py`는 기존 `one_hour_run_summary.json`, `quality_summary.json`, `diagnostics/runtime.json`, `paper_performance.json`, lifecycle, shutdown/watchdog JSON의 제한된 필드만 읽습니다. 새 DB 조회·SQLite 연결·checkpoint·ZIP 재검증/재생성·로그 파싱은 없습니다. ZIP 표시는 기존 보존 판정과 정확한 실행 ZIP의 현재 존재를 결합한 `RECORDED_VERIFIED_PRESENT`이며 새 CRC/SHA 검증을 뜻하지 않습니다. ZIP 종류나 존재 여부가 미확인이면 전체 PASS로 올리지 않고 UNKNOWN으로 남깁니다. 원래 Validator의 계획된 65분 단축 실행 FAIL과 one_hour의 연구 판정을 별도로 표시합니다.
+
+`audit_runtime.AuditSession`은 시세/paper 큐와 독립된 daemon 작업에서 최대 1개 대기 스냅샷을 처리합니다. supervisor는 5초 또는 상태 변경마다 공개 메모리 상태만 전달하고 WS 잠금은 2ms 이내 획득을 시도합니다. 마지막 live FE 수신 시각·generation·raw dropped·sticky gap과 표본 중 최대 수신 나이를 보존합니다. 이는 표본 관측이며 거래소의 연속 전송 보장이 아닙니다. 종료 후 자연스러운 WS 해제를 장중 단절로 오인하지 않습니다. 기존 Paper timing의 첫 오류·2,000ms 초과 이벤트·큐 최대값·SQL/commit 측정치를 요약하되 중첩 측정값을 합산하거나 host CPU/디스크 원인을 단정하지 않습니다.
+
+정상 후처리 뒤 별도 attempt/audit/에 JSON·TXT를 atomic replace합니다. 파일별 입력 2MiB, 출력 128KiB 제한과 입력 간 1.5초 읽기 예산이 있으며 supervisor의 최종 대기는 최대 0.75초입니다. OS 파일 IO가 멈춰도 감사 스레드 때문에 정상 종료를 무한 대기하지 않습니다. 저장 실패/관측 실패는 감사 경고이며 원래 수집/전원 gate를 변경하지 않습니다. 느린 디스크·정전 때 최종 요약의 영속성을 보장하지 않습니다.
+
+`audit_task.py`는 기존 TaskScheduler XML·신원 확인을 재사용하지만 `AuditTaskScheduler`의 이름 정규식과 `audit_task.ps1`은 `MarketRadarAudit_*`만 허용합니다. 기존 `MarketRadarFamily_*` 작업을 조회·해제하지 않습니다. open+100분/10분 실행 창, 1회 trigger, 일반 권한, missed-start/wake OFF, 실행 nonce/attempt 신원을 확인하며 만료된 CLI 재실행은 거부합니다. `--audit-run <audit/task.json> --audit-nonce <nonce>`는 설정/Qt/Collector보다 먼저 분기합니다. 별도 task.json·task_result.json만 갱신하며 기존 watchdog.json과 판정 JSON은 읽기 전용입니다. 수집 프로그램이 아예 시작되지 않았다면 로컬 task도 등록되지 않습니다. 자동 재로그인 작업은 만들지 않으며 다음 가족용 실행에서 최근14일/날짜별 최대32개 항목을 제한적으로 검토합니다.
+
+`audit_delivery.py`에는 실제 네트워크 전송기나 Codex 실행기가 없습니다. 공개 저장소를 목적지로 사용하지 않습니다. 사용자 승인·비공개 목적지 검증을 갖춘 별도 adapter를 연결할 때만 순수 allowlist 요약을 전달할 수 있고, DISABLED/SENT/PENDING_RETRY/FAILED·최대3회·호출 대기1초·동일 delivery_id 멱등 키를 유지합니다. 실제 adapter는 동일 키 중복 전송 방지와 내부 timeout을 보장해야 합니다. queue는 다음 실행/명시적 동기화에서 재사용할 경계이며 현재 자동 전송은 OFF입니다. source 경로·DB/ZIP/로그·token/account/요청본문·원본 hash는 외부 요약에 복사하지 않습니다.
+
+AI 입력도 위 요약만 허용하고 FAIL/WARNING/UNKNOWN에 한해 별도 승인된 읽기 전용 작업자용 요청을 만들 수 있습니다. 설치·인증 확인만으로 비용/잔여 한도와 OS 격리 검증을 대신하지 않습니다. [공식 비대화형 실행 문서](https://learn.chatgpt.com/docs/non-interactive-mode)의 read-only 기본값·저장된 CLI 인증 사용을 확인했으며, 실제 AI 실행·권한 완화·자동 수정은 구현하지 않았습니다. 읽기 전용 CLI 옵션만으로 이 PC 전체의 비밀정보 접근을 차단한다고 주장하지 않습니다.
+
 
 ## v2.6.7 명시적 30초 종료 시험과 패키징
 

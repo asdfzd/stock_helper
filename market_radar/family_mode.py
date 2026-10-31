@@ -47,7 +47,7 @@ class CoordinatedShutdown:
 
 class FamilyRunner(DashboardOneHour):
     def __init__(self, controller, root, config, *, watchdog_factory=Watchdog,
-                 clock_check=windows_clock_check, command=None, **kwargs):
+                 clock_check=windows_clock_check, command=None, audit=None, audit_scheduler=None, **kwargs):
         self.family_config = config
         self.watchdog_factory = watchdog_factory
         self.clock_check = clock_check
@@ -66,6 +66,43 @@ class FamilyRunner(DashboardOneHour):
         adapter = kwargs.pop('shutdown', None)
         super().__init__(controller, root, **kwargs)
         self.shutdown = CoordinatedShutdown(self, adapter)
+        self.audit = audit
+        self.audit_error = None
+        if self.audit is None:
+            try:
+                from .audit_runtime import AuditSession
+                self.audit = AuditSession(root, now=self.clock.now, scheduler=audit_scheduler, command=self.command)
+            except Exception:
+                self.audit_error = 'audit_start_failed'
+
+    def _audit_observe(self, *, force=False, flush=False):
+        if self.audit is not None:
+            try:
+                self.audit.observe(self, force=force)
+                if flush: self.audit.flush(.75)
+                self.audit_error = self.audit.error
+            except Exception:
+                self.audit_error = 'audit_observation_failed'
+
+    def _finalize(self):
+        try:
+            return super()._finalize()
+        finally:
+            self._audit_observe(force=True, flush=True)
+
+    def _schedule_shutdown(self):
+        # Existing checks and OS request are untouched. The observer cannot
+        # grant/revoke eligibility and waits at most .75s for its own summary.
+        try:
+            return super()._schedule_shutdown()
+        finally:
+            self._audit_observe(force=True, flush=True)
+
+    def _drive(self, cache):
+        try:
+            super()._drive(cache)
+        finally:
+            self._audit_observe(force=True, flush=True)
 
     def start(self, *, cache, provider=None):
         # All IO here is on the supervisor thread, never the GUI or feed queue.
@@ -101,6 +138,7 @@ class FamilyRunner(DashboardOneHour):
             self.watchdog_error = 'watchdog_registration_failed:' + type(exc).__name__
             self._record(self.watchdog_error, error=True)
             raise RunBlocked(self.watchdog_error) from None
+        self._audit_observe(force=True)
 
     def _cancel_watchdog(self):
         if self.watchdog:
@@ -132,6 +170,7 @@ class FamilyRunner(DashboardOneHour):
 
     def tick(self):
         super().tick()
+        self._audit_observe()
         if self.watchdog and self.clock.monotonic() >= self.next_heartbeat:
             self.next_heartbeat = self.clock.monotonic() + 5
             try:
@@ -149,4 +188,7 @@ class FamilyRunner(DashboardOneHour):
                 self._cancel_watchdog()
 
     def dispose(self):
+        if self.audit is not None:
+            self._audit_observe(force=True, flush=True)
+            self.audit.close()
         self.cancel_executor.shutdown(wait=False)

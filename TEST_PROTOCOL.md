@@ -1,6 +1,6 @@
 # Capacity Test Protocol v1
 
-적용: **Market Radar v2.6.9 / Opening Hour Research v1.1 / opening hour schema 1 / Paper v1 / paper schema 2 / Rotation v2 / rotation extension schema 1 / Validator 1 / Collector v2.1 / kiwoom_radar_v2_1 / research schema 4 / Master schema 1**. Dashboard에서 선택하며 기존 CLI `--collect`는 Manual이다. Capacity 조건은 변경하지 않았으며 Paper v1·Rotation v2·Opening Hour 자동 분석은 모두 강제 OFF다.
+적용: **Market Radar v2.6.10 / Opening Hour Research v1.1 / opening hour schema 1 / Paper v1 / paper schema 2 / Rotation v2 / rotation extension schema 1 / Validator 1 / Collector v2.1 / kiwoom_radar_v2_1 / research schema 4 / Master schema 1**. Dashboard에서 선택하며 기존 CLI `--collect`는 Manual이다. Capacity 조건은 변경하지 않았으며 Paper v1·Rotation v2·Opening Hour 자동 분석은 모두 강제 OFF다.
 
 | 항목 | 고정 기준 |
 |---|---|
@@ -88,7 +88,7 @@ v2.6.1 보존 회귀는 동일 시각 A→B의 TP/SL crossing과 marks 도착 �
 
 첫 Regular live 전에는 기존 Paper/Opening DB 유무와 버전을 확인한다. legacy Paper schema 1은 자동 변환하지 않으며 원본 보존 후 별도 복사본의 offline migration이 필요하다. 이번 작업 시작 시 실제 대상 DB는 없었고 data 전체는 해시·크기·mtime로 보존 여부를 확인한다. 테스트 출력은 임시 디렉터리만 사용하며 실제 data에 출력을 만드는 통합 validation runner·live smoke는 실행하지 않는다. 종료 후 두 전략의 marks/horizons와 Opening all/eligible coverage·표본 수·metadata를 함께 검수한다.
 
-## 가족용 원클릭 / 독립 90분 감시 검증 (v2.6.9)
+## 가족용 원클릭 / 독립 90분 감시 검증 (v2.6.10)
 
 - `tests.family_entry_test`: frozen/source/manual 분기, helper 우선순위와 고아 플래그 거부, 설정 부재·잘못된 JSON, 2026-11-02~06의18:00/22:00/22:29 KST 예약·23:30 개장·자정 경계와 가족 상태 표시를 검사합니다.
 - `tests.family_watchdog_test`: 당일 preopen·휴장/늦은 실행·DST/조기폐장, 명시적 경로/키 존재/용량·원본 무변경, 같은 Collector·65분 보존·70분 gate, 등록 실패/중복·취소·정상/비상 경합·다른 작업 미변경, 날짜/기한/부팅·최종 OS 직전 재검사, GUI/후처리 hang·process missing 합성 검사. 실제 OAuth/API/NH/주문/Windows 종료는 차단하고 주입 adapter를 사용합니다.
@@ -97,3 +97,11 @@ v2.6.1 보존 회귀는 동일 시각 A→B의 TP/SL crossing과 marks 도착 �
 - 사용자가 감독하는 첫 실장은 기존 수집 앱을 정상 종료한 뒤 전용 설정/버전/경로를 확인하고 `--dry-run`으로 두 종료를 끕니다. 실제 연결·65분/후처리·ZIP/취소를 검토한 뒤 정상 종료 및 비상 강제 종료를 각각 명시적으로 허용합니다. 비상 종료는 DB/ZIP·저장 전 작업 손상 가능성이 있으므로 정상 VERIFIED와 혼동하지 않습니다.
 
 검증 수준은 구현 / 오프라인 Mock / 실제 Task Scheduler dry-run / 실제 미국장 자동 예약·수집 / 실제 강제 종료로 구분합니다. 이전 30초 강제 종료 성공은 사용자 보고이며 watchdog 검증으로 승격하지 않습니다. Windows 시간대/두 시계의 일관성은 절대 UTC 정확성의 외부 인증이 아닙니다.
+
+## 자동 사후 감사 회귀 (v2.6.10)
+
+`tests.postrun_audit_test`는 정상65분, 연구FAILED/보존VERIFIED, 정상/진단 ZIP 존재·누락·종류/존재 미확인의 UNKNOWN, Paper 최초 지연·큐·SQL 계측, sticky gap/현재 및 과거 FE 공백, raw dropped, OHLCV/RVOL 부족, 종료 요청 미확인, watchdog dry-run/등록·해제 실패, 프로세스/PID 재사용·supervisor/GUI heartbeat, 예약·시작 기록 부재, 사용자 중지, 잘못된 JSON/큰 파일/경로 탈출·원본 해시·mtime 불변, 개인정보 allowlist, 전송 OFF·재시도/멱등 키·AI 실행 차단을 합성 자료로 검사합니다. 기존 family calendar 회귀가 DST·미국 휴장·조기폐장·자정·중복을 검사하며 감사 작업은 같은 official open+100분을 사용합니다.
+
+실제 OS 검사는 고유한 `MarketRadarAudit_TEST_<date>_<uuid>` 하나의 종료 없는 `--audit-run` action만 사용합니다. source/EXE process를 구분하여 별도 PID·task receipt·해당 task 삭제와 기존 작업 무변경을 확인합니다. 기존 비상 감시나 shutdown.exe의 요청·예약·취소, 실제 API·주문·외부 업로드·AI 호출은 테스트에서 실행하지 않습니다. 단축 deadline은 실제 미국장/100분 대기 검증이 아닙니다. EXE smoke는 10개 case(기존9개+audit helper 안전 거부)와 감사 JSON/TXT·외부 전송/AI OFF를 확인합니다.
+
+정전·미실행일의 원격 감지는 외부 기대 거래일 점검이 없으면 NOT_VERIFIED입니다. 원본 전체 과거 data/DB/WAL/SHM/cache/log/ZIP와 기존 dist·바로가기·방향 DOCX/MD는 SHA256/크기/mtime를 전후 대조하고, audit가 기존 SQLite나 ZIP을 열지 않는 별도 회귀를 유지합니다.

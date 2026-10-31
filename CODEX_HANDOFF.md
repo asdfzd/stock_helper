@@ -1,20 +1,18 @@
 # CODEX HANDOFF
 
-갱신: 2026-10-31 KST. 현재 상태만 유지하며 영구 이력은 [CHANGELOG](CHANGELOG.md)에 둔다. 새 대화는 [START_HERE](START_HERE.md), 최상위 방향 원본은 [PROJECT_DIRECTION.docx](PROJECT_DIRECTION.docx), 도구용 mirror는 [PROJECT_DIRECTION.md](PROJECT_DIRECTION.md), 수집 기준은 [TEST_PROTOCOL](TEST_PROTOCOL.md)을 따른다.
+갱신: 2026-11-01 KST. 현재 상태만 유지하며 영구 이력은 [CHANGELOG](CHANGELOG.md)에 둔다. 새 대화는 [START_HERE](START_HERE.md), 최상위 방향 원본은 [PROJECT_DIRECTION.docx](PROJECT_DIRECTION.docx), 도구용 mirror는 [PROJECT_DIRECTION.md](PROJECT_DIRECTION.md), 수집 기준은 [TEST_PROTOCOL](TEST_PROTOCOL.md)을 따른다.
 
 ## 현재 버전과 연구 단계
 
-- **Market Radar v2.6.9 소스 / 가족용 경량 EXE**. Collector2.1 / research4 / Paper1·schema2 / Rotation2·extension1 / Opening1.1·schema1 / archive2 / integration4 / Master1 / Validator1 / family config1 / watchdog1 불변. Phase A 마무리~Phase B 실데이터 축적 단계이며 수집 품질과 전략 수익성을 구분한다.
-- 사용자 요청에 따라 가족용 원클릭의 기존 구현을 감사하고 전용 EXE의 무인수 실행을 자동 예약으로 보완했다. 수집 엔진·Current/Emerging·Paper/FIFO/2초·SQL/commit·OCR/NH/주문 OFF·프로젝트 방향은 유지했다. DOCX/MD는 수정하지 않았다.
+- **Market Radar v2.6.10 소스 / 가족용 경량 EXE**. 새 postrun audit schema1. 기존 Collector2.1/research4/Paper1·schema2/Rotation2·extension1/Opening1.1·schema1/archive2/integration4/Master1/Validator1/family config1/watchdog1 유지. 프로젝트 방향·DOCX/MD·랭킹·전략·주문 OFF 불변이며 Phase A 마무리~Phase B 근거 축적 단계다.
 
 ## 현재 변경과 검증
 
-- 전용 frozen EXE 무인수/새 바로가기 → 인접 family_config.json → 자동 가족 preflight·당일 첫65분/WS150/Paper·Rotation·Opening ON. --manual은 수동; --family --config 호환; source/전체 Stock Helper 기본은 수동. helper/smoke/probe 및 보조 옵션 단독 거부는 자동 수집 전에 처리한다. 설정 오류 화면은 유지하며 다른 경로 fallback 없음.
-- 가족 화면은 한국어 큰 상태, KST 개장/폐장·수집 예정·정상 종료 earliest·실제 Kiwoom 연결/집계, ARMED≠인증 성공, 비상 OFF와 창 닫기 취소를 표시한다. 11/02~06 KST23:30 open, 다음 날00:35 stop,00:41 earliest,01:00 watchdog을 calendar/timezone 및 합성 검사로 확인했다.
-- 전체 unittest **815 PASS / FAIL0 / ERROR0 / SKIP0** (548.388초), 마지막 단독 시험 옵션 차단 보완 후 관련 **62 PASS / FAIL0 / ERROR0 / SKIP0**, 기존 Stock Helper main **12/12 exit0**. 62개는 전체와 중복이며 합산하지 않는다. 최종 실제 EXE9개 격리 case/패키지21코드/Windows PNG 검수 PASS. literal 무인수 child는 합성 설정·인증 부재로 가족 자동 preflight와 지속 오류를 확인했으며 live ARMED 검증이 아니다. 자동 ARMED는 동일 EXE main([])의 합성 시계/adapter 재진입 검사다.
-- 실제 Windows Scheduler TEST dry-run이 최종 EXE의 별도 PID로 발동/INCOMPLETE를 기록하고 삭제·부재 확인. 실제 API·Windows 종료는0회다. 오류·중간 빌드·fixture 수정·재검증은 CHANGELOG에 보존했다. evidence: build/family_v269_20261031.
-- 최종 `dist/MarketRadarFamily_v2_6_9_FINAL_20261031/MarketRadarFamily.exe`, SHA256 `e3ed6392d9c9625891dfe547b1dd6f799545ac3e633b749ce4f993c05a1e6463`. 바탕화면 **Market Radar 자동 수집 v2.6.9**, Arguments 비어 있음, WorkingDirectory는 해당 배포 폴더. 이전 **Market Radar 자동 수집**과 v2.6.8/전체 Stock Helper v2.6.7 EXE는 보존한다. 중간 v2.6.9 폴더는 배포 대상이 아니다.
-- 설정은 **정상 종료 ON / 비상90분 강제 종료 OFF**. .env 필수 키 존재/real mode만 확인했고 실제 shared cache5,844,213,760bytes를 복제·DB 연결·수정하지 않았다. 1458개 원본 SHA256/size/mtime 동일. 실제 OAuth/WS·실장65분·정상 PC 종료·90분 강제 종료는 **NOT VERIFIED**.
+- 가족이 **Market Radar 자동 수집 v2.6.10**을 한 번 실행하면 기존 당일65분/WS150/Paper·Rotation·Opening 자동 ARM과 실행별 사후 감사가 함께 작동한다. 추가 도구 실행은 필요 없다. ARMED는 인증 성공이 아니다. 초기 설정 오류도 배포본 audit_startup에 로컬 요약을 시도한다.
+- 로컬 출력: data/market_radar_family/<ET-date>/attempt_<id>/audit/postrun_audit.json 및 .txt. 기존 JSON·제한된 live 메모리만 사용하고 원본 DB/ZIP은 열지 않는다. 연구FAILED와 보존VERIFIED·종료 요청을 구분하며 generic 최초 이벤트와 구체 primary_reason의 시각을 따로 보존한다. 코드 상세·크기/시간 제한은 기술 README를 따른다.
+- MarketRadarAudit_*는 open+100분의 독립 관측 작업이며 기존 90분 비상 작업과 별개다. 다음 가족 실행에서 미완료 기록을 보충한다. PC OFF/완전 미실행의 외부 통보는 구현되지 않았다. 공개 저장소 업로드·자동 AI·ChatGPT automation 모두 OFF. 목적지/권한/비공개 검증·비용 한도와 별도 격리 worker가 있어야 후속 연결한다.
+- 전체 unittest **853 PASS / FAIL0 / ERROR0 / SKIP0**, legacy **12/12 exit0**, 최종 실제 EXE **10/10 격리 case PASS**. R3 package25코드/PS/리소스/Windows PNG, literal 무인수 시작 오류→자동 감사, 실제 Task Scheduler의 독립 PID dry-run·삭제·부재 PASS. 실패/보완 이력은 CHANGELOG, 근거는 build/audit_v2610_20261101. 실제 API/Windows 전원·예약·취소/주문/외부 전송/AI 호출0.
+- 최종 `dist/MarketRadarFamily_v2_6_10_FINAL_20261101_R3/MarketRadarFamily.exe`, SHA256 `e8e3881857c155e0dfc1795ab800eba6019112fc6f858155725bbde3507b13a4`, 989files. 새 아이콘은 인수 없음/같은 배포 폴더 working directory. 기존 v2.6.9·v2.6.8/Stock Helper·첫 v2.6.10 빌드는 보존하며 R3만 새 배포 대상으로 쓴다. 정상 종료ON·비상 종료OFF. 원본23672개 SHA256/크기/mtime 동일.
 
 ## 기존 첫 1시간 운영 정책
 
@@ -51,8 +49,8 @@
 - 사용자가 교체한 **2026-10-12 기준 PROJECT_DIRECTION.docx가 source of truth**다. MD는 같은 의미의 mirror로 보존하며 START_HERE의 읽는 순서를 따른다. 두 파일을 수정·재생성하지 않는다.
 - 현재 DOCX SHA256: eb06f5add0fde0f5fecc424e00977932831d2f6d3279f10e9d67fe2c947641ef. MD SHA256: 50029336dea7d83563c4912d74a34509c8da35f7f3cf551e2d0ef496b0df840c. 이번 작업은 전략과 분리된 운영 자동화이며 두 파일을 보존했다.
 - RESEARCH_BASIS의 7개 연구 축은 DOCX와 일치한다. 정확한 citation은 **출처 검증 필요**이며 논문명·저자·URL을 만들지 않았다.
-- 이번 가족용 감사·패키지·회귀·보존 결과는 build/family_v269_20261031의 JSON/log에 둔다. v2.6.8 근거는 build/family_v268_20261026에 보존한다. 이전 종료 시험은 build/exe_v267_20261026에 보존한다. 이전 Paper 계측은 build/paper_fresh_20261024에 보존한다. 이전 2026-10-13 EXE 빌드·합성 검증의 상세 수치와 배포 해시는 CHANGELOG의 영구 이력을 참조한다.
-- 실제 장애의 근본 병목이나 live 안정성은 미검증이다. v2.6.9 가족용 EXE 빌드·격리 smoke와 실제 Task Scheduler dry-run은 완료했다. 첫 실제 수집에는 PC 자동 종료 없이 테스트를 유지한다.
+- 이번 가족용 자동 감사·패키지·회귀·보존 결과는 build/audit_v2610_20261101의 JSON/log에 둔다. 이전 버전의 상세 검증·배포 해시·근거 위치는 CHANGELOG의 영구 이력을 참조한다.
+- 실제 장애의 근본 병목이나 live 안정성은 미검증이다. v2.6.10 가족용 EXE·사후 감사 격리 smoke와 실제 감사 Task Scheduler dry-run은 완료했다. 첫 실제 수집에는 PC 자동 종료 없이 테스트를 유지한다.
 
 ## Opening Hour Research v1 현재 상태
 
@@ -105,7 +103,9 @@
 
 ## Next Work
 
-이번 감독 시험 대상은 **Market Radar 자동 수집 v2.6.9**가 가리키는 FINAL_20261031 배포본이다. 중간 빌드나 이전 아이콘과 구분한다.
+이번 감독 시험 대상은 **Market Radar 자동 수집 v2.6.10**가 가리키는 FINAL_20261101_R3 배포본이다. 중간 빌드나 이전 아이콘과 구분한다.
+
+첫 감독 실행 후 audit/postrun_audit.txt의 연구·보존·전원 판정과 최초 원인·근거를 확인한다. 비공개 목적지가 결정되기 전 외부 전송/AI는 OFF이며 비용·한도·최소권한 검증 전 실제 실행기를 연결하지 않는다.
 
 먼저 사용자가 기존 Stock Helper/Collector를 정상 종료하고 모든 앱의 작업을 저장한다. 새 가족용 EXE/설정 경로와 버전을 확인하고 첫 실장은 `--dry-run`으로 감독한다. ARMED는 예약이며 Kiwoom 실제 연결은 별도 확인한다. 65분 planned stop, Paper/Rotation/Opening, 진단 ZIP·보존 verdict, 두 취소 경로를 검토한다. 정상 자동 종료와 실제90분 비상 종료는 각각 독립적인 사용자 실기 시험이며 기존30초 성공을 전체 검증으로 대체하지 않는다. 기본 비상 강제 종료는 계속 OFF다.
 
@@ -115,4 +115,4 @@
 
 ## Git 상태와 작업 보존
 
-시작 main clean, 로컬 HEAD/origin/main 및 실제 원격 main `96ed78b1fd20ad3e33732b3bda788c1b72aafaa4` 일치. 사용자 명시 승인에 따라 v2.6.9 소스·회귀 테스트·문서 13개만 검토 후 main의 일반 commit/push로 반영한다. 이 작업의 커밋은 `git log -1`로, 현재 변경 범위는 `git status --short`로 확인하며 최종 SHA·실제 원격 일치 확인은 Git 제외 단일 `CODEX_LAST_TASK_REPORT.md`에 기록한다. EXE manifest의 source_base_head는 빌드 전 기준이고 source_sha256 182개가 검증한 소스를 식별한다. 실제 .env/data/DB/cache/WAL/SHM/ZIP/log/build/dist/EXE/단일 보고서는 Git 제외다. 기존 사용자 변경은 없었고 force/reset/clean/stash/rebase/merge를 사용하지 않았다.
+시작 main clean, 로컬/실제 원격 main d075a9e834cef8a38870387477512642e06ae02c 일치. 사용자의 이번 요청에 따라 검증한 소스·테스트·기술 문서만 명시적 staging/일반 commit/push로 반영한다. 최종 SHA·원격 일치와 보존 해시는 Git 제외 단일 CODEX_LAST_TASK_REPORT.md 및 build/audit_v2610_20261101에 기록한다. EXE manifest의 source_base_head는 빌드 전 기준, source_sha256은 검증한 소스를 식별한다. 현재 커밋은 git log -1, 변경 상태는 git status --short로 확인한다. 실제 .env/data/DB/cache/WAL/SHM/ZIP/log/build/dist/EXE/거래일 감사 출력·개발 보고서는 Git 제외. force/reset/clean/stash/rebase/merge 사용 없음.

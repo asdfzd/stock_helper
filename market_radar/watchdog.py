@@ -175,16 +175,19 @@ def verify_task(xml, state):
 
 class TaskScheduler:
     """Exact-name COM operations; TASK_CREATE (2), never create-or-update."""
+    name_pattern = NAME
+    script_name = 'watchdog_task.ps1'
+
     def __init__(self, execute=None):
         self.execute = execute or subprocess.run
 
     def call(self, operation, name, xml_path=None):
-        if not NAME.fullmatch(name):
+        if not self.name_pattern.fullmatch(name):
             raise WatchdogError('foreign_task_name')
         from .shutdown_test import system_shutdown_path
         powershell = Path(system_shutdown_path()).parent / 'WindowsPowerShell/v1.0/powershell.exe'
         args = [str(powershell), '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
-                '-File', str(Path(__file__).with_name('watchdog_task.ps1')),
+                '-File', str(Path(__file__).with_name(self.script_name)),
                 '-Operation', operation, '-TaskName', name]
         if xml_path:
             args += ['-XmlPath', str(xml_path)]

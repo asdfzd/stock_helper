@@ -21,10 +21,15 @@ def main(arguments=None):
     parser.add_argument('--offline-family-smoke', type=Path)
     parser.add_argument('--smoke-case', choices=(
         'default', 'family', 'manual', 'missing-config', 'invalid-config',
-        'watchdog-run', 'watchdog-cancel', 'scheduler-probe', 'dry-run'))
+        'watchdog-run', 'watchdog-cancel', 'scheduler-probe', 'dry-run', 'audit-run'))
     parser.add_argument('--scheduler-probe', type=Path)
     parser.add_argument('--probe-nonce')
+    parser.add_argument('--audit-run', type=Path)
+    parser.add_argument('--audit-nonce')
     args = parser.parse_args(arguments)
+    if args.audit_run:
+        from market_radar.audit_task import run_helper
+        return run_helper(args.audit_run, args.audit_nonce)
     if args.offline_family_smoke:
         from tools.family_smoke import run
         return run(args.offline_family_smoke, case=args.smoke_case or 'default')
@@ -48,7 +53,7 @@ def main(arguments=None):
             except Exception:
                 pass
             return 2
-    if args.watchdog_dry_run or args.nonce or args.probe_nonce or args.smoke_case:
+    if args.watchdog_dry_run or args.nonce or args.probe_nonce or args.smoke_case or args.audit_nonce:
         parser.error('helper options require their corresponding helper command')
     family, path = launch_mode(args.family, args.manual, args.config)
     if family and path is None:
@@ -95,7 +100,26 @@ def startup_error(reason, path):
     label.setWordWrap(True)
     label.setStyleSheet('font-size:20px')
     layout.addWidget(label)
+    record_startup_failure(reason)
     return window
+
+
+def record_startup_failure(reason, *, root=None):
+    """Config errors have no trusted data root; keep only a local startup audit."""
+    try:
+        from datetime import datetime
+        import uuid
+        from market_radar.models import ET
+        from market_radar.audit_runtime import AuditSession
+        base = Path(root) if root else ((Path(sys.executable).resolve().parent if getattr(sys, 'frozen', False)
+            else Path(__file__).resolve().parents[1]/'build')/'audit_startup')
+        attempt = base/datetime.now(ET).date().isoformat()/('attempt_'+uuid.uuid4().hex)
+        audit = AuditSession(attempt)
+        audit.failure(reason)
+        audit.flush(.75)
+        audit.close()
+    except Exception:
+        pass  # The persistent original error screen must still be displayed.
 
 
 def create_window(family, config=None):

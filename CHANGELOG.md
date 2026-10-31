@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-11-01 — Market Radar v2.6.10 / 실행별 자동 사후 감사
+
+- 기존 가족용 무인수 자동 ARM·Collector·65분·전략/랭킹·FIFO/2초·DB/schema·보존/정상/비상 gate를 유지하고 독립 관측 계층을 추가했다. attempt/audit/state.json 및 postrun_audit.json/.txt가 예약·수집·Paper/Rotation/Opening·보존·전원 요청을 독립 판정한다. 연구FAILED+보존VERIFIED는 연구 실패이며 기존 Validator의 단축 세션 판정도 별도 표시한다. raw DB/ZIP 열기·수정·checkpoint·새 수집 API·실제 주문·전원 호출은 없다.
+- 파일별 입력2MiB·출력128KiB, JSON 읽기 예산1.5초/별도 daemon, supervisor 최종 대기0.75초. WS 메모리 표본의 recent FE/sticky gap/과거 최대 수신 나이·generation·raw dropped와 기존 Paper 최초 지연·큐·SQL/commit·RVOL/분봉 근거를 요약한다. 알 수 없는 값은 UNKNOWN, 전원 종료 완료는 NOT_VERIFIED이며 원본 판정을 승격하지 않는다.
+- 별도 MarketRadarAudit_* 작업은 official open+100분, 10분 실행 창, 일반 권한·1회·missed-start/wake OFF·nonce/attempt 검증. helper는 Qt/Collector 전에 분기하고 기존 Family watchdog 이름/취소 범위를 공유하지 않는다. 다음 가족용 실행에 최근14일의 미완료 자체 감사 기록을 제한적으로 보충한다. 완전 미실행/PC OFF의 원격 통보는 외부 기대 거래일 비교가 필요하며 자동 로그인 작업/ChatGPT automation은 만들지 않았다.
+- 외부 전송/AI는 기본 OFF. 실제 transport/AI executor 미연결. 별도 승인·비공개 검증 adapter 경계와 allowlist 요약/최대3회 재시도·멱등 ID만 제공한다. Codex CLI0.160.0/ChatGPT 로그인 존재 확인; PowerShell shim 실행 정책 제한은 설치된 cmd launcher로 읽기 전용 도움말 확인, sandbox tmp 접근 경고 존재. 비용/잔여 사용량/실제 인증 유효성·OS 격리 실행은 NOT_VERIFIED, 실제 AI 호출0.
+- 초기 합성32개·가족62개, 통합97개·원인/0건 보완 후99개가 통과했다. 첫 빌드 정적25코드/EXE10case/실제 독립 task는 PASS였으나 literal 무인수 검사의 구체적 원인 assertion이 실패했다. 실제 credentials_file_missing이 state에는 남고 더 이른 supervisor_exception이 표시되는 문제를 확인하여 최초 이벤트 시각과 primary_reason·별도 기록 시각을 함께 보존했다. snapshot_count=0의 fallback도 수정했다. 첫 빌드·실패 로그를 보존했다. R2는 실제 EXE10case·literal·독립 task에 통과했다. 최종 검토에서 ZIP 존재/종류 미확인 상태의 PASS를 재현하고 UNKNOWN으로 보완했다. 회귀37개 PASS 후 R3로 재빌드했다.
+- 전체 unittest **853 PASS / FAIL0 / ERROR0 / SKIP0**, legacy **12/12 exit0**, 최종 실제 EXE **10/10 격리 case PASS**. 초기 전체 결과는 별도 full.json이며 최종은 r3_full.json이다. 초기·부분 검사를 합산하지 않는다. 격리 smoke의 의도적 취소/인증 부재에 따른 audit FAIL은 탐지 성공이며 실제 시장 실패 기록이 아니다. R3 literal 무인수 child도 인증 부재·두 전원OFF에서 자동 가족 preflight·지속 오류·primary_reason·자동 감사 파일/DB0/작업등록0을 확인하고 시험 프로세스만 종료했다.
+- 최종 실제 감사 TEST task `MarketRadarAudit_TEST_20261031_d0e3ee1596d44cf89e8882adfb33421d`: launcher PID31432 / executor PID14228, DRY_RUN_CHECKED·PROCESS_MISSING·FAIL, 해당 작업 삭제·부재 PASS. 45초 합성 deadline이며 실제 장/100분 대기/정전/전원 검증이 아니다. 기존 등록된 Family 작업은 변경·실행하지 않았다. TaskScheduler의 공통 이름/스크립트 선택 부분만 감사 subclass에 재사용한다. GUI는 최종 EXE의 Windows 렌더링 PNG로 검사했다.
+- 최종 `dist/MarketRadarFamily_v2_6_10_FINAL_20261101_R3/MarketRadarFamily.exe`, SHA256 `e8e3881857c155e0dfc1795ab800eba6019112fc6f858155725bbde3507b13a4`, 180,700,801bytes/989files. 내장25코드·감사/기존 감시PS·Kiwoom contract/calendar/tzdata/asInvoker·금지 데이터 미포함 확인. 새 **Market Radar 자동 수집 v2.6.10**는 무인수 대상이며 normal_shutdown=true/emergency_shutdown=false. 원본 23672개 SHA256/크기/mtime 동일: 전체 과거data/DB/WAL/SHM/cache/log/ZIP·기존dist·바로가기·방향DOCX/MD 포함. 실제 API/Windows 종료·예약·취소/주문/외부 전송0. source·test·doc만 명시적 staging/일반 commit/push 범위이며 실제 자료·EXE·보고서는 제외한다. 근거 build/audit_v2610_20261101.
+
 ## 2026-10-31 — Market Radar v2.6.9 / 가족용 EXE 직접 실행 자동 예약
 
 - v2.6.8 실제 소스/배포/바로가기를 감사해 무인수 EXE가 수동 화면으로 열리는 점을 확인했다. 전용 frozen MarketRadarFamily.exe만 무인수→인접 family_config.json→가족 자동 예약으로 변경하고 --manual을 분리했다. --family --config 호환, Python 소스/전체 Stock Helper 기본 수동, helper/probe/smoke 우선순위와 보조 옵션 단독 사용 차단을 검증했다.

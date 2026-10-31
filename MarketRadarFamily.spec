@@ -4,7 +4,8 @@ from PyInstaller.utils.hooks import collect_data_files, copy_metadata
 
 root = Path(SPECPATH)
 datas = [(str(root / 'market_radar/providers/kiwoom_contract.json'), 'market_radar/providers'),
-         (str(root / 'market_radar/watchdog_task.ps1'), 'market_radar')]
+         (str(root / 'market_radar/watchdog_task.ps1'), 'market_radar'),
+         (str(root / 'market_radar/audit_task.ps1'), 'market_radar')]
 datas += collect_data_files('exchange_calendars') + collect_data_files('tzdata')
 datas += copy_metadata('exchange_calendars')
 a = Analysis([str(root / 'tools/family_collect.py')], pathex=[str(root)],

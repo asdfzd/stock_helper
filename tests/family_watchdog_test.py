@@ -350,6 +350,7 @@ class FamilyEvidenceTests(unittest.TestCase):
         self.scheduler = MemoryScheduler(); self.shutdown = Mock()
         self.c = SyntheticController(self.root/'master.db', clock=self.clock)
         self.r = FamilyRunner(self.c, self.root/'runs', self.cfg, clock=self.clock, guard=Mock(), power=Mock(), shutdown=self.shutdown,
+            audit_scheduler=MemoryScheduler(),
             clock_check=lambda _: {'synthetic': True},
             watchdog_factory=lambda path: Watchdog(path, self.scheduler, now=self.clock.now, uptime=self.clock.monotonic))
         self.addCleanup(self.r.dispose)

@@ -81,10 +81,17 @@ class EntryTests(unittest.TestCase):
     def test_orphan_helper_flags_cannot_arm_collection(self):
         with patch.object(entry,'create_window',side_effect=AssertionError('unexpected GUI')), patch('sys.stderr',Mock()):
             for args in (['--watchdog-dry-run'],['--nonce','test'],['--probe-nonce','test'],
-                         ['--smoke-case','manual'],['--family','--manual']):
+                         ['--smoke-case','manual'],['--family','--manual'],['--audit-nonce','test']):
                 with self.subTest(args=args), self.assertRaises(SystemExit) as stopped:
                     entry.main(args)
                 self.assertEqual(stopped.exception.code,2)
+
+    def test_audit_helper_precedes_config_gui_and_collection(self):
+        with patch.object(entry,'create_window',side_effect=AssertionError('GUI')), \
+                patch.object(FamilyConfig,'load',side_effect=AssertionError('config')), \
+                patch('market_radar.audit_task.run_helper',return_value=0) as run:
+            self.assertEqual(entry.main(['--audit-run','synthetic/task.json','--audit-nonce','a'*32]),0)
+            run.assert_called_once_with(Path('synthetic/task.json'),'a'*32)
 
 
 class ConfigAndScheduleTests(unittest.TestCase):
