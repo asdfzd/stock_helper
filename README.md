@@ -15,25 +15,24 @@
 - 거래정지 모니터
 - Kiwoom Market Radar를 통한 시장 후보 발견·연구 데이터 수집
 
-## 가족용 원클릭 자동 수집 (v2.6.8)
+## 가족용 원클릭 자동 수집 (v2.6.9)
 
-바탕화면 **Market Radar 자동 수집**은 별도 경량 `MarketRadarFamily.exe --family --config <family_config.json>`를 실행합니다. 기존 Stock Helper와 30초 종료 시험 바로가기는 유지합니다. 새 EXE를 인수 없이 실행하면 수동 Market Radar 화면이며 자동 예약하지 않습니다. OCR/GPU는 가족용 패키지에 포함하지 않습니다. 기존 Collector 하나와 DashboardOneHour의 수집·보존·종료 경로를 사용합니다.
+바탕화면 **Market Radar 자동 수집 v2.6.9** 또는 `dist/MarketRadarFamily_v2_6_9_FINAL_20261031/MarketRadarFamily.exe` 자체를 더블클릭하면 추가 클릭 없이 당일 첫65분 수집을 예약합니다. 전용 EXE는 인수가 없어도 같은 폴더의 `family_config.json`을 읽습니다. 파일이 없거나 잘못되면 오류 화면을 유지하며 다른 경로로 대체하지 않습니다. `_internal`, manifest, 설정을 포함한 전체 폴더가 배포 단위입니다. 기존 v2.6.8 EXE와 **Market Radar 자동 수집** 아이콘, 전체 Stock Helper v2.6.7 시험 EXE는 보존합니다.
 
-이번 검증·바로가기 대상은 `dist/MarketRadarFamily_v2_6_8_FINAL/MarketRadarFamily.exe`입니다. `_internal`, manifest, family_config.json을 포함한 폴더 전체(약181MB)를 유지하세요. 중간 빌드 `MarketRadarFamily_v2_6_8`, `MarketRadarFamily_v2_6_8_RELEASE` 폴더는 최종 배포 대상이 아닙니다.
+가족에게 전달할 안내:
 
-- 매 거래일 개장 전에 한 번 실행합니다. 첫65분 / WS150 / Paper v1 / Rotation v2 / Opening ON / 실제 주문 OFF로 자동 예약합니다. `ARMED`는 수집 예약이며 인증 성공 표시가 아닙니다. 준비 단계의 Kiwoom 연결 상태를 따로 확인합니다. 휴장·개장 이후·중복 실행·경로/인증 오류는 거부하며 다음 거래일로 자동 반복하지 않습니다.
-- 배포 설정 `family_config.json`은 비밀값 없이 `project_root`, `data_root`, `cache`, `normal_shutdown`, `emergency_shutdown`, `expected_windows_timezone`을 명시합니다. 이 PC는 프로젝트 `.env`, `data`, `data/market_radar_cache/kiwoom_v2.db`를 직접 재사용합니다. 실제 자격증명·5GB 이상 캐시는 EXE로 복사하지 않습니다. 환경변수만으로 Kiwoom 인증을 대체하지 않습니다.
-- 가족용 배포의 정상 종료는 허용합니다(`normal_shutdown: true`). 65분 종료와 writer 정리·DB/ZIP 보존 검증 및 기존 UTC/monotonic 개장+70분 gate를 통과한 최초 시점에 기존 Windows 60초 종료 요청을 보냅니다. 연구 FAILED와 보존 VERIFIED는 별개이며 기존 eligibility를 유지합니다.
-- **독립 90분 비상 종료는 기본 dry-run**입니다(`emergency_shutdown: false`). 첫 실제 수집을 전원 종료 없이 감독하려면 실행 인수에 `--dry-run`을 추가하면 두 종료 경로 모두 꺼집니다. 이는 API 수집까지 가상으로 바꾸는 옵션이 아닙니다. 실제 종료는 모든 앱의 작업을 저장한 뒤에만 사용합니다.
-- 실제 비상 종료를 사용하려면 먼저 감독하에 수집·후처리·취소를 확인한 뒤 사용자가 설정의 `emergency_shutdown`을 `true`로 명시적으로 바꾸고 다음 실행에서 적용합니다. 실행 중인 DB writer/ZIP과 저장 전 작업을 손상시킬 수 있습니다. Codex 작업 중 실제 Windows 종료는 실행하지 않았습니다.
+> 밤 10시 30분 전에 바탕화면의 **Market Radar 자동 수집 v2.6.9**를 더블클릭해 주세요. **예약 완료**가 뜨면 PC와 창을 그대로 켜 두세요. 수집·저장 검증을 마치면 PC가 자동으로 꺼지며, 오류가 나면 계속 켜져 있을 수 있으니 화면을 사진으로 보내 주세요.
 
-독립 Windows 작업은 공식 XNYS 개장+90분에 실행합니다. 2026-10-27~30은 22:30 KST 개장 → 다음 날00:00 기준이며 DST 종료 후에는 달력으로 계산합니다. 작업 이름은 `MarketRadarFamily_<ET YYYYMMDD>_<collector run_id>`이고 일반 GUI에서는 생성하지 않습니다. 1회 TimeTrigger, UTC offset, 종료 후5분 만료, missed-start OFF, 반복/부팅·로그온 trigger 없음, 현재 로그인 사용자·일반 권한입니다. Windows 자체 중단·정전·로그아웃에서는 실행을 보장하지 않습니다.
+- 매 거래일 개장 전에 한 번 실행합니다. 첫65분 / WS150 / Paper v1·Rotation v2·Opening ON / 실제 주문 OFF입니다. **예약 완료(ARMED)는 실제 OAuth·WS 연결이나 수집 성공이 아닙니다.** Kiwoom 연결과 수집 개수는 별도로 표시합니다. 휴장·개장 이후·중복 실행·경로/인증 오류를 우회하지 않고 다음 거래일로 반복 예약하지 않습니다. 자정 후 재실행도 같은 미국 거래일의 늦은 실행으로 거부합니다.
+- `2026-11-02~11-06`은 매일 **23:30 KST 개장 → 다음 날00:35 수집 종료 요청 → 정상 PC 종료 가장 이른 시각00:41 → 독립90분 감시01:00**입니다. 22:00~22:29 실행은 준비 시각까지 기다립니다. 시각은 XNYS와 timezone으로 계산하며 후처리·시계 확인이 늦어지면 PC 종료도 늦어집니다. [NIST DST 규칙](https://www.nist.gov/pml/time-and-frequency-division/popular-links/daylight-saving-time-dst), [NYSE 공식 일정](https://www.nyse.com/trade/hours-calendars).
+- 배포 설정은 **정상 종료 ON / 비상 강제 종료 OFF**입니다. 정상 종료는 writer 정리·원본 DB/export/ZIP 무결성·`shutdown_eligible`과 UTC/monotonic 개장+70분 gate를 통과한 뒤 Windows 60초 요청을 보냅니다. 연구 FAILED와 보존 VERIFIED는 별개입니다. 비상 종료 OFF에서는 오류·hang 때 PC가 계속 켜져 있을 수 있습니다.
+- 감독하에 실제 수집을 전원 종료 없이 검증하려면 `MarketRadarFamily.exe --dry-run`을 사용합니다. 두 종료를 끄지만 **API 수집은 실제로 수행**합니다. 수동 진단 화면은 `--manual`로만 엽니다. 이전 `--family --config <명시적 경로>`도 지원합니다. Python 소스 기본 실행과 전체 Stock Helper는 자동 예약하지 않습니다.
+- `family_config.json`은 project/data/cache 경로·전원 플래그·Windows 시간대를 명시합니다. 프로젝트 `.env`와 shared cache를 참조하며 비밀값·DB를 패키지로 복사하지 않습니다. 실제 비상 종료는 사용자가 나중에 명시적으로 허용하고 감독 시험한 뒤에만 활성화합니다. 강제 종료는 DB/ZIP과 다른 앱의 미저장 작업을 손상시킬 수 있습니다.
+- **PC 종료만 취소**는 수집을 유지하며 해당 watchdog을 취소합니다. **무인 모드 / 수집 중지** 또는 창 닫기는 수집과 종료 예약을 취소하고 정리를 기다립니다. 절전·로그아웃·업데이트·Windows 자체 정지·정전 뒤 작동을 보장하지 않습니다. 응답이 없으면 같은 EXE의 `--watchdog-cancel "<해당 실행 watchdog.json 전체 경로>"`를 사용하며 해당 작업만 확인·해제합니다.
 
-화면의 **PC 종료만 취소**는 수집을 계속하며 해당 watchdog도 취소합니다. **무인 모드 / 수집 중지**는 수집과 해당 예약을 취소합니다. 취소 실패/상태 불명은 화면에 남습니다. GUI가 응답하지 않으면 같은 EXE로 `--watchdog-cancel "<watchdog.json 전체 경로>"`를 실행할 수 있습니다. 해당 날짜·run_id 작업만 확인·삭제하며 다른 작업을 일괄 삭제하지 않습니다.
+독립 작업은 `MarketRadarFamily_<ET YYYYMMDD>_<collector run_id>`이며 공식 open+90분, 1회 TimeTrigger, 5분 만료, missed-start OFF, 현재 사용자·일반 권한입니다. 새 결과는 `data/market_radar_family/<ET-date>/attempt_<id>/run_<id>/`, watchdog journal은 같은 attempt의 `watchdogs/<collector run_id>/watchdog.json`입니다. 비상 journal은 기존 연구·ZIP 보존 판정을 승격하지 않습니다.
 
-새 결과는 `data/market_radar_family/<ET-date>/attempt_<id>/run_<id>/`, watchdog 상태는 같은 attempt의 `watchdogs/<collector run_id>/watchdog.json`에 있습니다. 최초 오류와 연구/보존 결과는 기존 diagnostics와 ZIP에 보존하고 비상 기록은 별도 상태 파일에 남깁니다. 비상 실행이 정상 ZIP/VERIFIED를 만들어 주지는 않습니다. 상태 기록 실패 시 실제 종료 제출을 차단하므로 디스크/OS 자체 장애까지 보장하는 하드웨어 감시는 아닙니다.
-
-Windows 시간대와 짧은 UTC/monotonic 일관성을 검사하며 절대 UTC/NTP 정확성까지 인증하지 않습니다. 부팅 식별자 읽기 실패·등록 실패는 안전 실패합니다. 실제 Task Scheduler dry-run 통과, 실제 미국장 자동 수집·자동 정상/90분 강제 종료는 미검증입니다. 이전 30초 실제 종료 성공은 사용자 보고이며 전체 경로의 검증을 대체하지 않습니다. [운영·테스트 기준](TEST_PROTOCOL.md), [기술 상세](market_radar/README.md#가족용-진입점과-독립-watchdog-v268)를 참고하세요.
+소스 회귀·실제 EXE의 격리 실행과 독립 Scheduler dry-run은 실제 미국장 성공과 구분합니다. **이번 가족용의 실제 OAuth/WS·65분 수집·정상 PC 종료·90분 강제 종료는 NOT VERIFIED**입니다. 기존30초 실제 종료 성공은 이전 사용자 보고입니다. [검증 기준](TEST_PROTOCOL.md), [기술 상세](market_radar/README.md#가족용-진입점과-독립-watchdog-v269)를 참고하세요.
 
 ## Market Radar
 
@@ -69,13 +68,13 @@ Market Radar를 열면 **수집 테스트** 탭이 먼저 표시됩니다. Live 
 3. 시간이 남아 있을 때 **종료 예약 취소**로 `/a`를 요청합니다. 성공/실패·OS 코드·원인 종류를 확인하세요. 취소 실패는 예약을 해제한 것으로 처리하지 않습니다.
 4. 창을 닫거나 정상 앱 종료 시 자신이 수락받은 예약을 취소합니다. 실패하면 경고합니다. 강제 프로세스 종료·충돌에서는 예약이 남을 수 있으므로 Windows에서 `shutdown.exe /a`로 직접 취소해야 할 수 있습니다. 결과 불명(timeout)이면 다른 예약을 잘못 취소하지 않도록 자동 `/a`를 하지 않으며 Windows 상태를 직접 확인한 뒤 앱을 다시 여세요.
 
-기존 **PC 자동 종료 없이 테스트** 기본 ON은 65분 수집용 설정입니다. 위 30초 버튼은 별도 확인을 요구하는 일회성 명령입니다. 단순 EXE 실행으로 수집이나 종료가 예약되지 않으며 90분 watchdog도 없습니다. `/f`는 미저장 작업을 잃게 할 수 있습니다. [Microsoft shutdown 명령](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/shutdown).
+기존 **PC 자동 종료 없이 테스트** 기본 ON은 65분 수집용 설정입니다. 위 30초 버튼은 별도 확인을 요구하는 일회성 명령입니다. 전체 Stock Helper 시험 EXE의 단순 실행으로 수집이나 종료가 예약되지 않으며 해당 일반 GUI에는 독립90분 watchdog이 없습니다. `/f`는 미저장 작업을 잃게 할 수 있습니다. [Microsoft shutdown 명령](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/shutdown).
 
 ## Current Version
 
 | 구분 | 현재 값 |
 |---|---|
-| Market Radar 앱 버전 | **v2.6.8 소스 / 가족용 경량 EXE** (기존 Stock Helper 시험 EXE v2.6.7 보존) |
+| Market Radar 앱 버전 | **v2.6.9 소스 / 가족용 경량 EXE** (기존 Stock Helper 시험 EXE v2.6.7 보존) |
 | 가족용 설정 / 독립 watchdog schema | **1 / 1** (운영 설정·감시 상태, 연구 DB schema와 별도) |
 | Session Validator | **1** (수집 품질 검증; 전략 판단 아님) |
 | Collector 연구 버전 | **v2.1** |
@@ -345,7 +344,7 @@ quality policy 2의 구독 확인/경계/미구독 분모와 전체 95%·종목�
 
 조건을 통과하면 시스템 경로의 `shutdown.exe /s /f /t 60`을 한 번 요청합니다. 예약 후에는 GUI **PC 종료만 취소** 또는 `shutdown.exe /a`로 취소할 수 있습니다. 강제 종료는 다른 앱도 닫으므로 이 옵션을 선택한 운영 PC에서는 미저장 작업을 남기지 않아야 합니다. OS 명령 대기는 10초로 제한하고 결과가 불확실하면 취소를 시도합니다. 취소 실패 시 예약이 남아 있을 수 있습니다. [Microsoft 명령 문서](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/shutdown).
 
-**배포 상태:** 소스와 가족용 경량 EXE는 v2.6.8이며 기존 전체 Stock Helper 시험 EXE v2.6.7과 옛 EXE는 보존합니다. 기존 launcher는 `.venv-paddle`에서 `live_ui.py`를 실행하는 소스 바로가기입니다. 이미 떠 있는 GUI에는 변경이 자동 적용되지 않습니다. 새 가족용 운영의 첫 실제 수집은 위 `--dry-run` 절차로 감독하세요. 실장 Paper 지연 개선과 자동 종료 전체 경로는 미검증입니다. 30초 실제 종료 성공은 사용자 보고입니다.
+**배포 상태:** 소스와 가족용 경량 EXE는 v2.6.9이며 기존 전체 Stock Helper 시험 EXE v2.6.7과 옛 EXE는 보존합니다. 기존 launcher는 `.venv-paddle`에서 `live_ui.py`를 실행하는 소스 바로가기입니다. 이미 떠 있는 GUI에는 변경이 자동 적용되지 않습니다. 새 가족용 운영의 첫 실제 수집은 위 `--dry-run` 절차로 감독하세요. 실장 Paper 지연 개선과 자동 종료 전체 경로는 미검증입니다. 30초 실제 종료 성공은 사용자 보고입니다.
 
 ## Windows 시험 EXE 빌드와 실행
 
@@ -356,7 +355,7 @@ quality policy 2의 구독 확인/경계/미구독 분모와 전체 95%·종목�
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build_windows.ps1
 ```
 
-이 전체 OCR 빌더의 기본 결과는 현재 소스 버전을 따른 `dist\StockHelper_v2_6_8_TEST\StockHelper.exe`입니다(이번에는 전체 OCR 패키지를 다시 빌드하지 않음). 이미 배포된 v2.6.7 폴더는 보존합니다. 기존 폴더가 있으면 덮어쓰지 않고 거부하며 `-OutputName StockHelper_v2_6_8_TEST_2`처럼 새 이름을 지정할 수 있습니다. `-PreflightOnly`로 의존성·OCR 모델·여유 공간(최소10GiB)을 검사합니다. 가족용은 `build_family_windows.ps1`로 별도 `dist\MarketRadarFamily_v2_6_8\MarketRadarFamily.exe`를 빌드하며 OCR/GPU를 포함하지 않습니다.
+이 전체 OCR 빌더의 기본 결과는 현재 소스 버전을 따른 `dist\StockHelper_v2_6_9_TEST\StockHelper.exe`입니다(이번에는 전체 OCR 패키지를 다시 빌드하지 않음). 이미 배포된 v2.6.7 폴더는 보존합니다. 기존 폴더가 있으면 덮어쓰지 않고 거부하며 `-OutputName StockHelper_v2_6_9_TEST_2`처럼 새 이름을 지정할 수 있습니다. `-PreflightOnly`로 의존성·OCR 모델·여유 공간(최소10GiB)을 검사합니다. 가족용은 `build_family_windows.ps1`로 별도 `dist\MarketRadarFamily_v2_6_9\MarketRadarFamily.exe`를 빌드하며 OCR/GPU를 포함하지 않습니다.
 
 `_internal`, `.paddle-cache/official_models`의 두 OCR 모델, `build_manifest.json`을 포함한 **폴더 전체**가 배포 단위입니다. EXE 하나만 옮기면 실행되지 않습니다. 관리자 승격을 강제하지 않는 `asInvoker` 매니페스트를 사용합니다. Windows 종료 권한이 없으면 OS 거절 코드를 표시합니다. 관리자 권한으로 실행한 HTS와의 캡처/전역 단축키 호환성은 같은 권한 수준에서 별도 확인이 필요합니다.
 

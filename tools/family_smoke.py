@@ -32,7 +32,7 @@ class MemoryScheduler:
         self.events.append(('delete', state['task_name']))
 
 
-def run(output):
+def run(output, *, case='default'):
     from datetime import datetime, timezone
     import platform
     platform.uname()  # Windows subprocess version probe before the strict boundary.
@@ -66,19 +66,22 @@ def run(output):
     import tempfile
     tempfile.tempdir = str(runtime)
     from market_radar.family_config import FamilyConfig
-    config = FamilyConfig(runtime, data, cache, minimum_free_gib=0)
+    config = FamilyConfig(runtime, data, cache, normal_shutdown=True, minimum_free_gib=0)
     config.bind_runtime()
+    config_path = runtime / 'family_config.json'
+    config_path.write_text(json.dumps(dict(config_version=1, project_root=str(runtime),
+        data_root=str(data), cache=str(cache), normal_shutdown=True, emergency_shutdown=False)), encoding='utf-8')
     from PySide6.QtCore import QSettings, QTimer
     from PySide6.QtWidgets import QApplication
     from market_radar.family_ui import FamilyWindow
     from market_radar.family_mode import FamilyRunner
     from market_radar.watchdog import Watchdog
     from market_radar import __version__
-    from unittest.mock import Mock
+    from unittest.mock import Mock, patch
     QSettings.setDefaultFormat(QSettings.Format.IniFormat)
     QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(runtime))
     class Clock:
-        def now(self): return datetime(2026, 10, 27, 12, 50, tzinfo=timezone.utc)
+        def now(self): return datetime(2026, 11, 2, 13, 0, tzinfo=timezone.utc)
         def monotonic(self): return 10000.0
     clock = Clock()
     scheduler = MemoryScheduler()
@@ -89,24 +92,93 @@ def run(output):
             watchdog_factory=lambda path: Watchdog(path, scheduler, now=clock.now, uptime=clock.monotonic), **kwargs)
     app = QApplication.instance() or QApplication([])
     app.setQuitOnLastWindowClosed(False)
-    from tools.family_collect import create_window
-    ordinary = create_window(False)
-    ordinary.show()
-    app.processEvents()
-    assert ordinary.one_hour is None and not ordinary.controller.busy and ordinary.controller.worker is None
-    ordinary.grab().save(str(output / 'ordinary.png'))
-    ordinary.close()
-    ordinary.executor.shutdown(wait=True)
-    window = FamilyWindow(config, runner_factory=factory)
-    window.show()
-    results = {'version': __version__, 'frozen': bool(getattr(sys, 'frozen', False)), 'status': 'PENDING'}
+    from tools import family_collect as entry
+    from dataclasses import replace
+    frozen = bool(getattr(sys, 'frozen', False))
+    selected = entry.launch_mode()[1]
+    if frozen:
+        assert selected == Path(sys.executable).resolve().parent / 'family_config.json'
+    results = {'version': __version__, 'frozen': frozen, 'case': case, 'status': 'PENDING',
+        'default_config_path': str(selected) if selected else None,
+        'isolation': 'same EXE main(argv) re-entry; synthetic roots/clock/power/scheduler; no real authentication',
+        'shutdown_commands': 0}
+    captured = {}
+    original_load = FamilyConfig.load
+    def isolated_load(path, *, dry_run=False):
+        results['requested_config_path'] = str(path)
+        if case in {'missing-config', 'invalid-config'}:
+            target = runtime / 'broken.json'
+            if case == 'invalid-config': target.write_text('[]', encoding='utf-8')
+            return original_load(target)
+        # Check the real sidecar's structure/paths, then substitute only runtime IO.
+        checked = original_load(path, dry_run=dry_run)
+        results['loaded_config_flags'] = dict(normal_shutdown=checked.normal_shutdown,
+            emergency_shutdown=checked.emergency_shutdown)
+        return replace(config, normal_shutdown=checked.normal_shutdown,
+            emergency_shutdown=checked.emergency_shutdown)
+    real_create, real_error = entry.create_window, entry.startup_error
+    def create(family, cfg):
+        if family:
+            window = FamilyWindow(cfg, runner_factory=factory)
+        else:
+            window = real_create(False, cfg)
+        captured.update(window=window, family=family)
+        return window
+    def startup_error(reason, path):
+        captured.update(window=real_error(reason, path), error=reason, family=False)
+        return captured['window']
+    argv = {'default': [], 'family': ['--family', '--config', str(config_path)],
+        'manual': ['--manual'], 'dry-run': ['--family', '--config', str(config_path), '--dry-run'],
+        'missing-config': ['--family', '--config', str(runtime/'missing.json')],
+        'invalid-config': ['--family', '--config', str(runtime/'broken.json')]}.get(case)
+    if case in {'watchdog-run', 'watchdog-cancel', 'scheduler-probe'}:
+        from datetime import timedelta
+        from market_radar.watchdog import stamp
+        import uuid
+        with patch.object(entry, 'create_window', side_effect=AssertionError('helper opened GUI')):
+            if case == 'scheduler-probe':
+                nonce = uuid.uuid4().hex
+                probe = output / ('probe_' + nonce + '.json')
+                rc = entry.main(['--scheduler-probe', str(probe), '--probe-nonce', nonce])
+                assert json.loads(probe.read_text())['pid'] == os.getpid()
+            else:
+                wd = Watchdog(output/'watchdog.json', scheduler, now=clock.now, uptime=clock.monotonic)
+                plan = dict(open=stamp(clock.now()+timedelta(minutes=90)), session_date='2026-11-02')
+                wd.arm(plan, uuid.uuid4().hex, [sys.executable], test=True)
+                with patch('market_radar.watchdog.Watchdog', return_value=wd):
+                    args = ['--watchdog-cancel', str(wd.path)] if case == 'watchdog-cancel' else [
+                        '--watchdog-run', str(wd.path), '--nonce', wd.view['nonce'], '--watchdog-dry-run']
+                    rc = entry.main(args)
+                assert wd.view['status'] == ('CANCELLED' if case == 'watchdog-cancel' else 'ARMED')
+                wd.cancel()
+            assert rc == 0 and not attempts
+        results.update(status='PASS', gui_created=False, automatic_arm=False, external_attempts=attempts)
+        (output/'smoke.json').write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding='utf-8')
+        return 0
+    results['entry_arguments'] = argv
     import time
     deadline = time.monotonic() + 20
     def inspect():
-        if time.monotonic() < deadline and (window.runner is None or window.runner.state == 'STARTING'):
+        window = captured.get('window')
+        family = captured.get('family')
+        if family and time.monotonic() < deadline and (window.runner is None or window.runner.state == 'STARTING' or
+                (window.runner.state == 'ARMED' and (window.runner.watchdog is None or
+                 window.runner.watchdog.view.get('status') in {'NOT_REGISTERED', 'PREPARED'}))):
             QTimer.singleShot(250, inspect)
             return
         try:
+            assert window is not None
+            if case in {'missing-config', 'invalid-config'}:
+                assert captured.get('error') == 'family_config_invalid'
+                results.update(status='PASS', automatic_arm=False, persistent_startup_error=True)
+                window.grab().save(str(output/'error.png'))
+                return
+            if not family:
+                assert case == 'manual' or (case == 'default' and not frozen)
+                assert window.one_hour is None and not window.controller.busy and window.controller.worker is None
+                window.grab().save(str(output / 'manual.png'))
+                results.update(status='PASS', automatic_arm=False)
+                return
             r, d = window.runner, window.dashboard
             assert r and r.state == 'ARMED', (r.state if r else None)
             assert r.controller is d.controller
@@ -114,36 +186,53 @@ def run(output):
             assert all((d.controller.paper_enabled, d.controller.paper_rotation_enabled, d.controller.opening_hour_enabled))
             assert r.watchdog.view['status'] == 'ARMED'
             assert not r.watchdog.view['emergency_allowed']
+            assert r.no_shutdown == (case == 'dry-run')
             assert r.family_preflight['paths']['shared_cache'] == str(cache)
+            d.poll()
             window.refresh()
+            app.processEvents()
+            assert '예약 완료' in window.phase.text()
+            assert '23:30:00' in window.schedule.text() and '00:35:00' in window.schedule.text()
+            assert '00:41:00' in window.power.text() and '01:00:00' in window.power.text()
+            assert d.controller.worker is None  # 22:00 KST: before preopen preparation.
             window.grab().save(str(output / 'family.png'))
             d.show()
             d.grab().save(str(output / 'dashboard.png'))
             assert not any(name in sys.modules for name in ('paddle', 'paddleocr', 'paddlex', 'live_ui', 'execution.nhplug_client'))
-            results.update(status='PASS', automatic_arm=True, ordinary_launch_auto_arm=False, settings='65min/150/Paper/Rotation/Opening',
+            results.update(status='PASS', automatic_arm=True, settings='65min/150/Paper/Rotation/Opening',
                 watchdog='MOCK_ARMED', deadline=r.watchdog.view['deadline'], loaded_ocr=False,
-                path_binding='SYNTHETIC_ONLY', shutdown_commands=0, external_attempts=attempts,
+                path_binding='SYNTHETIC_ONLY', normal_shutdown_allowed=not r.no_shutdown,
+                phase=window.phase.text(), schedule=window.schedule.text(), power=window.power.text(),
+                shutdown_commands=0, external_attempts=attempts,
                 scheduler_events=scheduler.events)
         except Exception as exc:
             results.update(status='FAIL', error=type(exc).__name__ + ':' + str(exc), external_attempts=attempts)
         finally:
-            window.stop()
+            if family: window.stop()
             QTimer.singleShot(1000, finish)
     def finish():
+        window = captured.get('window')
+        family = captured.get('family')
         try:
-            if window.runner and window.runner.active:
+            if family and window.runner and window.runner.active:
                 QTimer.singleShot(250, finish)
                 return
             window.close()
-            window.dashboard.executor.shutdown(wait=True)
-            results['watchdog_after_cancel'] = window.runner.watchdog.view['status'] if window.runner and window.runner.watchdog else None
+            if family:
+                window.dashboard.executor.shutdown(wait=True)
+                results['watchdog_after_cancel'] = window.runner.watchdog.view['status'] if window.runner and window.runner.watchdog else None
+            elif not captured.get('error'):
+                window.executor.shutdown(wait=True)
             if attempts:
                 results['status'] = 'FAIL'
             (output / 'smoke.json').write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding='utf-8')
         finally:
             app.quit()
     QTimer.singleShot(2500, inspect)
-    app.exec()
+    with patch.object(FamilyConfig, 'load', side_effect=isolated_load), \
+            patch.object(entry, 'create_window', side_effect=create), \
+            patch.object(entry, 'startup_error', side_effect=startup_error):
+        entry.main(argv)
     return 0 if results['status'] == 'PASS' else 1
 
 

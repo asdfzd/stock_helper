@@ -71,9 +71,12 @@ class FamilyRunner(DashboardOneHour):
         # All IO here is on the supervisor thread, never the GUI or feed queue.
         if self.existing_controller.busy or self.folder is not None:
             raise RunBlocked('collector_already_running')
-        paths = self.family_config.inspect_paths()
-        timing = self.clock_check(self.family_config.expected_windows_timezone)
-        planned = family_plan(self.family_config, self.clock, self.calendar)
+        try:
+            paths = self.family_config.inspect_paths()
+            timing = self.clock_check(self.family_config.expected_windows_timezone)
+            planned = family_plan(self.family_config, self.clock, self.calendar)
+        except FamilyBlocked as exc:
+            raise RunBlocked(str(exc)) from None
         self.family_preflight = dict(paths=paths, timing=timing, plan=planned)
         super().start(cache=cache, provider=provider)
         if self.state != 'ARMED' or self.cancel_event.is_set() or self.shutdown_cancel_event.is_set():

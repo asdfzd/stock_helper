@@ -173,13 +173,21 @@ class WatchdogTests(unittest.TestCase):
     def test_gui_hang_detected_independently(self):
         self.arm(); self.due()
         self.w.heartbeat('FINALIZING', '2026-10-27T13:30:00+00:00')
-        self.fire()
+        with patch('psutil.Process', return_value=Mock(create_time=lambda: 0)):
+            self.fire()
         self.assertEqual(read(self.w.path)['reason'], 'gui_unresponsive')
 
     def test_postprocessing_hang_detected(self):
         self.arm(); self.w.heartbeat('FINALIZING', self.clock.now().isoformat()); self.due()
-        self.fire()
+        with patch('psutil.Process', return_value=Mock(create_time=lambda: 0)):
+            self.fire()
         self.assertEqual(read(self.w.path)['reason'], 'supervisor_unresponsive')
+
+    def test_reused_pid_is_not_the_registered_process(self):
+        self.arm(); self.due()
+        with patch('psutil.Process', return_value=Mock(create_time=lambda: self.clock.now().timestamp())):
+            self.fire()
+        self.assertEqual(read(self.w.path)['reason'], 'process_not_running')
 
     def test_cancel_emergency_race_serialized(self):
         self.arm(True); self.due()

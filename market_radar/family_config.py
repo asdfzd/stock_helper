@@ -31,7 +31,7 @@ class FamilyConfig:
     def load(cls, path, *, dry_run=False):
         try:
             data = json.loads(Path(path).read_text(encoding='utf-8-sig'))
-            if data.get('config_version') != 1:
+            if not isinstance(data, dict) or data.get('config_version') != 1:
                 raise ValueError()
             paths = [Path(data[k]) for k in ('project_root', 'data_root', 'cache')]
             if not all(p.is_absolute() for p in paths):

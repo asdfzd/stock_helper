@@ -1,24 +1,20 @@
 # CODEX HANDOFF
 
-갱신: 2026-10-26 KST. 현재 상태만 유지하며 영구 이력은 [CHANGELOG](CHANGELOG.md)에 둔다. 새 대화는 [START_HERE](START_HERE.md), 최상위 방향 원본은 [PROJECT_DIRECTION.docx](PROJECT_DIRECTION.docx), 도구용 mirror는 [PROJECT_DIRECTION.md](PROJECT_DIRECTION.md), 수집 기준은 [TEST_PROTOCOL](TEST_PROTOCOL.md)을 따른다.
+갱신: 2026-10-31 KST. 현재 상태만 유지하며 영구 이력은 [CHANGELOG](CHANGELOG.md)에 둔다. 새 대화는 [START_HERE](START_HERE.md), 최상위 방향 원본은 [PROJECT_DIRECTION.docx](PROJECT_DIRECTION.docx), 도구용 mirror는 [PROJECT_DIRECTION.md](PROJECT_DIRECTION.md), 수집 기준은 [TEST_PROTOCOL](TEST_PROTOCOL.md)을 따른다.
 
 ## 현재 버전과 연구 단계
 
-- **Market Radar v2.6.8 소스 / 가족용 경량 EXE**, 기존 전체 Stock Helper 시험 EXE v2.6.7 보존. Collector2.1 / research4 / Paper1·schema2 / Rotation2·extension1 / Opening1.1·schema1 / archive2 / integration4 / Master1 / Validator1 불변. 새 family config/watchdog 운영 schema는 각각1이다.
-- Phase A 마무리~Phase B 실제 evidence 축적 단계다. 후보 탐색·수집 품질·전략 수익성을 구분한다. Current/Emerging, Paper/FIFO/2초 gate/SQL·commit, provider, 기존 OCR·Stock Helper/NH/실제 주문 OFF 정책을 변경하지 않았다.
-- 이번 사용자 요청은 가족용 원클릭 예약과 독립 90분 감시의 명시적 추가다. 기존 Next Work의 미구현 운영 기능을 보완하며 PROJECT_DIRECTION의 연구 방향과 충돌하지 않는다. DOCX/MD 원본은 보존한다.
+- **Market Radar v2.6.9 소스 / 가족용 경량 EXE**. Collector2.1 / research4 / Paper1·schema2 / Rotation2·extension1 / Opening1.1·schema1 / archive2 / integration4 / Master1 / Validator1 / family config1 / watchdog1 불변. Phase A 마무리~Phase B 실데이터 축적 단계이며 수집 품질과 전략 수익성을 구분한다.
+- 사용자 요청에 따라 가족용 원클릭의 기존 구현을 감사하고 전용 EXE의 무인수 실행을 자동 예약으로 보완했다. 수집 엔진·Current/Emerging·Paper/FIFO/2초·SQL/commit·OCR/NH/주문 OFF·프로젝트 방향은 유지했다. DOCX/MD는 수정하지 않았다.
 
 ## 현재 변경과 검증
 
-- **가족용 자동 실행 구현**: `tools/family_collect.py --family --config <명시적 설정>`에서만 첫65분 / WS150 / Paper·Rotation·Opening ON으로 기존 Collector 하나를 자동 arm한다. 일반 실행과 기존 바로가기는 자동 arm하지 않는다. 휴장·개장 이후·중복·인증/경로 오류는 우회하지 않고 다음 날 반복 예약하지 않는다. GUI에는 미국장 날짜/예정시간·연결/WS/snapshot·최초 오류·정상/비상 종료 상태가 함께 표시된다.
-- 경량 B안을 채택해 OCR/GPU/NH 없이 기존 RadarPanel/FamilyRunner(DashboardOneHour)를 묶었다. 실제 프로젝트 `.env`, `data`, `data/market_radar_cache/kiwoom_v2.db`를 명시적으로 참조한다. 키 존재·cache r+b/header·data 쓰기 probe·여유 공간·Windows 시간대/두 시계 일관성은 확인했다. **실제 OAuth와 실장 자동 수집은 미검증**이며 캐시 복사/원본 변경이 없다.
-- **독립 Task Scheduler 감시 구현**: 공식 XNYS open+90분, 일회성·5분 만료·missed-start OFF·현재 로그인 사용자/일반 권한. nonce/run_id/날짜/작업 action·UTC와 uptime·boot counter 확인 후 발동한다. 정상 종료는 기존 보존/70분 gate 후 해당 task 삭제 → OS 요청 순서다. 취소를 먼저 durable 저장하며 GUI/supervisor hang과 독립된 취소 executor/CLI를 제공한다. 상태 불명·등록/삭제 오류를 표시한다. 기존 DB/ZIP verdict를 승격하지 않는다.
-- 배포 설정은 **정상 종료 ON / 90분 비상 강제 종료 OFF(dry-run)**다. `--dry-run`은 수집을 수행하되 두 전원 동작을 모두 끈다. 실제 비상 종료는 사용자가 나중에 명시적으로 허용해야 한다. Windows 자체 정지·정전·로그아웃/디스크 장애까지 보장하지 않으며 강제 종료는 writer/ZIP·미저장 작업 손상 위험이 있다.
-- **최종 전체 unittest 802 PASS / FAIL0 / ERROR0 / SKIP0**, Stock Helper main12/12 PASS. 신규49개 포함, 마지막 helper 프로세스 구분 범위 보완 뒤 관련97/97도 PASS. 기존65분/70분/clock·Paper/FIFO/2초/SQL·Opening·30초 버튼 회귀를 유지했다. 이전 전체797 PASS, 전체800의799PASS/ERROR1(WinError5), 제한 재시도 보완과 재검증은 CHANGELOG와 단일 보고서에 기록했다. 모든 검사는 합성/격리이며 실제 API/주문/Windows 종료 명령0회다.
-- **실제 Windows Task Scheduler dry-run PASS**: source Python과 최종 EXE를 각각 별도 PID로 실행하고 DRY_RUN_FIRED/INCOMPLETE, 등록·조회·해제/부재를 확인했다. 테스트 작업4개는 모두 제거했다. 짧은 합성 기한으로 실행한 것으로 실제90분 대기/실장/실제 전원 종료 검증이 아니다.
-- **최종 EXE 빌드 및 격리 GUI smoke PASS**. 자동 ARMED·일반 무예약·고정 설정·취소·OCR 미로딩, 핵심20개 code object/계약/calendar/tzdata/task script/asInvoker 확인. 파일 이동 단계 Windows 접근 거부1회 후 새 대상 부재·경로 확인 및 재시도로 복구했다. 배포 단위는 전체 onedir 180,647,900 bytes/988 files다.
-- 최종 EXE: `C:\Users\Choi\projects\stock_helper\dist\MarketRadarFamily_v2_6_8_FINAL\MarketRadarFamily.exe`, SHA256 `cb5a3c82b9129a28caf769d9c3f63c26fdc15a03d6ae13dda5c8224e1aa93936`. 바탕화면 **Market Radar 자동 수집**은 이 EXE와 같은 폴더의 family_config.json을 명시한다. 기존 Stock Helper / Market Radar EXE 테스트 링크·기존 EXE는 유지한다. 중간 `MarketRadarFamily_v2_6_8` 빌드는 배포 아이콘이 가리키지 않는다.
-- 시작 시 기존 v2.6.7 GUI PID18896이 실행 중이었으며 중단/재시작하지 않았다. 원본456개 SHA256/size/mtime·기존 바로가기2개 불변. 이번 증거는 `build/family_v268_20261026`, 단일 보고서는 CODEX_LAST_TASK_REPORT.md다.
+- 전용 frozen EXE 무인수/새 바로가기 → 인접 family_config.json → 자동 가족 preflight·당일 첫65분/WS150/Paper·Rotation·Opening ON. --manual은 수동; --family --config 호환; source/전체 Stock Helper 기본은 수동. helper/smoke/probe 및 보조 옵션 단독 거부는 자동 수집 전에 처리한다. 설정 오류 화면은 유지하며 다른 경로 fallback 없음.
+- 가족 화면은 한국어 큰 상태, KST 개장/폐장·수집 예정·정상 종료 earliest·실제 Kiwoom 연결/집계, ARMED≠인증 성공, 비상 OFF와 창 닫기 취소를 표시한다. 11/02~06 KST23:30 open, 다음 날00:35 stop,00:41 earliest,01:00 watchdog을 calendar/timezone 및 합성 검사로 확인했다.
+- 전체 unittest **815 PASS / FAIL0 / ERROR0 / SKIP0** (548.388초), 마지막 단독 시험 옵션 차단 보완 후 관련 **62 PASS / FAIL0 / ERROR0 / SKIP0**, 기존 Stock Helper main **12/12 exit0**. 62개는 전체와 중복이며 합산하지 않는다. 최종 실제 EXE9개 격리 case/패키지21코드/Windows PNG 검수 PASS. literal 무인수 child는 합성 설정·인증 부재로 가족 자동 preflight와 지속 오류를 확인했으며 live ARMED 검증이 아니다. 자동 ARMED는 동일 EXE main([])의 합성 시계/adapter 재진입 검사다.
+- 실제 Windows Scheduler TEST dry-run이 최종 EXE의 별도 PID로 발동/INCOMPLETE를 기록하고 삭제·부재 확인. 실제 API·Windows 종료는0회다. 오류·중간 빌드·fixture 수정·재검증은 CHANGELOG에 보존했다. evidence: build/family_v269_20261031.
+- 최종 `dist/MarketRadarFamily_v2_6_9_FINAL_20261031/MarketRadarFamily.exe`, SHA256 `e3ed6392d9c9625891dfe547b1dd6f799545ac3e633b749ce4f993c05a1e6463`. 바탕화면 **Market Radar 자동 수집 v2.6.9**, Arguments 비어 있음, WorkingDirectory는 해당 배포 폴더. 이전 **Market Radar 자동 수집**과 v2.6.8/전체 Stock Helper v2.6.7 EXE는 보존한다. 중간 v2.6.9 폴더는 배포 대상이 아니다.
+- 설정은 **정상 종료 ON / 비상90분 강제 종료 OFF**. .env 필수 키 존재/real mode만 확인했고 실제 shared cache5,844,213,760bytes를 복제·DB 연결·수정하지 않았다. 1458개 원본 SHA256/size/mtime 동일. 실제 OAuth/WS·실장65분·정상 PC 종료·90분 강제 종료는 **NOT VERIFIED**.
 
 ## 기존 첫 1시간 운영 정책
 
@@ -55,8 +51,8 @@
 - 사용자가 교체한 **2026-10-12 기준 PROJECT_DIRECTION.docx가 source of truth**다. MD는 같은 의미의 mirror로 보존하며 START_HERE의 읽는 순서를 따른다. 두 파일을 수정·재생성하지 않는다.
 - 현재 DOCX SHA256: eb06f5add0fde0f5fecc424e00977932831d2f6d3279f10e9d67fe2c947641ef. MD SHA256: 50029336dea7d83563c4912d74a34509c8da35f7f3cf551e2d0ef496b0df840c. 이번 작업은 전략과 분리된 운영 자동화이며 두 파일을 보존했다.
 - RESEARCH_BASIS의 7개 연구 축은 DOCX와 일치한다. 정확한 citation은 **출처 검증 필요**이며 논문명·저자·URL을 만들지 않았다.
-- 이번 가족용·감시·패키지·회귀·보존 결과는 build/family_v268_20261026의 JSON/log에 둔다. 이전 종료 시험은 build/exe_v267_20261026에 보존한다. 이전 Paper 계측은 build/paper_fresh_20261024에 보존한다. 이전 2026-10-13 EXE 빌드·합성 검증의 상세 수치와 배포 해시는 CHANGELOG의 영구 이력을 참조한다.
-- 실제 장애의 근본 병목이나 live 안정성은 미검증이다. 별도 v2.6.8 가족용 EXE 빌드·오프라인 smoke와 실제 Task Scheduler dry-run은 완료했다. 첫 실제 수집에는 PC 자동 종료 없이 테스트를 유지한다.
+- 이번 가족용 감사·패키지·회귀·보존 결과는 build/family_v269_20261031의 JSON/log에 둔다. v2.6.8 근거는 build/family_v268_20261026에 보존한다. 이전 종료 시험은 build/exe_v267_20261026에 보존한다. 이전 Paper 계측은 build/paper_fresh_20261024에 보존한다. 이전 2026-10-13 EXE 빌드·합성 검증의 상세 수치와 배포 해시는 CHANGELOG의 영구 이력을 참조한다.
+- 실제 장애의 근본 병목이나 live 안정성은 미검증이다. v2.6.9 가족용 EXE 빌드·격리 smoke와 실제 Task Scheduler dry-run은 완료했다. 첫 실제 수집에는 PC 자동 종료 없이 테스트를 유지한다.
 
 ## Opening Hour Research v1 현재 상태
 
@@ -98,6 +94,8 @@
 
 ## 남은 제약
 
+- 가족용 인증 파일 부재 등 Collector 생성 전 실패에서 첫 오류는 유지되지만 기존 공통 finalizer가 `finalization_AttributeError`를 부가 기록한다. 격리 실행에서 research DB0, shutdown_eligible=false/BLOCKED와 지속 오류 화면을 확인했다. 원인 코드 전달을 보존하며 공통 진단 정리는 후속 검토 대상이다.
+
 - 현재 실제 첫 1시간 실행의 Paper/Opening DB가 존재하며 이번 분석은 복사본만 사용했다. legacy Paper schema 1은 원본 DB/WAL 복사 검사 후 거부하며 자동 migration하지 않는다. 사용 전 별도 복사본의 offline migration이 필요하고 과거 동일시각 유실 틱은 복원할 수 없다. 첫 live에서는 schema 2 marks/horizon과 Opening all/eligible coverage·표본 수·metadata를 확인해야 한다.
 
 - controller metadata 교체의 일시적 Windows 접근 거부는 25·50·100ms의 제한된 재시도로 복구한다. 영구 거부·임시 파일 작성 실패·기타 I/O 실패는 감추지 않고 파일명/작업 단계/OS 번호를 표시한다. 외부 점유 프로세스는 미확정이며 장기 실운영의 무오류를 보장하지 않는다. scheduling/Capacity 정책과 허용 오차는 변경하지 않았다.
@@ -107,6 +105,8 @@
 
 ## Next Work
 
+이번 감독 시험 대상은 **Market Radar 자동 수집 v2.6.9**가 가리키는 FINAL_20261031 배포본이다. 중간 빌드나 이전 아이콘과 구분한다.
+
 먼저 사용자가 기존 Stock Helper/Collector를 정상 종료하고 모든 앱의 작업을 저장한다. 새 가족용 EXE/설정 경로와 버전을 확인하고 첫 실장은 `--dry-run`으로 감독한다. ARMED는 예약이며 Kiwoom 실제 연결은 별도 확인한다. 65분 planned stop, Paper/Rotation/Opening, 진단 ZIP·보존 verdict, 두 취소 경로를 검토한다. 정상 자동 종료와 실제90분 비상 종료는 각각 독립적인 사용자 실기 시험이며 기존30초 성공을 전체 검증으로 대체하지 않는다. 기본 비상 강제 종료는 계속 OFF다.
 
 실장 Paper 지연·sticky WS gap/Fresh·Opening cache 부족은 미해결 제약이다. 최초 실패 전 SQL read/write/commit, queue 처리율과 전체 처리 p95/p99/max·host CPU/디스크를 같은 시간축으로 비교하되 FIFO·2초·전략·품질 기준을 완화하지 않는다. 과거 FAILED 데이터를 승격하지 않는다.
@@ -115,4 +115,4 @@
 
 ## Git 상태와 작업 보존
 
-시작 main clean, 로컬/원격 HEAD `23841047d58fec4252ab9e504f8ec51976d7e126` 일치. 이번 첨부 요청 §11에 따라 전체 회귀·보안 검증 뒤 코드·테스트·문서17개만 명시적으로 staging하여 일반 commit/push한다. 이 문서가 포함된 최종 커밋은 git log -1 및 CODEX_LAST_TASK_REPORT.md/build/family_v268_20261026/git_final.json으로 식별한다. 원격 SHA 일치와 clean 상태를 확인한다. 실제 .env/DB/cache/WAL/SHM/ZIP/log/build/dist/EXE/단일 보고서는 Git 제외이며 force/reset/clean/stash/rebase/merge를 사용하지 않는다.
+시작 main clean, 로컬 HEAD/origin/main 및 실제 원격 main `96ed78b1fd20ad3e33732b3bda788c1b72aafaa4` 일치. 사용자 명시 승인에 따라 v2.6.9 소스·회귀 테스트·문서 13개만 검토 후 main의 일반 commit/push로 반영한다. 이 작업의 커밋은 `git log -1`로, 현재 변경 범위는 `git status --short`로 확인하며 최종 SHA·실제 원격 일치 확인은 Git 제외 단일 `CODEX_LAST_TASK_REPORT.md`에 기록한다. EXE manifest의 source_base_head는 빌드 전 기준이고 source_sha256 182개가 검증한 소스를 식별한다. 실제 .env/data/DB/cache/WAL/SHM/ZIP/log/build/dist/EXE/단일 보고서는 Git 제외다. 기존 사용자 변경은 없었고 force/reset/clean/stash/rebase/merge를 사용하지 않았다.

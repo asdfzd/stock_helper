@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-10-31 — Market Radar v2.6.9 / 가족용 EXE 직접 실행 자동 예약
+
+- v2.6.8 실제 소스/배포/바로가기를 감사해 무인수 EXE가 수동 화면으로 열리는 점을 확인했다. 전용 frozen MarketRadarFamily.exe만 무인수→인접 family_config.json→가족 자동 예약으로 변경하고 --manual을 분리했다. --family --config 호환, Python 소스/전체 Stock Helper 기본 수동, helper/probe/smoke 우선순위와 보조 옵션 단독 사용 차단을 검증했다.
+- 설정 부재/JSON 비객체 등은 지속 오류 화면으로 표시하며 경로 fallback 없음. 가족 사전검사 실패 코드를 보존하고 예약 완료/수집 중/후처리 중/종료 대기/오류, KST 개장/폐장/수집·종료 earliest, ARMED≠OAuth 성공, 비상 OFF 시 PC 잔류/창 닫기 취소를 표시한다. 기존 Collector/65분/70분·60초 OS 요청/ZIP 보존/전략/rank/FIFO/2초/DB schema/실제 주문 OFF는 유지했다.
+- 전체 unittest **815 PASS / FAIL0 / ERROR0 / SKIP0** (548.388초), 마지막 단독 시험 옵션 차단 보완 후 관련 **62 PASS / FAIL0 / ERROR0 / SKIP0**, 기존 Stock Helper main **12/12 exit0**. 62개는 전체와 중복이며 합산하지 않는다. 초기 관련61개는59PASS/FAIL2: 2026-10-27 합성 시계와 실제 프로세스 생성 시각을 섞은 기존 hang fixture 문제였다. 살아있는 합성 PID를 명시하고 PID 재사용 거부 검사를 추가했다. 초기 legacy는 Windows 버전 조회 subprocess를 검사 경계가 막아7개 실패; 해당 읽기 전용 초기화만 경계 전에 완료하여12/12 통과했다. 실제 네트워크·전원 호출은 없다.
+- 최종 실제 EXE 9개 격리 case PASS(무인수 main([]) 자동 ARMED, 명시적 가족, manual, 설정 부재/형식, watchdog run/cancel, probe, dry-run). 실제 sidecar 해석 뒤 IO·시계·power·scheduler를 합성으로 주입했다. 11/02~06 18:00/22:00/22:29 KST 예약→23:30 open/다음 날00:35 stop/00:41 earliest/01:00 watchdog, 주말·휴장·조기폐장·자정 재시작·clock/시간대 거부 검사. literal 무인수 별도 프로세스도 격리 설정/인증 부재로 자동 가족 preflight·지속 오류/실수집0을 확인했다.
+- 최종 EXE의 실제 Scheduler TEST task가 별도 PID에서 DRY_RUN_FIRED/INCOMPLETE를 남기고 해당 task 삭제·부재 PASS. 짧은 합성 deadline이며 실제90분 대기·미국장·전원 종료는 아니다. GUI/후처리 hang/crash는 합성, 기존30초 실제 종료는 과거 사용자 보고다. Computer Use pipe는 os error2로 사용 불가여서 실제 EXE 자체의 Windows 렌더링 PNG로 UI를 검사했다.
+- 초기 EXE smoke 2개는 watchdog 등록 완료 전 조기 관찰로 실패했고 readiness 대기를 보완했다. 다음 패키지는 빌드 도중 보완된 smoke 한 모듈이 소스와 달라 배포에서 제외했다. 마지막으로 고아 --smoke-case 단독 사용을 차단한 뒤 소스 고정 상태로 재빌드했다. 모든 중간 폴더·실패 로그를 남기며 실제 배포 링크는 아래 최종본만 가리킨다. 이번 최종 전체에 unhandled WinError5 없음; 제한 재시도 검사는 주입 fault이며 실제 점유 원인 해결/재발 없음 보장은 아니다.
+- 최종 `dist/MarketRadarFamily_v2_6_9_FINAL_20261031/MarketRadarFamily.exe`, SHA256 `e3ed6392d9c9625891dfe547b1dd6f799545ac3e633b749ce4f993c05a1e6463`, 전체 180,656,838 bytes / 988 files. 핵심21개 code object, 리소스/calendar/tzdata/asInvoker·console 없는 entry·금지 데이터 미포함 PASS. 바탕화면 **Market Radar 자동 수집 v2.6.9**는 인수 없이 이 EXE를 실행한다. 배포 normal_shutdown=true / emergency_shutdown=false. 이전 v2.6.8 EXE와 기존 아이콘을 보존했다.
+- 원본 1458개 SHA256/size/mtime 동일(실제 .env/data/cache/DB/WAL/SHM/로그/ZIP, 방향 DOCX/MD, 기존 EXE·바로가기 포함). 원본 SQLite 연결·마이그레이션/복제 없이 해시만 확인했다. 실제 shared cache 5,844,213,760 bytes. program2.6.9와 research4/Paper2/Opening1/rotation extension1/archive2/Master1/family config1/watchdog1을 분리한다. 실제 OAuth/WS·실장65분·정상 PC 종료·90분 강제 종료는 NOT VERIFIED. 증거 `build/family_v269_20261031`. 사용자 명시 승인에 따라 검토한 소스·테스트·문서 13개만 일반 commit/push 대상으로 삼으며 실제 자료·배포본·단일 보고서는 Git에서 제외한다.
+
 ## 2026-10-26 — Market Radar v2.6.8 / 가족용 원클릭과 독립90분 감시
 
 - 가족용 경량 EXE B안: OCR/GPU를 묶지 않고 기존 Radar/Collector 하나와 DashboardOneHour를 재사용. 전용 --family/명시적 설정에서만 당일 preopen 첫65분/WS150/Paper·Rotation·Opening ON 자동 arm. 일반 실행 무예약, 휴장/장중/중복/인증·경로 실패 우회 없음. 기존 .env·5,844,213,760-byte cache 직접 참조, 실행별 신규 경로, 원본 복사 없음. 실제 키 존재/접근·Windows Korea Standard Time·local clock 일관성 확인; OAuth/API 실수집은 하지 않았다.
